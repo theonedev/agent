@@ -1,0 +1,17 @@
+**/target/
+**/.classpath
+**/.settings
+**/.project
+**/.vscode
+release.properties
+pom.xml.releaseBackup
+
+.loadpath
+*~
+*.lock
+*.swp
+*.out
+*.tmp
+*.bak
+*~.nib
+*.DS_Store
