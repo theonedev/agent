@@ -1,6 +1,18 @@
 package io.onedev.agent;
 
-import static io.onedev.k8shelper.KubernetesHelper.*;
+import static io.onedev.k8shelper.KubernetesHelper.BEARER;
+import static io.onedev.k8shelper.KubernetesHelper.addOriginRemote;
+import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
+import static io.onedev.k8shelper.KubernetesHelper.checkoutRepository;
+import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
+import static io.onedev.k8shelper.KubernetesHelper.deinitSubmodulesIfNecessary;
+import static io.onedev.k8shelper.KubernetesHelper.getCacheInstances;
+import static io.onedev.k8shelper.KubernetesHelper.initRepositoryIfNecessary;
+import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
+import static io.onedev.k8shelper.KubernetesHelper.preprocess;
+import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static io.onedev.k8shelper.KubernetesHelper.stringifyPosition;
+import static io.onedev.k8shelper.KubernetesHelper.updateSubmodulesIfNecessary;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayInputStream;
@@ -41,6 +53,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Throwables;
 
 import io.onedev.agent.job.JobData;
+import io.onedev.agent.job.TestJobData;
+import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
@@ -77,14 +91,13 @@ public class DockerUtils {
 			TaskLogger jobLogger = new TaskLogger() {
 
 				@Override
-				public void log(String message, String taskId) {
-					Agent.log(session, jobData.getJobToken(), message, taskId);
+				public void log(String message, String sessionId) {
+					Agent.log(session, jobData.getJobToken(), message, sessionId);
 				}
 				
 			};
 			
 			File hostCacheHome = Agent.getCacheHome();
-			FileUtils.createDir(hostCacheHome);
 			
 			jobLogger.log("Allocating job caches...") ;
 			
@@ -300,7 +313,8 @@ public class DockerUtils {
 										String hostAuthInfoHomePath = hostAuthInfoHome.get().getAbsolutePath();
 										String hostWorkspacePath = hostWorkspace.getAbsolutePath();
 										
-										dockerFetchRepository(network, cloneUrl, commitHash, hostAuthInfoHomePath, 
+										String containerName = network + "-repository-fetch-helper";										
+										dockerFetchRepository(containerName, cloneUrl, commitHash, hostAuthInfoHomePath, 
 												hostWorkspacePath, cloneDepth, jobLogger);
 										addOriginRemote(git, cloneUrl, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 										checkoutRepository(git, commitHash, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
@@ -419,10 +433,9 @@ public class DockerUtils {
 		};
 	}
 	
-	static void dockerFetchRepository(String network, String cloneUrl, String commitHash, String hostAuthInfoHomePath, 
+	static void dockerFetchRepository(String containerName, String cloneUrl, String commitHash, String hostAuthInfoHomePath, 
 			String hostWorkspacePath, int cloneDepth, TaskLogger jobLogger) {
 		Commandline docker = new Commandline(Agent.dockerPath);
-		String containerName = network + "-repository-fetch-helper";
 		docker.addArgs("run", "--name=" + containerName, "-v", hostAuthInfoHomePath + ":/root", 
 				"-v", hostWorkspacePath+ ":/git", "--rm", "alpine/git", 
 				"fetch", cloneUrl, "--force", "--quiet");	
@@ -646,11 +659,11 @@ public class DockerUtils {
 	private static LineConsumer newInfoLogger(TaskLogger jobLogger) {
 		return new LineConsumer(StandardCharsets.UTF_8.name()) {
 
-			private String taskId = UUID.randomUUID().toString();
+			private String sessionId = UUID.randomUUID().toString();
 			
 			@Override
 			public void consume(String line) {
-				jobLogger.log(line, taskId);
+				jobLogger.log(line, sessionId);
 			}
 			
 		};
@@ -788,6 +801,117 @@ public class DockerUtils {
 			} catch (InterruptedException e) {
 				throw new RuntimeException(e);
 			}
+		}		
+	}
+
+	public static void testRemoteExecutor(Session session, TestJobData jobData) {
+		File workspaceDir = null;
+		File cacheDir = null;
+		File authInfoDir = null;
+		
+		Client client = ClientBuilder.newClient();
+		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		try {
+			TaskLogger jobLogger = new TaskLogger() {
+
+				@Override
+				public void log(String message, String sessionId) {
+					Agent.log(session, jobData.getJobToken(), message, sessionId);
+				}
+				
+			};
+			
+			workspaceDir = Bootstrap.createTempDir("workspace");
+			cacheDir = new File(Agent.getCacheHome(), UUID.randomUUID().toString());
+			FileUtils.createDir(cacheDir);
+			authInfoDir = FileUtils.createTempDir();
+			
+			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
+			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/test");
+			Invocation.Builder builder =  target.request();
+			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
+			try (Response response = builder.get()) {
+				checkStatus(response);
+			} 
+			
+			for (Map<String, String> each: jobData.getRegistryLogins()) {
+				login(new Commandline(Agent.dockerPath), each.get("url"), 
+						each.get("userName"), each.get("password"), jobLogger);
+			}
+
+			jobLogger.log("Test running specified docker image...");
+			Commandline docker = new Commandline(Agent.dockerPath);
+			docker.addArgs("run", "--rm");
+			if (jobData.getDockerOptions() != null)
+				docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
+			
+			String containerWorkspacePath;
+			String containerCachePath;
+			if (SystemUtils.IS_OS_WINDOWS) {
+				containerWorkspacePath = "C:\\onedev-build\\workspace";
+				containerCachePath = "C:\\onedev-build\\cache";
+			} else {
+				containerWorkspacePath = "/onedev-build/workspace";
+				containerCachePath = "/onedev-build/cache";
+			}
+			docker.addArgs("-v", workspaceDir.getAbsolutePath() + ":" + containerWorkspacePath);
+			docker.addArgs("-v", cacheDir.getAbsolutePath() + ":" + containerCachePath);
+			
+			docker.addArgs("-w", containerWorkspacePath);
+			docker.addArgs(jobData.getDockerImage());
+			
+			if (SystemUtils.IS_OS_WINDOWS) 
+				docker.addArgs("cmd", "/c", "echo hello from container");
+			else 
+				docker.addArgs("sh", "-c", "echo hello from container");
+			
+			docker.execute(new LineConsumer() {
+
+				@Override
+				public void consume(String line) {
+					jobLogger.log(line);
+				}
+				
+			}, new LineConsumer() {
+
+				@Override
+				public void consume(String line) {
+					jobLogger.log(line);
+				}
+				
+			}).checkReturnCode();
+			
+			if (!SystemUtils.IS_OS_WINDOWS) {
+				jobLogger.log("Test running busybox...");
+				docker = new Commandline(Agent.dockerPath);
+				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");			
+				docker.execute(new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						jobLogger.log(line);
+					}
+					
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						jobLogger.log(line);
+					}
+					
+				}).checkReturnCode();
+			}
+		} finally {
+			jobThreads.remove(jobData.getJobToken());
+			client.close();
+			
+			if (authInfoDir != null)
+				FileUtils.deleteDir(authInfoDir);
+			
+			if (workspaceDir != null)
+				FileUtils.deleteDir(workspaceDir);
+			if (cacheDir != null)
+				FileUtils.deleteDir(cacheDir);
 		}		
 	}
 

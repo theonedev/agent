@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 
 import io.onedev.agent.job.JobData;
 import io.onedev.agent.job.LogRequest;
+import io.onedev.agent.job.TestJobData;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.k8shelper.KubernetesHelper;
@@ -151,9 +152,9 @@ public class AgentSocket implements Runnable {
 	@OnWebSocketClose
 	public void onClose(int statusCode, String reason) {
 		if (reason != null)
-			logger.info("Websocket closed (status code: {}, reason: {})", statusCode, reason);
+			logger.debug("Websocket closed (status code: {}, reason: {})", statusCode, reason);
 		else
-			logger.info("Websocket closed (status code: {})", statusCode);
+			logger.debug("Websocket closed (status code: {})", statusCode);
 		Agent.reconnect = true;
 		while (!stopped) {
 			thread.interrupt();
@@ -171,6 +172,13 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof JobData) { 
 				try {
 					DockerUtils.executeJob(session, (JobData) request);
+					return null;
+				} catch (Exception e) {
+					return e;
+				}
+			} else if (request instanceof TestJobData) {
+				try {
+					DockerUtils.testRemoteExecutor(session, (TestJobData) request);
 					return null;
 				} catch (Exception e) {
 					return e;

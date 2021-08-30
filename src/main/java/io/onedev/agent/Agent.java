@@ -40,7 +40,7 @@ public class Agent {
 	private static final Logger logger = LoggerFactory.getLogger(Agent.class);
 	
 	// requires at least 2.11.1 to use allowAnySHA1InWant
-	private static final String GIT_MIN_VERSION = "2.11.1";
+	public static final String GIT_MIN_VERSION = "2.11.1";
 	
 	public static final String LOGBACK_CONFIG_FILE_PROPERTY_NAME = "logback.configurationFile";
 	
@@ -105,6 +105,8 @@ public class Agent {
 	public static volatile LinkedHashMap<String, String> attributes;
 	
 	public static ObjectMapper objectMapper = new ObjectMapper();
+	
+	private static Object cacheHomeCreationLock = new Object();
 	
 	@SuppressWarnings("restriction")
 	public static void main(String[] args) throws Exception {
@@ -191,8 +193,10 @@ public class Agent {
 				os = AgentOs.MACOSX;
 			else if (SystemUtils.IS_OS_LINUX)
 				os = AgentOs.LINUX;
+			else if (SystemUtils.IS_OS_FREE_BSD)
+				os = AgentOs.FREEBSD;
 			else
-				throw new ExplicitException("Unsupported OS: " +  System.getProperty("os.name"));
+				os = AgentOs.OTHERS;
 
 			osVersion = System.getProperty("os.version");
 			osArch = System.getProperty("os.arch");
@@ -429,14 +433,18 @@ public class Agent {
 		return new File(installDir, "site");
 	}
 	
-	public static void log(Session session, String jobToken, String message, @Nullable String taskId) {
-		if (taskId == null)
-			taskId = "";
-		new Message(MessageType.JOB_LOG, jobToken + ":" + taskId + ":" + message).sendBy(session);
+	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
+		if (sessionId == null)
+			sessionId = "";
+		new Message(MessageType.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
 	}
 	
 	public static File getCacheHome() {
-		return new File(getSiteDir(), "cache");
+		File file = new File(getSiteDir(), "cache");
+		if (!file.exists()) synchronized (cacheHomeCreationLock) {
+			FileUtils.createDir(file);
+		}
+		return file;
 	}
 	
 }
