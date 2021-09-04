@@ -72,8 +72,6 @@ public class Agent {
 	
 	private static volatile boolean stopping;
 	
-	private static volatile boolean stopped;
-	
 	private static Thread thread;
 	
 	public static String serverUrl;
@@ -116,12 +114,9 @@ public class Agent {
 			
 			public void run() {
 				stopping = true;
-				while (!stopped) {
-					thread.interrupt();
-					try {
-						Thread.sleep(1000);
-					} catch (InterruptedException e) {
-					}
+				try {
+					thread.join();
+				} catch (InterruptedException e) {
 				}
 			}
 			
@@ -294,6 +289,7 @@ public class Agent {
 				dockerPath = "docker";
 
 			WebSocketClient client = new WebSocketClient();
+			client.setStopAtShutdown(false);
 			client.setMaxIdleTimeout(SOCKET_IDLE_TIMEOUT);
 			client.getPolicy().setMaxTextMessageSize(MAX_MESSAGE_BYTES);
 			client.getPolicy().setMaxBinaryMessageSize(MAX_MESSAGE_BYTES);
@@ -306,16 +302,21 @@ public class Agent {
 				
 				reconnect = false;
 				client.start();
-
 				client.connect(new AgentSocket(), new URI(websocketUrl), request);
 				
 				while (!reconnect && !stopping) {
 					try {
-						Thread.sleep(5000);
+						Thread.sleep(1000);
 					} catch (Exception e) {
 					}
 				}
-				
+
+				if (stopping) {
+					logger.info("Waiting for running jobs to finish...");
+					for (Session session: client.getOpenSessions()) 
+						WebsocketUtils.call(session, new WaitingForAgentResourceToBeReleased(), 0);
+				}
+
 				try {
 					client.stop();
 				} catch (Exception e) {
@@ -323,9 +324,7 @@ public class Agent {
 			}
 		} catch (Exception e) {
 			logger.error("Error running agent", e);
-		} finally {
-			stopped = true;
-		}
+		} 
 	}
 	
 	public static File getTempDir() {

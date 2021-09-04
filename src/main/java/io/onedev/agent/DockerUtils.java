@@ -526,6 +526,7 @@ public class DockerUtils {
 	}
 	
 	public static void createNetwork(Commandline docker, String network, TaskLogger jobLogger) {
+		docker.clearArgs();
 		AtomicBoolean networkExists = new AtomicBoolean(false);
 		docker.addArgs("network", "ls", "-q", "--filter", "name=" + network);
 		docker.execute(new LineConsumer() {
@@ -594,6 +595,7 @@ public class DockerUtils {
 	
 	public static void clearNetwork(Commandline docker, String network, TaskLogger jobLogger) {
 		List<String> containerIds = new ArrayList<>();
+		docker.clearArgs();
 		docker.addArgs("ps", "-a", "-q", "--filter", "network=" + network);
 		docker.execute(new LineConsumer() {
 
