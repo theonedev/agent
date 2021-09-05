@@ -9,6 +9,7 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
 
 import javax.annotation.Nullable;
@@ -72,6 +73,8 @@ public class Agent {
 	
 	private static volatile boolean stopping;
 	
+	private static volatile boolean stopped;
+	
 	private static Thread thread;
 	
 	public static String serverUrl;
@@ -106,6 +109,8 @@ public class Agent {
 	
 	private static Object cacheHomeCreationLock = new Object();
 	
+	private static volatile WebSocketClient client;
+	
 	@SuppressWarnings("restriction")
 	public static void main(String[] args) throws Exception {
 		thread = Thread.currentThread();
@@ -113,10 +118,24 @@ public class Agent {
 		Runtime.getRuntime().addShutdownHook(new Thread() {
 			
 			public void run() {
+				logger.info("Waiting for running jobs to finish...");
+				if (client != null) {
+					for (Session session: client.getOpenSessions()) { 
+						try {
+							WebsocketUtils.call(session, new WaitingForAgentResourceToBeReleased(), 0);
+						} catch (InterruptedException | TimeoutException e) {
+							logger.error("Error waiting for running jobs", e);
+						}
+					}
+				}
+				
 				stopping = true;
-				try {
-					thread.join();
-				} catch (InterruptedException e) {
+				while (!stopped) {
+					thread.interrupt();
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
+					}
 				}
 			}
 			
@@ -288,7 +307,7 @@ public class Agent {
 			if (StringUtils.isBlank(dockerPath))
 				dockerPath = "docker";
 
-			WebSocketClient client = new WebSocketClient();
+			client = new WebSocketClient();
 			client.setStopAtShutdown(false);
 			client.setMaxIdleTimeout(SOCKET_IDLE_TIMEOUT);
 			client.getPolicy().setMaxTextMessageSize(MAX_MESSAGE_BYTES);
@@ -306,15 +325,9 @@ public class Agent {
 				
 				while (!reconnect && !stopping) {
 					try {
-						Thread.sleep(1000);
+						Thread.sleep(5000);
 					} catch (Exception e) {
 					}
-				}
-
-				if (stopping) {
-					logger.info("Waiting for running jobs to finish...");
-					for (Session session: client.getOpenSessions()) 
-						WebsocketUtils.call(session, new WaitingForAgentResourceToBeReleased(), 0);
 				}
 
 				try {
@@ -324,7 +337,9 @@ public class Agent {
 			}
 		} catch (Exception e) {
 			logger.error("Error running agent", e);
-		} 
+		} finally {
+			stopped = true;
+		}
 	}
 	
 	public static File getTempDir() {
