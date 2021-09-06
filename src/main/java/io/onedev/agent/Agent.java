@@ -53,19 +53,19 @@ public class Agent {
 	
 	public static final int MAX_MESSAGE_BYTES = MAX_MESSAGE_CHARS*4+100;
 	
-	private static final String SERVER_URL_KEY = "serverUrl";
+	public static final String SERVER_URL_KEY = "serverUrl";
 	
-	private static final String AGENT_TOKEN_KEY = "agentToken";
+	public static final String AGENT_TOKEN_KEY = "agentToken";
 	
-	private static final String AGENT_NAME_KEY = "agentName";
+	public static final String AGENT_NAME_KEY = "agentName";
 	
-	private static final String AGENT_CPU_KEY = "agentCpu";
+	public static final String AGENT_CPU_KEY = "agentCpu";
 	
-	private static final String AGENT_MEMORY_KEY = "agentMemory";
+	public static final String AGENT_MEMORY_KEY = "agentMemory";
 	
-	private static final String GIT_PATH_KEY = "gitPath";
+	public static final String GIT_PATH_KEY = "gitPath";
 	
-	private static final String DOCKER_PATH_KEY = "dockerPath";
+	public static final String DOCKER_PATH_KEY = "dockerPath";
 	
 	public static boolean sandboxMode;
 	
