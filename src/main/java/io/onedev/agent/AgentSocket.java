@@ -101,6 +101,7 @@ public class AgentSocket implements Runnable {
 	    		break;
 	    	case UPDATE_ATTRIBUTES:
 	    		Map<String, String> attributes = SerializationUtils.deserialize(messageData);
+	    		Agent.attributes = attributes;
 	    		Properties props = new Properties();
 	    		props.putAll(attributes);
 	    		try (OutputStream os = new FileOutputStream(new File(Agent.installDir, "conf/attributes.properties"))) {

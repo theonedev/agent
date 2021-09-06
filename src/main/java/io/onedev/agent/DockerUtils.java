@@ -85,6 +85,11 @@ public class DockerUtils {
 	
 	static void executeJob(Session session, JobData jobData) {
 		File hostBuildHome = FileUtils.createTempDir("onedev-build");
+		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
+		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
+			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
+					entry.getValue(), StandardCharsets.UTF_8.name());
+		}
 		Client client = ClientBuilder.newClient();
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		try {

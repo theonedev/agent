@@ -103,7 +103,7 @@ public class Agent {
 	
 	public static Class<?> wrapperManagerClass;
 	
-	public static volatile LinkedHashMap<String, String> attributes;
+	public static volatile Map<String, String> attributes;
 	
 	public static ObjectMapper objectMapper = new ObjectMapper();
 	
