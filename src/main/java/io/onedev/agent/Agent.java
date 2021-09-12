@@ -111,6 +111,7 @@ public class Agent {
 	
 	private static volatile WebSocketClient client;
 	
+	@SuppressWarnings("restriction")
 	public static void main(String[] args) throws Exception {
 		thread = Thread.currentThread();
 		

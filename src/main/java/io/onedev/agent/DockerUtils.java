@@ -1,18 +1,13 @@
 package io.onedev.agent;
 
 import static io.onedev.k8shelper.KubernetesHelper.BEARER;
-import static io.onedev.k8shelper.KubernetesHelper.addOriginRemote;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
-import static io.onedev.k8shelper.KubernetesHelper.checkoutRepository;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
-import static io.onedev.k8shelper.KubernetesHelper.deinitSubmodulesIfNecessary;
 import static io.onedev.k8shelper.KubernetesHelper.getCacheInstances;
-import static io.onedev.k8shelper.KubernetesHelper.initRepositoryIfNecessary;
 import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
-import static io.onedev.k8shelper.KubernetesHelper.preprocess;
+import static io.onedev.k8shelper.KubernetesHelper.checkCacheAllocations;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyPosition;
-import static io.onedev.k8shelper.KubernetesHelper.updateSubmodulesIfNecessary;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayInputStream;
@@ -33,7 +28,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
-import javax.inject.Provider;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Entity;
@@ -75,7 +69,6 @@ import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.LeafExecutable;
 import io.onedev.k8shelper.LeafHandler;
 import io.onedev.k8shelper.ServerExecutable;
-import io.onedev.k8shelper.SshCloneInfo;
 
 public class DockerUtils {
 
@@ -118,7 +111,7 @@ public class DockerUtils {
 				cacheAllocations = SerializationUtils.deserialize(response.readEntity(byte[].class));
 			}
 			
-			preprocess(hostCacheHome, cacheAllocations, new Consumer<File>() {
+			checkCacheAllocations(hostCacheHome, cacheAllocations, new Consumer<File>() {
 
 				@Override
 				public void accept(File dir) {
@@ -247,8 +240,8 @@ public class DockerUtils {
 								for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
 									if (!PathUtils.isCurrent(entry.getValue())) {
 										String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
-										String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
-										docker.addArgs("-v", hostCachePath + ":" + containerCachePath);
+										for (String each: KubernetesHelper.resolveCachePath(containerWorkspace, entry.getValue()))
+											docker.addArgs("-v", hostCachePath + ":" + each);
 									}
 								}
 								
@@ -305,40 +298,8 @@ public class DockerUtils {
 
 									String cloneUrl = checkoutExecutable.getCloneInfo().getCloneUrl();
 									String commitHash = jobData.getCommitHash();
-									if (SystemUtils.IS_OS_WINDOWS || !(cloneInfo instanceof SshCloneInfo)) {
-										cloneRepository(git, cloneUrl, commitHash, cloneDepth, 
-												newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										addOriginRemote(git, cloneUrl, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										updateSubmodulesIfNecessary(git, cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-									} else {
-										initRepositoryIfNecessary(git, newInfoLogger(jobLogger), newErrorLogger(jobLogger)); 
-
-										// We need to fetch source within a helper image in order to use our own .ssh folder. 
-										// Specifying HOME env to change ~/.ssh folder does not have effect on Linux 
-										String hostAuthInfoHomePath = hostAuthInfoHome.get().getAbsolutePath();
-										String hostWorkspacePath = hostWorkspace.getAbsolutePath();
-										
-										String containerName = network + "-repository-fetch-helper";										
-										dockerFetchRepository(containerName, cloneUrl, commitHash, hostAuthInfoHomePath, 
-												hostWorkspacePath, cloneDepth, jobLogger);
-										addOriginRemote(git, cloneUrl, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										checkoutRepository(git, commitHash, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										deinitSubmodulesIfNecessary(git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										
-										if (new File(hostWorkspace, ".gitmodules").exists()) {
-											// We need to update submodule within a helper image in order to use our own .ssh folder. 
-											// Specifying HOME env to change ~/.ssh folder does not have effect on Linux 
-											Provider<Commandline> dockerProvider = new Provider<Commandline>() {
-
-												@Override
-												public Commandline get() {
-													return new Commandline(Agent.dockerPath);
-												}
-												
-											};
-											dockerUpdateSubmodules(dockerProvider, network, hostAuthInfoHomePath, hostWorkspacePath, cloneDepth, jobLogger);
-										}
-									}
+									cloneRepository(git, cloneUrl, cloneUrl, commitHash, cloneDepth, 
+											newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 									
 									return true;
 								} catch (Exception e) {
@@ -436,38 +397,6 @@ public class DockerUtils {
 			}
 			
 		};
-	}
-	
-	static void dockerFetchRepository(String containerName, String cloneUrl, String commitHash, String hostAuthInfoHomePath, 
-			String hostWorkspacePath, int cloneDepth, TaskLogger jobLogger) {
-		Commandline docker = new Commandline(Agent.dockerPath);
-		docker.addArgs("run", "--name=" + containerName, "-v", hostAuthInfoHomePath + ":/root", 
-				"-v", hostWorkspacePath+ ":/git", "--rm", "alpine/git", 
-				"fetch", cloneUrl, "--force", "--quiet");	
-		if (cloneDepth != 0)
-			docker.addArgs("--depth=" + cloneDepth);						
-		docker.addArgs(commitHash);
-		
-		jobLogger.log("Fetching source with helper image...");
-		
-		ProcessKiller dockerKiller = newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger);
-		docker.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger), null, dockerKiller).checkReturnCode();
-	}
-	
-	public static void dockerUpdateSubmodules(Provider<Commandline> dockerProvider, String network, 
-			String hostAuthInfoHomePath, String hostWorkspacePath, int cloneDepth, TaskLogger jobLogger) {
-		Commandline docker = dockerProvider.get();
-		String containerName = network + "-submodule-update-helper";
-		docker.addArgs("run", "--name=" + containerName, "-v", 
-				hostAuthInfoHomePath + ":/root", "-v", hostWorkspacePath+ ":/git", "--rm", 
-				"alpine/git", "submodule", "update", "--init", "--recursive", "--force", "--quiet");	
-		if (cloneDepth != 0)
-			docker.addArgs("--depth=" + cloneDepth);						
-
-		jobLogger.log("Retrieving submodules with helper image...");
-		
-		ProcessKiller dockerKiller = newDockerKiller(dockerProvider.get(), containerName, jobLogger);
-		docker.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger), null, dockerKiller).checkReturnCode();
 	}
 	
 	public static void cleanDirAsRoot(File dir, Commandline docker, boolean runInDocker) {
