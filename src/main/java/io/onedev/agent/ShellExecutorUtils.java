@@ -334,7 +334,7 @@ public class ShellExecutorUtils {
 		} else {
 			File cacheDir = new File(cachePath);
 			if (cacheDir.isAbsolute()) 
-				throw new ExplicitException("Absolute cache path disallowed for shell/batch executor: " + cachePath);
+				throw new ExplicitException("Shell executor does not support absolute cache path: " + cachePath);
 			else 
 				return new File(workspaceDir, cachePath);
 		}
