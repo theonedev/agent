@@ -29,9 +29,11 @@ import org.eclipse.jetty.websocket.api.annotations.WebSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.agent.job.JobData;
+import io.onedev.agent.job.DockerJobData;
 import io.onedev.agent.job.LogRequest;
-import io.onedev.agent.job.TestJobData;
+import io.onedev.agent.job.ShellJobData;
+import io.onedev.agent.job.TestDockerJobData;
+import io.onedev.agent.job.TestShellJobData;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.k8shelper.KubernetesHelper;
@@ -137,7 +139,8 @@ public class AgentSocket implements Runnable {
 	    		break;
 	    	case CANCEL_JOB:
 	    		String jobToken = new String(messageData, StandardCharsets.UTF_8);
-	    		DockerUtils.cancelJob(jobToken);
+	    		DockerExecutorUtils.cancelJob(jobToken);
+	    		ShellExecutorUtils.cancelJob(jobToken);
 	    		break;
 	    	default:
 	    	}
@@ -170,16 +173,30 @@ public class AgentSocket implements Runnable {
 		try {
 			if (request instanceof LogRequest) { 
 				return (Serializable) LogRequest.readLog(new File(Agent.installDir, "logs/agent.log"));
-			} else if (request instanceof JobData) { 
+			} else if (request instanceof DockerJobData) { 
 				try {
-					DockerUtils.executeJob(session, (JobData) request);
+					DockerExecutorUtils.executeJob(session, (DockerJobData) request);
 					return null;
 				} catch (Exception e) {
 					return e;
 				}
-			} else if (request instanceof TestJobData) {
+			} else if (request instanceof TestDockerJobData) {
 				try {
-					DockerUtils.testRemoteExecutor(session, (TestJobData) request);
+					DockerExecutorUtils.testRemoteExecutor(session, (TestDockerJobData) request);
+					return null;
+				} catch (Exception e) {
+					return e;
+				}
+			} else if (request instanceof ShellJobData) { 
+				try {
+					ShellExecutorUtils.executeJob(session, (ShellJobData) request);
+					return null;
+				} catch (Exception e) {
+					return e;
+				}
+			} else if (request instanceof TestShellJobData) {
+				try {
+					ShellExecutorUtils.testRemoteExecutor(session, (TestShellJobData) request);
 					return null;
 				} catch (Exception e) {
 					return e;

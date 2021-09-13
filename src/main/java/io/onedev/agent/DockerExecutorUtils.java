@@ -46,8 +46,8 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Throwables;
 
-import io.onedev.agent.job.JobData;
-import io.onedev.agent.job.TestJobData;
+import io.onedev.agent.job.DockerJobData;
+import io.onedev.agent.job.TestDockerJobData;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
@@ -70,13 +70,13 @@ import io.onedev.k8shelper.LeafExecutable;
 import io.onedev.k8shelper.LeafHandler;
 import io.onedev.k8shelper.ServerExecutable;
 
-public class DockerUtils {
+public class DockerExecutorUtils {
 
-	private static final Logger logger = LoggerFactory.getLogger(DockerUtils.class);
+	private static final Logger logger = LoggerFactory.getLogger(DockerExecutorUtils.class);
 
 	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
 	
-	static void executeJob(Session session, JobData jobData) {
+	static void executeJob(Session session, DockerJobData jobData) {
 		File hostBuildHome = FileUtils.createTempDir("onedev-build");
 		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
@@ -115,7 +115,7 @@ public class DockerUtils {
 
 				@Override
 				public void accept(File dir) {
-					DockerUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), false);
+					DockerExecutorUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), false);
 				}
 				
 			});
@@ -592,7 +592,7 @@ public class DockerUtils {
 			thread.interrupt();
 	}
 		
-	private static LineConsumer newInfoLogger(TaskLogger jobLogger) {
+	public static LineConsumer newInfoLogger(TaskLogger jobLogger) {
 		return new LineConsumer(StandardCharsets.UTF_8.name()) {
 
 			private String sessionId = UUID.randomUUID().toString();
@@ -605,7 +605,7 @@ public class DockerUtils {
 		};
 	}
 	
-	private static LineConsumer newErrorLogger(TaskLogger jobLogger) {
+	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
 		return new LineConsumer(StandardCharsets.UTF_8.name()) {
 
 			@Override
@@ -740,7 +740,7 @@ public class DockerUtils {
 		}		
 	}
 
-	public static void testRemoteExecutor(Session session, TestJobData jobData) {
+	public static void testRemoteExecutor(Session session, TestDockerJobData jobData) {
 		File workspaceDir = null;
 		File cacheDir = null;
 		File authInfoDir = null;
