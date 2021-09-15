@@ -1,11 +1,11 @@
 package io.onedev.agent;
 
 import static io.onedev.k8shelper.KubernetesHelper.BEARER;
+import static io.onedev.k8shelper.KubernetesHelper.checkCacheAllocations;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
 import static io.onedev.k8shelper.KubernetesHelper.getCacheInstances;
 import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
-import static io.onedev.k8shelper.KubernetesHelper.checkCacheAllocations;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyPosition;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -47,6 +47,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Throwables;
 
 import io.onedev.agent.job.DockerJobData;
+import io.onedev.agent.job.FailedException;
 import io.onedev.agent.job.TestDockerJobData;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
@@ -183,16 +184,14 @@ public class DockerExecutorUtils {
 					String messageData = jobData.getJobToken() + ":" + containerWorkspace;
 					new Message(MessageType.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
 
-					List<String> errorMessages = new ArrayList<>();
-					
 					CompositeExecutable entryExecutable = new CompositeExecutable(jobData.getActions());
 
-					entryExecutable.execute(new LeafHandler() {
+					boolean successful = entryExecutable.execute(new LeafHandler() {
 
 						@Override
 						public boolean execute(LeafExecutable executable, List<Integer> position) {
 							String stepNames = entryExecutable.getNamesAsString(position);
-							jobLogger.log("Running step \"" + stepNames + "\"...");
+							jobLogger.notice("Running step \"" + stepNames + "\"...");
 							
 							if (executable instanceof CommandExecutable) {
 								CommandExecutable commandExecutable = (CommandExecutable) executable;
@@ -268,10 +267,8 @@ public class DockerExecutorUtils {
 								ExecutionResult result = docker.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger), null, 
 										newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
 								if (result.getReturnCode() != 0) {
-									errorMessages.add("Step \"" + stepNames + "\": Command failed with exit code " + result.getReturnCode());
+									jobLogger.error("Step \"" + stepNames + "\" is failed: Command failed with exit code " + result.getReturnCode());
 									return false;
-								} else {
-									return true;
 								}
 							} else if (executable instanceof CheckoutExecutable) {
 								try {
@@ -300,10 +297,8 @@ public class DockerExecutorUtils {
 									String commitHash = jobData.getCommitHash();
 									cloneRepository(git, cloneUrl, cloneUrl, commitHash, cloneDepth, 
 											newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-									
-									return true;
 								} catch (Exception e) {
-									errorMessages.add("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 									return false;
 								}
 							} else {
@@ -313,23 +308,24 @@ public class DockerExecutorUtils {
 									KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
 											serverExecutable.getIncludeFiles(), serverExecutable.getExcludeFiles(), 
 											serverExecutable.getPlaceholders(), hostBuildHome, hostWorkspace, jobLogger);
-									return true;
 								} catch (Exception e) {
-									errorMessages.add("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 									return false;
 								}
 							}
+							jobLogger.success("Step \"" + stepNames + "\" is successful");
+							return true;
 						}
 
 						@Override
 						public void skip(LeafExecutable executable, List<Integer> position) {
-							jobLogger.log("Skipping step \"" + entryExecutable.getNamesAsString(position) + "\"...");
+							jobLogger.notice("Step \"" + entryExecutable.getNamesAsString(position) + "\" is skipped");
 						}
 						
 					}, new ArrayList<>());
 					
-					if (!errorMessages.isEmpty())
-						throw new ExplicitException(errorMessages.iterator().next());
+					if (!successful)
+						throw new FailedException();
 					
 					jobLogger.log("Reporting job caches...");
 					

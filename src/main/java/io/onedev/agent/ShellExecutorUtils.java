@@ -37,6 +37,7 @@ import org.eclipse.jetty.websocket.api.Session;
 
 import com.google.common.base.Throwables;
 
+import io.onedev.agent.job.FailedException;
 import io.onedev.agent.job.ShellJobData;
 import io.onedev.agent.job.TestShellJobData;
 import io.onedev.commons.utils.ExceptionUtils;
@@ -147,14 +148,12 @@ public class ShellExecutorUtils {
 			
 			CompositeExecutable entryExecutable = new CompositeExecutable(jobData.getActions());
 			
-			List<String> errorMessages = new ArrayList<>();
-			
-			entryExecutable.execute(new LeafHandler() {
+			boolean successful = entryExecutable.execute(new LeafHandler() {
 
 				@Override
 				public boolean execute(LeafExecutable executable, List<Integer> position) {
 					String stepNames = entryExecutable.getNamesAsString(position);
-					jobLogger.log("Running step \"" + stepNames + "\"...");
+					jobLogger.notice("Running step \"" + stepNames + "\"...");
 					
 					if (executable instanceof CommandExecutable) {
 						CommandExecutable commandExecutable = (CommandExecutable) executable;
@@ -203,11 +202,9 @@ public class ShellExecutorUtils {
 						
 						ExecutionResult result = shell.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 						if (result.getReturnCode() != 0) {
-							errorMessages.add("Step \"" + stepNames + "\": Command failed with exit code " + result.getReturnCode());
+							jobLogger.error("Step \"" + stepNames + "\" is failed: Command failed with exit code " + result.getReturnCode());
 							return false;
-						} else {
-							return true;
-						}
+						} 
 					} else if (executable instanceof CheckoutExecutable) {
 						try {
 							CheckoutExecutable checkoutExecutable = (CheckoutExecutable) executable;
@@ -231,10 +228,8 @@ public class ShellExecutorUtils {
 							cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(), 
 									jobData.getCommitHash(), cloneDepth, newInfoLogger(jobLogger), 
 									newErrorLogger(jobLogger));
-							
-							return true;
 						} catch (Exception e) {
-							errorMessages.add("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+							jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 							return false;
 						}
 					} else {
@@ -244,23 +239,24 @@ public class ShellExecutorUtils {
 							KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
 									serverExecutable.getIncludeFiles(), serverExecutable.getExcludeFiles(), 
 									serverExecutable.getPlaceholders(), buildDir, workspaceDir, jobLogger);
-							return true;
 						} catch (Exception e) {
-							errorMessages.add("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+							jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 							return false;
 						}
 					}
+					jobLogger.success("Step \"" + stepNames + "\" is successful");
+					return true;
 				}
 
 				@Override
 				public void skip(LeafExecutable executable, List<Integer> position) {
-					jobLogger.log("Skipping step \"" + entryExecutable.getNamesAsString(position) + "\"...");
+					jobLogger.notice("Step \"" + entryExecutable.getNamesAsString(position) + "\" is skipped");
 				}
 				
 			}, new ArrayList<>());
 
-			if (!errorMessages.isEmpty())
-				throw new ExplicitException(errorMessages.iterator().next());
+			if (!successful)
+				throw new FailedException();
 			
 			jobLogger.log("Reporting job caches...");
 			
