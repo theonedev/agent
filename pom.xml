@@ -10,7 +10,7 @@
 		<version>1.0.5</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>1.0.8</version>
+	<version>1.1.0</version>
 	<build>
 		<plugins>
 			<plugin>
@@ -145,7 +145,7 @@
 		</dependency>
 	</dependencies>
 	<properties>	
-		<k8shelper.version>2.1.10</k8shelper.version>
+		<k8shelper.version>2.2.10</k8shelper.version>
 		<jackson.version>2.12.1</jackson.version>
 		<jersey.version>2.26</jersey.version>
 		<bootstrap>true</bootstrap>

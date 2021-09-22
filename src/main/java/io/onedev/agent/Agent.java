@@ -292,8 +292,12 @@ public class Agent {
 				gitPath = System.getProperty(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath))
 				gitPath = props.getProperty(GIT_PATH_KEY);
-			if (StringUtils.isBlank(gitPath))
-				gitPath = "git";
+			if (StringUtils.isBlank(gitPath)) {
+				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/git").exists())
+					gitPath = "/usr/local/bin/git";
+				else
+					gitPath = "git";
+			}
 			
 			String gitError = checkGitError(gitPath, GIT_MIN_VERSION);
 			if (gitError != null)
@@ -304,8 +308,12 @@ public class Agent {
 				dockerPath = System.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath))
 				dockerPath = props.getProperty(DOCKER_PATH_KEY);
-			if (StringUtils.isBlank(dockerPath))
-				dockerPath = "docker";
+			if (StringUtils.isBlank(dockerPath)) {
+				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/docker").exists())
+					dockerPath = "/usr/local/bin/docker";
+				else
+					dockerPath = "docker";
+			}
 
 			client = new WebSocketClient();
 			client.setStopAtShutdown(false);

@@ -225,9 +225,9 @@ public class ShellExecutorUtils {
 
 							int cloneDepth = checkoutExecutable.getCloneDepth();
 							
-							cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(), 
-									jobData.getCommitHash(), cloneDepth, newInfoLogger(jobLogger), 
-									newErrorLogger(jobLogger));
+							cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(), jobData.getCommitHash(), 
+									checkoutExecutable.isWithLfs(), checkoutExecutable.isWithSubmodules(),
+									cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 						} catch (Exception e) {
 							jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 							return false;
@@ -336,12 +336,12 @@ public class ShellExecutorUtils {
 		}
 	}
 	
-	public static void testCommands(List<String> commands, TaskLogger jobLogger) {
-		jobLogger.log("Running specified commands...");
-		
+	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
 		Commandline shell = getShell();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {
+			jobLogger.log("Running specified commands...");
+			
 			File jobScriptFile;
 			if (SystemUtils.IS_OS_WINDOWS) { 
 				jobScriptFile = new File(buildDir, "job-commands.bat");
@@ -352,10 +352,10 @@ public class ShellExecutorUtils {
 			}
 			File workspaceDir = new File(buildDir, "workspace");
 			FileUtils.createDir(workspaceDir);
-			
 			shell.workingDir(workspaceDir).addArgs(jobScriptFile.getAbsolutePath());
-			
 			shell.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger)).checkReturnCode();
+
+			KubernetesHelper.testGitLfsAvailability(git, jobLogger);
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		} finally {
@@ -384,7 +384,7 @@ public class ShellExecutorUtils {
 				checkStatus(response);
 			} 
 			
-			testCommands(jobData.getCommands(), jobLogger);
+			testCommands(new Commandline(Agent.gitPath), jobData.getCommands(), jobLogger);
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			client.close();

@@ -295,8 +295,9 @@ public class DockerExecutorUtils {
 
 									String cloneUrl = checkoutExecutable.getCloneInfo().getCloneUrl();
 									String commitHash = jobData.getCommitHash();
-									cloneRepository(git, cloneUrl, cloneUrl, commitHash, cloneDepth, 
-											newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+									cloneRepository(git, cloneUrl, cloneUrl, commitHash, 
+											checkoutExecutable.isWithLfs(), checkoutExecutable.isWithSubmodules(),
+											cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 								} catch (Exception e) {
 									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 									return false;
@@ -771,7 +772,7 @@ public class DockerExecutorUtils {
 						each.get("userName"), each.get("password"), jobLogger);
 			}
 
-			jobLogger.log("Test running specified docker image...");
+			jobLogger.log("Testing specified docker image...");
 			Commandline docker = new Commandline(Agent.dockerPath);
 			docker.addArgs("run", "--rm");
 			if (jobData.getDockerOptions() != null)
@@ -814,7 +815,7 @@ public class DockerExecutorUtils {
 			}).checkReturnCode();
 			
 			if (!SystemUtils.IS_OS_WINDOWS) {
-				jobLogger.log("Test running busybox...");
+				jobLogger.log("Checking busybox availability...");
 				docker = new Commandline(Agent.dockerPath);
 				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");			
 				docker.execute(new LineConsumer() {
@@ -833,6 +834,8 @@ public class DockerExecutorUtils {
 					
 				}).checkReturnCode();
 			}
+
+			KubernetesHelper.testGitLfsAvailability(new Commandline(Agent.gitPath), jobLogger);
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			client.close();
