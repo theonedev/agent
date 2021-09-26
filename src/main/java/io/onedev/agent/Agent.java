@@ -35,6 +35,8 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
+import oshi.SystemInfo;
+import oshi.hardware.HardwareAbstractionLayer;
 
 public class Agent {
 
@@ -111,7 +113,6 @@ public class Agent {
 	
 	private static volatile WebSocketClient client;
 	
-	@SuppressWarnings("restriction")
 	public static void main(String[] args) throws Exception {
 		thread = Thread.currentThread();
 		
@@ -255,13 +256,15 @@ public class Agent {
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
+			HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
+			
 			String cpuString = System.getenv(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString))
 				cpuString = System.getProperty(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString))
 				cpuString = props.getProperty(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString)) {
-				cpu = Runtime.getRuntime().availableProcessors()*1000;
+				cpu = hardware.getProcessor().getLogicalProcessorCount()*1000;
 			} else {
 				try {
 					cpu = Integer.parseInt(cpuString);
@@ -276,9 +279,7 @@ public class Agent {
 			if (StringUtils.isBlank(memoryString))
 				memoryString = props.getProperty(AGENT_MEMORY_KEY);
 			if (StringUtils.isBlank(memoryString)) {
-				com.sun.management.OperatingSystemMXBean os = (com.sun.management.OperatingSystemMXBean)
-					     java.lang.management.ManagementFactory.getOperatingSystemMXBean();
-				memory = (int)(os.getTotalPhysicalMemorySize()/1024/1024);				
+				memory = (int) (hardware.getMemory().getTotal()/1024/1024); 
 			} else {
 				try {
 					memory = Integer.parseInt(memoryString);
