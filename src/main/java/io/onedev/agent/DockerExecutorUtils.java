@@ -126,7 +126,7 @@ public class DockerExecutorUtils {
 						each.get("userName"), each.get("password"), jobLogger);
 			}
 			
-			String network = jobData.getExecutorName() + "-" + jobData.getProjectName() + "-" 
+			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-" 
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
