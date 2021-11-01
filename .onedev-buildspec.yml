@@ -1,10 +1,12 @@
-version: 6
+version: 13
 jobs:
 - name: Release
   steps:
   - !CheckoutStep
     name: checkout
     cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: true
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: detect build version
@@ -15,6 +17,7 @@ jobs:
       dependencies)..."
     - echo $(mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version
       -q -DforceStdout) > buildVersion
+    useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !SetBuildVersionStep
     name: set build version
@@ -25,6 +28,7 @@ jobs:
     image: 1dev/build-environment:1.1
     commands:
     - mvn deploy -Dmaven.deploy.password=@secrets:maven-deploy-password@
+    useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CreateTagStep
     name: 'create tag '
@@ -36,8 +40,8 @@ jobs:
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
-  cpuRequirement: 250m
-  memoryRequirement: 128m
+  cpuRequirement: 250
+  memoryRequirement: 128
   caches:
   - key: maven-cache
     path: /root/.m2/repository
@@ -47,6 +51,8 @@ jobs:
   - !CheckoutStep
     name: checkout
     cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: true
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: sync
@@ -55,13 +61,15 @@ jobs:
     - git config --global --unset http.extraHeader
     - git push -f https://robinshine:@secrets:github-token@@@github.com/theonedev/agent
       HEAD:main
+    useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   triggers:
   - !BranchUpdateTrigger
     branches: main
+    projects: onedev/agent
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
-  cpuRequirement: 250m
-  memoryRequirement: 128m
+  cpuRequirement: 250
+  memoryRequirement: 128
   timeout: 3600
