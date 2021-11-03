@@ -191,7 +191,7 @@ public class Agent {
 						FileUtils.deleteDir(dir);
 				}
 			}
-		    
+			
 			Properties props = new Properties();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/attributes.properties"))) {

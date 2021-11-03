@@ -85,11 +85,9 @@ public class AgentSocket implements Runnable {
 	    					} 
 	    					
 	    					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
-	    					String wrapperConfContent = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
-	    					FileUtils.writeStringToFile(
-	    							wrapperConfFile, 
-	    							wrapperConfContent.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/"), 
-	    							StandardCharsets.UTF_8);
+	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
+	    					wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
+	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, StandardCharsets.UTF_8);
 	    				} 
 	    			} finally {
 	    				client.close();
