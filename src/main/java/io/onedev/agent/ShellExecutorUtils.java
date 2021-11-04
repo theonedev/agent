@@ -140,8 +140,6 @@ public class ShellExecutorUtils {
 			
 			File userDir = new File(buildDir, "user");
 			FileUtils.createDir(userDir);
-			Map<String, String> environments = new HashMap<>();
-			environments.put("HOME", userDir.getAbsolutePath());
 			
 			String messageData = jobData.getJobToken() + ":" + workspaceDir.getAbsolutePath();
 			new Message(MessageType.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
@@ -183,7 +181,7 @@ public class ShellExecutorUtils {
 						for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
 							if (!PathUtils.isCurrent(entry.getValue())) {
 								File sourceDir = entry.getKey().getDirectory(cacheHomeDir);
-								File destDir = resolveCachePath(workspaceDir, userDir, entry.getValue());
+								File destDir = resolveCachePath(workspaceDir, entry.getValue());
 								if (destDir.exists())
 									FileUtils.deleteDir(destDir);
 								else
@@ -197,6 +195,8 @@ public class ShellExecutorUtils {
 						}
 						
 						Commandline shell = getShell();
+						Map<String, String> environments = new HashMap<>();
+						environments.put("GIT_HOME", userDir.getAbsolutePath());
 						shell.workingDir(workspaceDir).environments(environments);
 						shell.addArgs(jobScriptFile.getAbsolutePath());
 						
@@ -211,6 +211,8 @@ public class ShellExecutorUtils {
 							jobLogger.log("Checking out code...");
 							Commandline git = new Commandline(Agent.gitPath);	
 							git.workingDir(workspaceDir);
+							Map<String, String> environments = new HashMap<>();
+							environments.put("HOME", userDir.getAbsolutePath());
 							git.environments(environments);
 
 							CloneInfo cloneInfo = checkoutExecutable.getCloneInfo();
@@ -324,8 +326,9 @@ public class ShellExecutorUtils {
 			return new Commandline("sh");
 	}
 	
-	public static File resolveCachePath(File workspaceDir, File homeDir, String cachePath) {
+	public static File resolveCachePath(File workspaceDir, String cachePath) {
 		if (cachePath.startsWith(KubernetesHelper.HOME_PREFIX)) { 
+			File homeDir = new File(System.getProperty("user.home"));
 			return new File(homeDir, cachePath.substring(KubernetesHelper.HOME_PREFIX.length()));
 		} else {
 			File cacheDir = new File(cachePath);
