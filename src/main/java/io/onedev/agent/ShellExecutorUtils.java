@@ -327,16 +327,11 @@ public class ShellExecutorUtils {
 	}
 	
 	public static File resolveCachePath(File workspaceDir, String cachePath) {
-		if (cachePath.startsWith(KubernetesHelper.HOME_PREFIX)) { 
-			File homeDir = new File(System.getProperty("user.home"));
-			return new File(homeDir, cachePath.substring(KubernetesHelper.HOME_PREFIX.length()));
-		} else {
-			File cacheDir = new File(cachePath);
-			if (cacheDir.isAbsolute()) 
-				throw new ExplicitException("Shell executor does not support absolute cache path: " + cachePath);
-			else 
-				return new File(workspaceDir, cachePath);
-		}
+		File cacheDir = new File(cachePath);
+		if (cacheDir.isAbsolute()) 
+			throw new ExplicitException("Shell executor does not support absolute cache path: " + cachePath);
+		else 
+			return new File(workspaceDir, cachePath);
 	}
 	
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {

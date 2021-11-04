@@ -239,8 +239,8 @@ public class DockerExecutorUtils {
 								for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
 									if (!PathUtils.isCurrent(entry.getValue())) {
 										String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
-										for (String each: KubernetesHelper.resolveCachePath(containerWorkspace, entry.getValue()))
-											docker.addArgs("-v", hostCachePath + ":" + each);
+										String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
+										docker.addArgs("-v", hostCachePath + ":" + containerCachePath);
 									}
 								}
 								
