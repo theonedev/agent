@@ -259,21 +259,6 @@ public class ShellExecutorUtils {
 
 			if (!successful)
 				throw new FailedException();
-			
-			jobLogger.log("Reporting job caches...");
-			
-			target = client.target(Agent.serverUrl).path("api/k8s/report-job-caches");
-			builder = target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-			StringBuilder toStringBuilder = new StringBuilder();
-			for (CacheInstance instance: getCacheInstances(cacheHomeDir).keySet()) 
-				toStringBuilder.append(instance.toString()).append(";");
-			Response response = builder.post(Entity.entity(toStringBuilder.toString(), MediaType.APPLICATION_OCTET_STREAM));
-			try {
-				checkStatus(response);
-			} finally {
-				response.close();
-			}
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			client.close();
