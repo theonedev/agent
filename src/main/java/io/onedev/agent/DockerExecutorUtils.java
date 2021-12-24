@@ -170,15 +170,12 @@ public class DockerExecutorUtils {
 					
 					String containerBuildHome;
 					String containerWorkspace;
-					String containerEntryPoint;
 					if (SystemUtils.IS_OS_WINDOWS) {
 						containerBuildHome = "C:\\onedev-build";
 						containerWorkspace = "C:\\onedev-build\\workspace";
-						containerEntryPoint = "cmd";
 					} else {
 						containerBuildHome = "/onedev-build";
 						containerWorkspace = "/onedev-build/workspace";
-						containerEntryPoint = "sh";
 					}
 					
 					String messageData = jobData.getJobToken() + ":" + containerWorkspace;
@@ -195,36 +192,14 @@ public class DockerExecutorUtils {
 							
 							if (executable instanceof CommandExecutable) {
 								CommandExecutable commandExecutable = (CommandExecutable) executable;
-								String[] containerCommand;
-								if (SystemUtils.IS_OS_WINDOWS) {
-									if (hostAuthInfoHome.get() != null)
-										containerCommand = new String[] {"/c", "xcopy /Y /S /K /Q /H /R C:\\Users\\%USERNAME%\\onedev\\* C:\\Users\\%USERNAME% > nul && C:\\onedev-build\\job-commands.bat"};						
-									else
-										containerCommand = new String[] {"/c", "C:\\onedev-build\\job-commands.bat"};						
-									File scriptFile = new File(hostBuildHome, "job-commands.bat");
-									try {
-										FileUtils.writeLines(
-												scriptFile, 
-												new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), hostBuildHome)), 
-												"\r\n");
-									} catch (IOException e) {
-										throw new RuntimeException(e);
-									}
-								} else {
-									if (hostAuthInfoHome.get() != null)
-										containerCommand = new String[] {"-c", "cp -r -f -p /root/auth-info/. /root && sh /onedev-build/job-commands.sh"};
-									else
-										containerCommand = new String[] {"/onedev-build/job-commands.sh"};
-									File scriptFile = new File(hostBuildHome, "job-commands.sh");
-									try {
-										FileUtils.writeLines(
-												scriptFile, 
-												new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), hostBuildHome)), 
-												"\n");
-									} catch (IOException e) {
-										throw new RuntimeException(e);
-									}
+								
+								if (commandExecutable.getImage() == null) {
+									throw new ExplicitException("This step should be executed by server shell "
+											+ "executor or remote shell executor");
 								}
+								
+								Commandline entrypoint = getEntrypoint(hostBuildHome, commandExecutable, 
+										hostAuthInfoHome.get() != null);
 								
 								String containerName = network + "-step-" + stringifyPosition(position);
 								Commandline docker = new Commandline(Agent.dockerPath);
@@ -259,10 +234,10 @@ public class DockerExecutorUtils {
 
 								if (commandExecutable.isUseTTY())
 									docker.addArgs("-t");
-								docker.addArgs("-w", containerWorkspace, "--entrypoint=" + containerEntryPoint);
+								docker.addArgs("-w", containerWorkspace, "--entrypoint=" + entrypoint.executable());
 								
 								docker.addArgs(commandExecutable.getImage());
-								docker.addArgs(containerCommand);
+								docker.addArgs(entrypoint.arguments().toArray(new String[0]));
 								
 								ExecutionResult result = docker.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger), null, 
 										newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
@@ -379,6 +354,46 @@ public class DockerExecutorUtils {
 			}
 			
 		};
+	}
+	
+	public static Commandline getEntrypoint(File hostBuildHome, CommandExecutable commandExecutable, boolean withHostAuthInfo) {
+		Commandline interpreter = commandExecutable.getInterpreter();
+		String entrypointExecutable;
+		String[] entrypointArgs;
+		
+		File scriptFile = new File(hostBuildHome, "job-commands" + commandExecutable.getScriptExtension());
+		try {
+			FileUtils.writeLines(
+					scriptFile, 
+					new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), hostBuildHome)), 
+					commandExecutable.getEndOfLine());
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+		
+		if (SystemUtils.IS_OS_WINDOWS) {
+			if (withHostAuthInfo) {
+				entrypointExecutable = "cmd";
+				entrypointArgs = new String[] {"/c", "xcopy /Y /S /K /Q /H /R C:\\Users\\%USERNAME%\\auth-info\\* C:\\Users\\%USERNAME% > nul && " + interpreter + " C:\\onedev-build\\" + scriptFile.getName()};						
+			} else {
+				entrypointExecutable = interpreter.executable();
+				List<String> interpreterArgs = new ArrayList<>(interpreter.arguments());
+				interpreterArgs.add("C:\\onedev-build\\" + scriptFile.getName());
+				entrypointArgs = interpreterArgs.toArray(new String[0]);						
+			}
+		} else {
+			if (withHostAuthInfo) {
+				entrypointExecutable = "sh";
+				entrypointArgs = new String[] {"-c", "cp -r -f -p /root/auth-info/. /root && " + interpreter + " /onedev-build/" + scriptFile.getName()};
+			} else {
+				entrypointExecutable = interpreter.executable();
+				List<String> interpreterArgs = new ArrayList<>(interpreter.arguments());
+				interpreterArgs.add("/onedev-build/" + scriptFile.getName());
+				entrypointArgs = interpreterArgs.toArray(new String[0]);						
+			}
+		}
+		
+		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
 	}
 	
 	public static void cleanDirAsRoot(File dir, Commandline docker, boolean runInDocker) {

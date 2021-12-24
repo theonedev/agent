@@ -32,7 +32,6 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
 import org.apache.commons.lang3.SerializationUtils;
-import org.apache.commons.lang3.SystemUtils;
 import org.eclipse.jetty.websocket.api.Session;
 
 import com.google.common.base.Throwables;
@@ -155,27 +154,20 @@ public class ShellExecutorUtils {
 					
 					if (executable instanceof CommandExecutable) {
 						CommandExecutable commandExecutable = (CommandExecutable) executable;
-						File jobScriptFile;
-						if (SystemUtils.IS_OS_WINDOWS) {
-							jobScriptFile = new File(buildDir, "job-commands.bat");
-							try {
-								FileUtils.writeLines(
-										jobScriptFile, 
-										new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), buildDir)), 
-										"\r\n");
-							} catch (IOException e) {
-								throw new RuntimeException(e);
-							}
-						} else {
-							jobScriptFile = new File(buildDir, "job-commands.sh");
-							try {
-								FileUtils.writeLines(
-										jobScriptFile, 
-										new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), buildDir)), 
-										"\n");
-							} catch (IOException e) {
-								throw new RuntimeException(e);
-							}
+						
+						if (commandExecutable.getImage() != null) {
+							throw new ExplicitException("This step should be executed by server docker executor, "
+									+ "remote docker executor, or kubernetes executor");
+						}
+						
+						File jobScriptFile = new File(buildDir, "job-commands" + commandExecutable.getScriptExtension());
+						try {
+							FileUtils.writeLines(
+									jobScriptFile, 
+									new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), buildDir)), 
+									commandExecutable.getEndOfLine());
+						} catch (IOException e) {
+							throw new RuntimeException(e);
 						}
 						
 						for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
@@ -194,13 +186,13 @@ public class ShellExecutorUtils {
 							}
 						}
 						
-						Commandline shell = getShell();
+						Commandline interpreter = commandExecutable.getInterpreter();
 						Map<String, String> environments = new HashMap<>();
 						environments.put("GIT_HOME", userDir.getAbsolutePath());
-						shell.workingDir(workspaceDir).environments(environments);
-						shell.addArgs(jobScriptFile.getAbsolutePath());
+						interpreter.workingDir(workspaceDir).environments(environments);
+						interpreter.addArgs(jobScriptFile.getAbsolutePath());
 						
-						ExecutionResult result = shell.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+						ExecutionResult result = interpreter.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 						if (result.getReturnCode() != 0) {
 							jobLogger.error("Step \"" + stepNames + "\" is failed: Command failed with exit code " + result.getReturnCode());
 							return false;
@@ -304,13 +296,6 @@ public class ShellExecutorUtils {
 		};
 	}
 	
-	public static Commandline getShell() {
-		if (SystemUtils.IS_OS_WINDOWS) 
-			return new Commandline("cmd").addArgs("/c");
-		else
-			return new Commandline("sh");
-	}
-	
 	public static File resolveCachePath(File workspaceDir, String cachePath) {
 		File cacheDir = new File(cachePath);
 		if (cacheDir.isAbsolute()) 
@@ -320,23 +305,18 @@ public class ShellExecutorUtils {
 	}
 	
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
-		Commandline shell = getShell();
+		CommandExecutable executable = new CommandExecutable(null, commands, true);
+		Commandline interpreter = executable.getInterpreter();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {
 			jobLogger.log("Running specified commands...");
 			
-			File jobScriptFile;
-			if (SystemUtils.IS_OS_WINDOWS) { 
-				jobScriptFile = new File(buildDir, "job-commands.bat");
-				FileUtils.writeLines(jobScriptFile, commands, "\r\n");
-			} else { 
-				jobScriptFile = new File(buildDir, "job-commands.sh");
-				FileUtils.writeLines(jobScriptFile, commands, "\n");
-			}
+			File jobScriptFile = new File(buildDir, "job-commands" + executable.getScriptExtension());
+			FileUtils.writeLines(jobScriptFile, commands, executable.getEndOfLine());
 			File workspaceDir = new File(buildDir, "workspace");
 			FileUtils.createDir(workspaceDir);
-			shell.workingDir(workspaceDir).addArgs(jobScriptFile.getAbsolutePath());
-			shell.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger)).checkReturnCode();
+			interpreter.workingDir(workspaceDir).addArgs(jobScriptFile.getAbsolutePath());
+			interpreter.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger)).checkReturnCode();
 
 			KubernetesHelper.testGitLfsAvailability(git, jobLogger);
 		} catch (IOException e) {
