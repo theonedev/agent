@@ -259,20 +259,27 @@ public class DockerExecutorUtils {
 									CloneInfo cloneInfo = checkoutExecutable.getCloneInfo();
 									
 									cloneInfo.writeAuthData(hostAuthInfoHome.get(), git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-									
-									List<String> trustCertContent = jobData.getTrustCertContent();
-									if (!trustCertContent.isEmpty()) {
-										installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, 
-												git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+									try {
+										List<String> trustCertContent = jobData.getTrustCertContent();
+										if (!trustCertContent.isEmpty()) {
+											installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, 
+													git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+										}
+	
+										int cloneDepth = checkoutExecutable.getCloneDepth();
+	
+										String cloneUrl = checkoutExecutable.getCloneInfo().getCloneUrl();
+										String commitHash = jobData.getCommitHash();
+										cloneRepository(git, cloneUrl, cloneUrl, commitHash, 
+												checkoutExecutable.isWithLfs(), checkoutExecutable.isWithSubmodules(),
+												cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+									} finally {
+										git.clearArgs();
+										git.addArgs("config", "--global", "--unset", "core.sshCommand");
+										ExecutionResult result = git.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+										if (result.getReturnCode() != 5 && result.getReturnCode() != 0)
+											result.checkReturnCode();
 									}
-
-									int cloneDepth = checkoutExecutable.getCloneDepth();
-
-									String cloneUrl = checkoutExecutable.getCloneInfo().getCloneUrl();
-									String commitHash = jobData.getCommitHash();
-									cloneRepository(git, cloneUrl, cloneUrl, commitHash, 
-											checkoutExecutable.isWithLfs(), checkoutExecutable.isWithSubmodules(),
-											cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 								} catch (Exception e) {
 									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 									return false;
