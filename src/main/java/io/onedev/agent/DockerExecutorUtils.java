@@ -225,8 +225,8 @@ public class DockerExecutorUtils {
 								if (hostAuthInfoHome.get() != null) {
 									String outerPath = hostAuthInfoHome.get().getAbsolutePath();
 									if (SystemUtils.IS_OS_WINDOWS) {
-										docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerAdministrator\\onedev");
-										docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerUser\\onedev");
+										docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
+										docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerUser\\auth-info");
 									} else { 
 										docker.addArgs("-v", outerPath + ":/root/auth-info");
 									}
