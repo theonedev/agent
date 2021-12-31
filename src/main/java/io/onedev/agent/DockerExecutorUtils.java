@@ -203,7 +203,7 @@ public class DockerExecutorUtils {
 								}
 							}
 							
-							if (SystemUtils.IS_OS_LINUX) 
+							if (!SystemUtils.IS_OS_WINDOWS) 
 								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
 							
 							if (hostAuthInfoHome.get() != null) {
