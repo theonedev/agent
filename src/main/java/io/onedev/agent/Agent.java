@@ -35,6 +35,7 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.OsInfo;
 import oshi.SystemInfo;
 import oshi.hardware.HardwareAbstractionLayer;
 
@@ -97,11 +98,7 @@ public class Agent {
 	
 	public static String name;
 	
-	public static AgentOs os;
-	
-	public static String osVersion;
-	
-	public static String osArch;
+	public static OsInfo osInfo;
 	
 	public static Class<?> wrapperManagerClass;
 	
@@ -201,20 +198,8 @@ public class Agent {
 					attributes.put((String)entry.getKey(), (String)entry.getValue());
 				Agent.attributes = attributes;
 			}
-			
-			if (SystemUtils.IS_OS_WINDOWS)
-				os = AgentOs.WINDOWS;
-			else if (SystemUtils.IS_OS_MAC_OSX)
-				os = AgentOs.MACOSX;
-			else if (SystemUtils.IS_OS_LINUX)
-				os = AgentOs.LINUX;
-			else if (SystemUtils.IS_OS_FREE_BSD)
-				os = AgentOs.FREEBSD;
-			else
-				os = AgentOs.OTHERS;
 
-			osVersion = System.getProperty("os.version");
-			osArch = System.getProperty("os.arch");
+			osInfo = ExecutorUtils.getOsInfo();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/agent.properties"))) {
 				props.load(is);
@@ -469,5 +454,5 @@ public class Agent {
 		}
 		return file;
 	}
-	
+		
 }

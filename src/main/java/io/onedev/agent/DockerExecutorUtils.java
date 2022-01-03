@@ -1,357 +1,46 @@
 package io.onedev.agent;
 
-import static io.onedev.k8shelper.KubernetesHelper.BEARER;
-import static io.onedev.k8shelper.KubernetesHelper.checkCacheAllocations;
-import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
-import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
-import static io.onedev.k8shelper.KubernetesHelper.getCacheInstances;
-import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
-import static io.onedev.k8shelper.KubernetesHelper.stringifyPosition;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.Entity;
-import javax.ws.rs.client.Invocation;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
 
-import org.apache.commons.lang3.SerializationUtils;
 import org.apache.commons.lang3.SystemUtils;
-import org.eclipse.jetty.websocket.api.Session;
+import org.apache.commons.text.WordUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Throwables;
 
-import io.onedev.agent.job.DockerJobData;
-import io.onedev.agent.job.FailedException;
-import io.onedev.agent.job.TestDockerJobData;
-import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.CacheAllocationRequest;
-import io.onedev.k8shelper.CacheInstance;
-import io.onedev.k8shelper.CheckoutExecutable;
-import io.onedev.k8shelper.CloneInfo;
 import io.onedev.k8shelper.CommandExecutable;
-import io.onedev.k8shelper.CompositeExecutable;
-import io.onedev.k8shelper.ContainerExecutable;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.LeafExecutable;
-import io.onedev.k8shelper.LeafHandler;
-import io.onedev.k8shelper.ServerExecutable;
+import io.onedev.k8shelper.OsExecution;
+import io.onedev.k8shelper.OsInfo;
 
 public class DockerExecutorUtils {
 
 	private static final Logger logger = LoggerFactory.getLogger(DockerExecutorUtils.class);
 
-	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
-	
-	static void executeJob(Session session, DockerJobData jobData) {
-		File hostBuildHome = FileUtils.createTempDir("onedev-build");
-		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
-		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
-			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
-					entry.getValue(), StandardCharsets.UTF_8.name());
-		}
-		Client client = ClientBuilder.newClient();
-		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
-		try {
-			TaskLogger jobLogger = new TaskLogger() {
-
-				@Override
-				public void log(String message, String sessionId) {
-					Agent.log(session, jobData.getJobToken(), message, sessionId);
-				}
-				
-			};
-			
-			File hostCacheHome = Agent.getCacheHome();
-			
-			jobLogger.log("Allocating job caches...") ;
-			
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-
-			Map<CacheInstance, String> cacheAllocations;
-			try (Response response = builder.post(Entity.entity(
-					new CacheAllocationRequest(new Date(), getCacheInstances(hostCacheHome)).toString(),
-					MediaType.APPLICATION_OCTET_STREAM))) {
-				checkStatus(response);
-				cacheAllocations = SerializationUtils.deserialize(response.readEntity(byte[].class));
-			}
-			
-			checkCacheAllocations(hostCacheHome, cacheAllocations, new Consumer<File>() {
-
-				@Override
-				public void accept(File dir) {
-					DockerExecutorUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), false);
-				}
-				
-			});
-			
-			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(new Commandline(Agent.dockerPath), each.get("url"), 
-						each.get("userName"), each.get("password"), jobLogger);
-			}
-			
-			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-" 
-					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
-			jobLogger.log("Creating docker network '" + network + "'...");
-			
-			createNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
-			try {
-				for (Map<String, Serializable> jobService: jobData.getServices()) {
-					jobLogger.log("Starting service (name: " + jobService.get("name") + ", image: " + jobService.get("image") + ")...");
-					startService(new Commandline(Agent.dockerPath), network, jobService, jobLogger);
-				}
-				
-				File hostWorkspace = new File(hostBuildHome, "workspace");
-				FileUtils.createDir(hostWorkspace);
-				
-				AtomicReference<File> hostAuthInfoHome = new AtomicReference<>(null);
-				try {						
-					jobLogger.log("Downloading job dependencies...");
-					
-					target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
-					builder =  target.request();
-					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-					
-					try (Response response = builder.get()){
-						checkStatus(response);
-						try (InputStream is = response.readEntity(InputStream.class)) {
-							FileUtils.untar(is, hostWorkspace, false);
-						}
-					}
-					
-					String containerBuildHome;
-					String containerWorkspace;
-					if (SystemUtils.IS_OS_WINDOWS) {
-						containerBuildHome = "C:\\onedev-build";
-						containerWorkspace = "C:\\onedev-build\\workspace";
-					} else {
-						containerBuildHome = "/onedev-build";
-						containerWorkspace = "/onedev-build/workspace";
-					}
-					
-					String messageData = jobData.getJobToken() + ":" + containerWorkspace;
-					new Message(MessageType.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
-
-					CompositeExecutable entryExecutable = new CompositeExecutable(jobData.getActions());
-
-					boolean successful = entryExecutable.execute(new LeafHandler() {
-
-						private int runStepContainer(String image, @Nullable String entrypoint, 
-								List<String> arguments, Map<String, String> environments, 
-								@Nullable String workingDir, List<Integer> position, boolean useTTY) {
-							String containerName = network + "-step-" + stringifyPosition(position);
-							Commandline docker = new Commandline(Agent.dockerPath);
-							docker.clearArgs();
-							docker.addArgs("run", "--name=" + containerName, "--network=" + network);
-							if (jobData.getDockerOptions() != null)
-								docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
-							
-							docker.addArgs("-v", hostBuildHome.getAbsolutePath() + ":" + containerBuildHome);
-							if (workingDir != null) {
-								docker.addArgs("-v", hostWorkspace.getAbsolutePath() + ":" + workingDir);
-								docker.addArgs("-w", workingDir);
-							} else {
-								docker.addArgs("-w", containerWorkspace);
-							}
-							
-							for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
-								if (!PathUtils.isCurrent(entry.getValue())) {
-									String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
-									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
-									docker.addArgs("-v", hostCachePath + ":" + containerCachePath);
-								} else {
-									throw new ExplicitException("Invalid cache path: " + entry.getValue());
-								}
-							}
-							
-							if (SystemUtils.IS_OS_WINDOWS) 
-								docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
-							else
-								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
-							
-							if (hostAuthInfoHome.get() != null) {
-								String outerPath = hostAuthInfoHome.get().getAbsolutePath();
-								if (SystemUtils.IS_OS_WINDOWS) {
-									docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
-									docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerUser\\auth-info");
-								} else { 
-									docker.addArgs("-v", outerPath + ":/root/auth-info");
-								}
-							}
-
-							for (Map.Entry<String, String> entry: environments.entrySet()) 
-								docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
-							
-							if (useTTY)
-								docker.addArgs("-t");
-							
-							if (entrypoint != null)
-								docker.addArgs("--entrypoint=" + entrypoint);
-							
-							docker.addArgs(image);
-							docker.addArgs(arguments.toArray(new String[arguments.size()]));
-							
-							ExecutionResult result = docker.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger), null, 
-									newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
-							return result.getReturnCode();
-						}
-						
-						@Override
-						public boolean execute(LeafExecutable executable, List<Integer> position) {
-							String stepNames = entryExecutable.getNamesAsString(position);
-							jobLogger.notice("Running step \"" + stepNames + "\"...");
-							
-							if (executable instanceof CommandExecutable) {
-								CommandExecutable commandExecutable = (CommandExecutable) executable;
-								
-								if (commandExecutable.getImage() == null) {
-									throw new ExplicitException("This step can only be executed by server shell "
-											+ "executor or remote shell executor");
-								}
-								
-								Commandline entrypoint = getEntrypoint(hostBuildHome, commandExecutable, 
-										hostAuthInfoHome.get() != null);
-								int exitCode = runStepContainer(commandExecutable.getImage(), entrypoint.executable(), 
-										entrypoint.arguments(), new HashMap<>(), null, position, commandExecutable.isUseTTY());
-								
-								if (exitCode != 0) {
-									jobLogger.error("Step \"" + stepNames + "\" is failed: Command exited with code " + exitCode);
-									return false;
-								}
-							} else if (executable instanceof ContainerExecutable) {
-								ContainerExecutable containerExecutable = (ContainerExecutable) executable;
-
-								List<String> arguments = new ArrayList<>();
-								if (containerExecutable.getArgs() != null)
-									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(containerExecutable.getArgs())));
-								int exitCode = runStepContainer(containerExecutable.getImage(), null, arguments, 
-										containerExecutable.getEnvMap(), containerExecutable.getWorkingDir(), 
-										position, containerExecutable.isUseTTY());
-								if (exitCode != 0) {
-									jobLogger.error("Step \"" + stepNames + "\" is failed: Container exit with code " + exitCode);
-									return false;
-								} 
-							} else if (executable instanceof CheckoutExecutable) {
-								try {
-									CheckoutExecutable checkoutExecutable = (CheckoutExecutable) executable;
-									jobLogger.log("Checking out code...");
-									
-									if (hostAuthInfoHome.get() == null)
-										hostAuthInfoHome.set(FileUtils.createTempDir());
-									
-									Commandline git = new Commandline(Agent.gitPath);	
-									git.workingDir(hostWorkspace).environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
-
-									CloneInfo cloneInfo = checkoutExecutable.getCloneInfo();
-									
-									cloneInfo.writeAuthData(hostAuthInfoHome.get(), git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-									try {
-										List<String> trustCertContent = jobData.getTrustCertContent();
-										if (!trustCertContent.isEmpty()) {
-											installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, 
-													git, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										}
-	
-										int cloneDepth = checkoutExecutable.getCloneDepth();
-	
-										String cloneUrl = checkoutExecutable.getCloneInfo().getCloneUrl();
-										String commitHash = jobData.getCommitHash();
-										cloneRepository(git, cloneUrl, cloneUrl, commitHash, 
-												checkoutExecutable.isWithLfs(), checkoutExecutable.isWithSubmodules(),
-												cloneDepth, newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-									} finally {
-										git.clearArgs();
-										git.addArgs("config", "--global", "--unset", "core.sshCommand");
-										ExecutionResult result = git.execute(newInfoLogger(jobLogger), newErrorLogger(jobLogger));
-										if (result.getReturnCode() != 5 && result.getReturnCode() != 0)
-											result.checkReturnCode();
-									}
-								} catch (Exception e) {
-									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
-									return false;
-								}
-							} else {
-								ServerExecutable serverExecutable = (ServerExecutable) executable;
-								
-								try {
-									KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
-											serverExecutable.getIncludeFiles(), serverExecutable.getExcludeFiles(), 
-											serverExecutable.getPlaceholders(), hostBuildHome, hostWorkspace, jobLogger);
-								} catch (Exception e) {
-									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
-									return false;
-								}
-							}
-							jobLogger.success("Step \"" + stepNames + "\" is successful");
-							return true;
-						}
-
-						@Override
-						public void skip(LeafExecutable executable, List<Integer> position) {
-							jobLogger.notice("Step \"" + entryExecutable.getNamesAsString(position) + "\" is skipped");
-						}
-						
-					}, new ArrayList<>());
-					
-					if (!successful)
-						throw new FailedException();
-				} catch (IOException e) {
-					throw new RuntimeException(e);
-				} finally {
-					if (hostAuthInfoHome.get() != null)
-						FileUtils.deleteDir(hostAuthInfoHome.get());
-				}
-			} finally {
-				deleteNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
-			}
-		} finally {
-			jobThreads.remove(jobData.getJobToken());
-			client.close();
-			
-			cleanDirAsRoot(hostBuildHome, new Commandline(Agent.dockerPath), false);
-			FileUtils.deleteDir(hostBuildHome);
-		}
-	}
-	
 	public static String getErrorMessage(Exception exception) {
 		ExplicitException explicitException = ExceptionUtils.find(exception, ExplicitException.class);
 		if (explicitException == null) 
@@ -388,16 +77,18 @@ public class DockerExecutorUtils {
 		};
 	}
 	
-	public static Commandline getEntrypoint(File hostBuildHome, CommandExecutable commandExecutable, boolean withHostAuthInfo) {
+	public static Commandline getEntrypoint(File hostBuildHome, CommandExecutable commandExecutable, 
+			OsInfo osInfo, boolean withHostAuthInfo) {
 		Commandline interpreter = commandExecutable.getInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		
 		File scriptFile = new File(hostBuildHome, "job-commands" + commandExecutable.getScriptExtension());
 		try {
+			OsExecution execution = commandExecutable.getExecution(osInfo);
 			FileUtils.writeLines(
 					scriptFile, 
-					new ArrayList<>(replacePlaceholders(commandExecutable.getCommands(), hostBuildHome)), 
+					new ArrayList<>(replacePlaceholders(execution.getCommands(), hostBuildHome)), 
 					commandExecutable.getEndOfLine());
 		} catch (IOException e) {
 			throw new RuntimeException(e);
@@ -614,39 +305,90 @@ public class DockerExecutorUtils {
 			}).checkReturnCode();
 		}
 	}
+	
+	public static OsInfo getOsInfo(Commandline docker, String image, TaskLogger jobLogger, boolean pullIfNotExist) {
+		docker.clearArgs();
+		docker.addArgs("image", "inspect", image, "--format={{.Os}}%{{.OsVersion}}%{{.Architecture}}");
 
-	static void cancelJob(String jobToken) {
-		Thread thread = jobThreads.get(jobToken);
-		if (thread != null)
-			thread.interrupt();
-	}
-		
-	public static LineConsumer newInfoLogger(TaskLogger jobLogger) {
-		return new LineConsumer(StandardCharsets.UTF_8.name()) {
-
-			private String sessionId = UUID.randomUUID().toString();
+		AtomicReference<String> imageNotExistError = new AtomicReference<>();
+		AtomicReference<String> osInfoString = new AtomicReference<>(null);
+		ExecutionResult result = docker.execute(new LineConsumer() {
 			
 			@Override
 			public void consume(String line) {
-				jobLogger.log(line, sessionId);
+				if (line.contains("%")) 
+					osInfoString.set(line);
 			}
 			
-		};
+		}, new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				if (line.startsWith("Error: No such image:")) 
+					imageNotExistError.set(line);
+				else
+					jobLogger.error(line);
+			}
+			
+		});
+
+		if (imageNotExistError.get() != null) {
+			if (pullIfNotExist) {
+				docker.clearArgs();
+				docker.addArgs("pull", image);
+				
+				docker.execute(new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						jobLogger.log(line);
+					}
+					
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						jobLogger.error(line);
+					}
+					
+				}).checkReturnCode();
+				
+				return getOsInfo(docker, image, jobLogger, false);
+			} else {
+				throw new ExplicitException(imageNotExistError.get());
+			}
+		} else {
+			result.checkReturnCode();
+			
+			List<String> fields = StringUtils.splitAndTrim(osInfoString.get(), "%");
+			String osName = WordUtils.capitalize(fields.get(0));
+			String osVersion = fields.get(1);
+			if (osName.equals("Windows"))
+				osVersion = StringUtils.substringBeforeLast(osVersion, ".");
+			return new OsInfo(osName, osVersion, fields.get(2));
+		}
 	}
 	
-	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
-		return new LineConsumer(StandardCharsets.UTF_8.name()) {
-
-			@Override
-			public void consume(String line) {
-				jobLogger.warning(line);
-			}
-			
-		};
+	public static boolean isUseProcessIsolation(Commandline docker, String image, 
+			OsInfo nodeOsInfo, TaskLogger jobLogger) {
+		if (SystemUtils.IS_OS_WINDOWS) {
+			jobLogger.log("Checking image OS info...");
+			OsInfo imageOsInfo = getOsInfo(docker, image, jobLogger, true);
+			String imageWinVersion = OsInfo.WINDOWS_VERSIONS.get(imageOsInfo.getWindowsBuild());
+			String osWinVersion = OsInfo.WINDOWS_VERSIONS.get(nodeOsInfo.getWindowsBuild());
+			if (imageWinVersion != null && osWinVersion != null && imageWinVersion.equals(osWinVersion))
+				return true;
+		}
+		return false;
 	}
 	
 	@SuppressWarnings({ "resource", "unchecked" })
-	public static void startService(Commandline docker, String network, Map<String, Serializable> jobService, TaskLogger jobLogger) {
+	public static void startService(Commandline docker, String network, Map<String, Serializable> jobService, 
+			OsInfo nodeOsInfo, TaskLogger jobLogger) {
+		String image = (String) jobService.get("image");
+		docker.clearArgs();
+		boolean useProcessIsolation = isUseProcessIsolation(docker, image, nodeOsInfo, jobLogger);
+		
 		jobLogger.log("Creating service container...");
 		
 		String containerName = network + "-service-" + jobService.get("name");
@@ -656,7 +398,9 @@ public class DockerExecutorUtils {
 				"--network-alias=" + jobService.get("name"));
 		for (Map.Entry<String, String> entry: ((Map<String, String>)jobService.get("envVars")).entrySet()) 
 			docker.addArgs("--env", entry.getKey() + "=" + entry.getValue());
-		docker.addArgs((String)jobService.get("image"));
+		if (useProcessIsolation)
+			docker.addArgs("--isolation=process");
+		docker.addArgs(image);
 		if (jobService.get("arguments") != null) {
 			for (String token: StringUtils.parseQuoteTokens((String) jobService.get("arguments")))
 				docker.addArgs(token);
@@ -766,119 +510,6 @@ public class DockerExecutorUtils {
 			} catch (InterruptedException e) {
 				throw new RuntimeException(e);
 			}
-		}		
-	}
-
-	public static void testRemoteExecutor(Session session, TestDockerJobData jobData) {
-		File workspaceDir = null;
-		File cacheDir = null;
-		File authInfoDir = null;
-		
-		Client client = ClientBuilder.newClient();
-		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
-		try {
-			TaskLogger jobLogger = new TaskLogger() {
-
-				@Override
-				public void log(String message, String sessionId) {
-					Agent.log(session, jobData.getJobToken(), message, sessionId);
-				}
-				
-			};
-			
-			workspaceDir = Bootstrap.createTempDir("workspace");
-			cacheDir = new File(Agent.getCacheHome(), UUID.randomUUID().toString());
-			FileUtils.createDir(cacheDir);
-			authInfoDir = FileUtils.createTempDir();
-			
-			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/test");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-			try (Response response = builder.get()) {
-				checkStatus(response);
-			} 
-			
-			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(new Commandline(Agent.dockerPath), each.get("url"), 
-						each.get("userName"), each.get("password"), jobLogger);
-			}
-
-			jobLogger.log("Testing specified docker image...");
-			Commandline docker = new Commandline(Agent.dockerPath);
-			docker.addArgs("run", "--rm");
-			if (jobData.getDockerOptions() != null)
-				docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
-			
-			String containerWorkspacePath;
-			String containerCachePath;
-			if (SystemUtils.IS_OS_WINDOWS) {
-				containerWorkspacePath = "C:\\onedev-build\\workspace";
-				containerCachePath = "C:\\onedev-build\\cache";
-			} else {
-				containerWorkspacePath = "/onedev-build/workspace";
-				containerCachePath = "/onedev-build/cache";
-			}
-			docker.addArgs("-v", workspaceDir.getAbsolutePath() + ":" + containerWorkspacePath);
-			docker.addArgs("-v", cacheDir.getAbsolutePath() + ":" + containerCachePath);
-			
-			docker.addArgs("-w", containerWorkspacePath);
-			docker.addArgs(jobData.getDockerImage());
-			
-			if (SystemUtils.IS_OS_WINDOWS) 
-				docker.addArgs("cmd", "/c", "echo hello from container");
-			else 
-				docker.addArgs("sh", "-c", "echo hello from container");
-			
-			docker.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-				
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-				
-			}).checkReturnCode();
-			
-			if (!SystemUtils.IS_OS_WINDOWS) {
-				jobLogger.log("Checking busybox availability...");
-				docker = new Commandline(Agent.dockerPath);
-				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");			
-				docker.execute(new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						jobLogger.log(line);
-					}
-					
-				}, new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						jobLogger.log(line);
-					}
-					
-				}).checkReturnCode();
-			}
-
-			KubernetesHelper.testGitLfsAvailability(new Commandline(Agent.gitPath), jobLogger);
-		} finally {
-			jobThreads.remove(jobData.getJobToken());
-			client.close();
-			
-			if (authInfoDir != null)
-				FileUtils.deleteDir(authInfoDir);
-			
-			if (workspaceDir != null)
-				FileUtils.deleteDir(workspaceDir);
-			if (cacheDir != null)
-				FileUtils.deleteDir(cacheDir);
 		}		
 	}
 

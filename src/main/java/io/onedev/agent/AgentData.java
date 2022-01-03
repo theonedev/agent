@@ -3,17 +3,15 @@ package io.onedev.agent;
 import java.io.Serializable;
 import java.util.Map;
 
+import io.onedev.k8shelper.OsInfo;
+
 public class AgentData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
 	private final String token;
 	
-	private final AgentOs os;
-	
-	private final String osVersion;
-	
-	private final String osArch;
+	private final OsInfo osInfo;
 	
 	private final String name;
 	
@@ -23,12 +21,10 @@ public class AgentData implements Serializable {
 	
 	private final Map<String, String> attributes;
 	
-	public AgentData(String token, AgentOs os, String osVersion, String osArch, 
-			String name, int cpu, int memory, Map<String, String> attributes) {
+	public AgentData(String token, OsInfo osInfo, String name, int cpu, int memory, 
+			Map<String, String> attributes) {
 		this.token = token;
-		this.os = os;
-		this.osVersion = osVersion;
-		this.osArch = osArch;
+		this.osInfo = osInfo;
 		this.name = name;
 		this.cpu = cpu;
 		this.memory = memory;
@@ -39,16 +35,8 @@ public class AgentData implements Serializable {
 		return token;
 	}
 
-	public AgentOs getOs() {
-		return os;
-	}
-
-	public String getOsVersion() {
-		return osVersion;
-	}
-
-	public String getOsArch() {
-		return osArch;
+	public OsInfo getOsInfo() {
+		return osInfo;
 	}
 
 	public String getName() {
