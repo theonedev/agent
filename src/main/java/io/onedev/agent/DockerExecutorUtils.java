@@ -306,6 +306,27 @@ public class DockerExecutorUtils {
 		}
 	}
 	
+	private static void pullImage(Commandline docker, String image, TaskLogger jobLogger) {
+		docker.clearArgs();
+		docker.addArgs("pull", image);
+		
+		docker.execute(new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				jobLogger.log(line);
+			}
+			
+		}, new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				jobLogger.error(line);
+			}
+			
+		}).checkReturnCode();
+	}
+	
 	public static OsInfo getOsInfo(Commandline docker, String image, TaskLogger jobLogger, boolean pullIfNotExist) {
 		docker.clearArgs();
 		docker.addArgs("image", "inspect", image, "--format={{.Os}}%{{.OsVersion}}%{{.Architecture}}");
@@ -334,25 +355,7 @@ public class DockerExecutorUtils {
 
 		if (imageNotExistError.get() != null) {
 			if (pullIfNotExist) {
-				docker.clearArgs();
-				docker.addArgs("pull", image);
-				
-				docker.execute(new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						jobLogger.log(line);
-					}
-					
-				}, new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						jobLogger.error(line);
-					}
-					
-				}).checkReturnCode();
-				
+				pullImage(docker, image, jobLogger);
 				return getOsInfo(docker, image, jobLogger, false);
 			} else {
 				throw new ExplicitException(imageNotExistError.get());
