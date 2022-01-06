@@ -8,7 +8,7 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
-import io.onedev.k8shelper.CommandExecutable;
+import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.KubernetesHelper;
 
 public class ShellExecutorUtils {
@@ -22,7 +22,7 @@ public class ShellExecutorUtils {
 	}
 	
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
-		CommandExecutable executable = new CommandExecutable(null, commands, true);
+		CommandFacade executable = new CommandFacade(null, commands, true);
 		Commandline interpreter = executable.getInterpreter();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {
@@ -33,7 +33,7 @@ public class ShellExecutorUtils {
 			File workspaceDir = new File(buildDir, "workspace");
 			FileUtils.createDir(workspaceDir);
 			interpreter.workingDir(workspaceDir).addArgs(jobScriptFile.getAbsolutePath());
-			interpreter.execute(ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newErrorLogger(jobLogger)).checkReturnCode();
+			interpreter.execute(ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger)).checkReturnCode();
 
 			KubernetesHelper.testGitLfsAvailability(git, jobLogger);
 		} catch (IOException e) {

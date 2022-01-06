@@ -32,7 +32,7 @@ public class ExecutorUtils {
 		};
 	}
 
-	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
+	public static LineConsumer newWarningLogger(TaskLogger jobLogger) {
 		return new LineConsumer(StandardCharsets.UTF_8.name()) {
 	
 			@Override
@@ -43,6 +43,17 @@ public class ExecutorUtils {
 		};
 	}
 
+	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
+		return new LineConsumer(StandardCharsets.UTF_8.name()) {
+	
+			@Override
+			public void consume(String line) {
+				jobLogger.error(line);
+			}
+			
+		};
+	}
+	
 	public static OsInfo getOsInfo() {
 		String osName;
 		AtomicReference<String> osVersion = new AtomicReference<>(null);

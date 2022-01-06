@@ -33,11 +33,12 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.CommandExecutable;
+import io.onedev.k8shelper.BuildImageFacade;
+import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.OsExecution;
 import io.onedev.k8shelper.OsInfo;
 
-public class DockerExecutorUtils {
+public class DockerExecutorUtils extends ExecutorUtils {
 
 	private static final Logger logger = LoggerFactory.getLogger(DockerExecutorUtils.class);
 
@@ -47,6 +48,33 @@ public class DockerExecutorUtils {
 			return Throwables.getStackTraceAsString(exception);
 		else
 			return explicitException.getMessage();
+	}
+	
+	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, 
+			File workspace, TaskLogger jobLogger) {
+		String[] parsedTags = StringUtils.parseQuoteTokens(buildImageFacade.getTags());
+		
+		docker.clearArgs();
+		docker.addArgs("build");
+		
+		for (String tag: parsedTags) 
+			docker.addArgs("-t", tag);
+		docker.addArgs("-f", buildImageFacade.getDockerfile());
+		if (buildImageFacade.getBuildPath() != null)
+			docker.addArgs(buildImageFacade.getBuildPath());
+		else
+			docker.addArgs(".");
+
+		docker.workingDir(workspace);
+		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+		
+		if (buildImageFacade.isPublish()) {
+			for (String tag: parsedTags) {
+				docker.clearArgs();
+				docker.addArgs("push", tag);
+				docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+			}
+		}
 	}
 	
 	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {
@@ -77,19 +105,19 @@ public class DockerExecutorUtils {
 		};
 	}
 	
-	public static Commandline getEntrypoint(File hostBuildHome, CommandExecutable commandExecutable, 
+	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, 
 			OsInfo osInfo, boolean withHostAuthInfo) {
-		Commandline interpreter = commandExecutable.getInterpreter();
+		Commandline interpreter = commandFacade.getInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		
-		File scriptFile = new File(hostBuildHome, "job-commands" + commandExecutable.getScriptExtension());
+		File scriptFile = new File(hostBuildHome, "job-commands" + commandFacade.getScriptExtension());
 		try {
-			OsExecution execution = commandExecutable.getExecution(osInfo);
+			OsExecution execution = commandFacade.getExecution(osInfo);
 			FileUtils.writeLines(
 					scriptFile, 
 					new ArrayList<>(replacePlaceholders(execution.getCommands(), hostBuildHome)), 
-					commandExecutable.getEndOfLine());
+					commandFacade.getEndOfLine());
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
