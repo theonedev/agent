@@ -1,14 +1,13 @@
 package io.onedev.agent;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.SystemUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
@@ -56,23 +55,16 @@ public class ExecutorUtils {
 	
 	public static OsInfo getOsInfo() {
 		String osName;
-		AtomicReference<String> osVersion = new AtomicReference<>(null);
+		String osVersion;
 		if (SystemUtils.IS_OS_WINDOWS) {
 			osName = "Windows";
 			
 			logger.info("Checking Windows OS version...");
 			
-			Commandline systemInfo = new Commandline("systemInfo");
+			Commandline systemInfo = new Commandline("cmd").addArgs("/c", "ver");
 			
-			systemInfo.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					if (line.startsWith("OS Version:")) 
-						osVersion.set(StringUtils.substringBefore(StringUtils.substringAfter(line, ":").trim(), " "));
-				}
-				
-			}, new LineConsumer() {
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			systemInfo.execute(baos, new LineConsumer() {
 
 				@Override
 				public void consume(String line) {
@@ -80,15 +72,17 @@ public class ExecutorUtils {
 				}
 				
 			}).checkReturnCode();
-
-			if (osVersion.get() == null)
-				throw new ExplicitException("Unable to find Windows OS version");
+			
+			String output = baos.toString();
+			osVersion = StringUtils.substringBeforeLast(output, ".");
+			osVersion = StringUtils.substringAfterLast(osVersion, " ");
+			logger.info("Windows OS version: " + osVersion);
 		} else {
 			osName = System.getProperty("os.name");
-			osVersion.set(System.getProperty("os.version"));
+			osVersion = System.getProperty("os.version");
 		}
 
-		return new OsInfo(osName, osVersion.get(), System.getProperty("os.arch"));
+		return new OsInfo(osName, osVersion, System.getProperty("os.arch"));
 	}
 
 }
