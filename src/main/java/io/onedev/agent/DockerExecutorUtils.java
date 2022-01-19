@@ -59,7 +59,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		
 		for (String tag: parsedTags) 
 			docker.addArgs("-t", tag);
-		docker.addArgs("-f", buildImageFacade.getDockerfile());
+		if (buildImageFacade.getDockerfile() != null)
+			docker.addArgs("-f", buildImageFacade.getDockerfile());
+		else
+			docker.addArgs("-f", "Dockerfile");
 		if (buildImageFacade.getBuildPath() != null)
 			docker.addArgs(buildImageFacade.getBuildPath());
 		else
