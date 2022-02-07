@@ -337,7 +337,7 @@ public class Agent {
 	}
 	
 	public static File getTempDir() {
-		return new File(installDir, "temp");
+		return new File(getWorkDir(), "temp");
 	}
 
 	@Nullable
@@ -424,6 +424,10 @@ public class Agent {
 		}
 	}
 	
+	public static boolean isInDocker() {
+		return new File(installDir, "IN_DOCKER").exists();
+	}
+	
 	public static void stop() {
 		if (wrapperManagerClass != null) {
 			try {
@@ -437,8 +441,8 @@ public class Agent {
 		}
 	}
 	
-	public static File getSiteDir() {
-		return new File(installDir, "site");
+	public static File getWorkDir() {
+		return new File(installDir, "work");
 	}
 	
 	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
@@ -448,7 +452,7 @@ public class Agent {
 	}
 	
 	public static File getCacheHome() {
-		File file = new File(getSiteDir(), "cache");
+		File file = new File(getWorkDir(), "cache");
 		if (!file.exists()) synchronized (cacheHomeCreationLock) {
 			FileUtils.createDir(file);
 		}

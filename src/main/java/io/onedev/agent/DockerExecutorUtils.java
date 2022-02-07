@@ -11,6 +11,7 @@ import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -414,6 +415,109 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				return true;
 		}
 		return false;
+	}
+	
+	public static String getHostPath(Commandline docker, String mountPath) {
+		logger.info("Finding host path mounted to '" + mountPath + "'...");
+		
+		List<String> containerIds = new ArrayList<>();
+		docker.clearArgs(); 
+		docker.addArgs("ps", "--format={{.ID}}", "-f", "volume=" + mountPath);
+		docker.execute(new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				containerIds.add(line);
+			}
+			
+		}, new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				logger.error(line);
+			}
+			
+		}).checkReturnCode();
+
+		if (containerIds.isEmpty())
+			throw new IllegalStateException("No any mount container found"); 
+			
+		docker.clearArgs();
+		String inspectFormat = String.format(
+				"{{range .Mounts}}{{if eq .Destination \"%s\"}}{{.Source}}{{end}}{{end}}", 
+				mountPath);
+		docker.addArgs("container", "inspect", "-f", inspectFormat);						
+		
+		for (String containerId: containerIds)
+			docker.addArgs(containerId);
+		
+		List<String> possibleHostInstallPaths = new ArrayList<>();
+		docker.execute(new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				possibleHostInstallPaths.add(line);
+			}
+			
+		}, new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				logger.error(line);
+			}
+			
+		}).checkReturnCode();
+		
+		String hostInstallPath = null;
+		
+		if (possibleHostInstallPaths.isEmpty()) {
+			throw new IllegalStateException("No any mounting container found"); 
+		} else if (possibleHostInstallPaths.size() > 1) {
+			File testFile = new File(mountPath, UUID.randomUUID().toString());
+			FileUtils.touchFile(testFile);
+			try {
+				for (String possibleHostInstallPath: possibleHostInstallPaths) {
+					docker.clearArgs();
+					docker.addArgs("run", "--rm", "-v", possibleHostInstallPath + ":" + mountPath, 
+							"busybox", "ls", mountPath + "/" + testFile.getName());
+					AtomicBoolean fileNotExist = new AtomicBoolean(false);
+					ExecutionResult result = docker.execute(new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+						}
+						
+					}, new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							if (line.contains("No such file or directory"))
+								fileNotExist.set(true);
+							else
+								logger.error(line);
+						}
+						
+					});
+					if (fileNotExist.get()) {
+						continue;
+					} else {
+						result.checkReturnCode();
+						hostInstallPath = possibleHostInstallPath;
+						break;
+					}
+				}
+			} finally {
+				FileUtils.deleteFile(testFile);
+			}
+		} else {
+			hostInstallPath = possibleHostInstallPaths.iterator().next();
+		}
+		if (hostInstallPath != null)
+			logger.info("Found host path: " + hostInstallPath);
+		else
+			throw new ExplicitException("Unable to find host path"); 
+		
+		return hostInstallPath;
 	}
 	
 	@SuppressWarnings({ "resource", "unchecked" })

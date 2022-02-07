@@ -62,6 +62,7 @@ import org.eclipse.jetty.websocket.api.annotations.WebSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 
 import io.onedev.agent.job.DockerJobData;
@@ -87,12 +88,12 @@ import io.onedev.k8shelper.CheckoutFacade;
 import io.onedev.k8shelper.CloneInfo;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.CompositeFacade;
-import io.onedev.k8shelper.RunContainerFacade;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.LeafFacade;
 import io.onedev.k8shelper.LeafHandler;
 import io.onedev.k8shelper.OsContainer;
 import io.onedev.k8shelper.OsExecution;
+import io.onedev.k8shelper.RunContainerFacade;
 import io.onedev.k8shelper.ServerSideFacade;
 
 @WebSocket
@@ -112,6 +113,8 @@ public class AgentSocket implements Runnable {
 	
 	private static final ExecutorService executorService = Executors.newCachedThreadPool();
 	
+	private static transient volatile String hostWorkPath;
+	
 	@OnWebSocketConnect
 	public void onConnect(Session session) throws IOException {
 		logger.info("Connected to server");
@@ -120,6 +123,18 @@ public class AgentSocket implements Runnable {
 		thread.start();
 	}
 
+	private String getHostPath(String path) {
+		String workPath = Agent.getWorkDir().getAbsolutePath();
+		Preconditions.checkState(path.startsWith(workPath + "/") || path.startsWith(workPath + "\\"));
+		if (hostWorkPath == null) {
+			if (Agent.isInDocker()) 
+				hostWorkPath = DockerExecutorUtils.getHostPath(new Commandline(Agent.dockerPath), workPath);
+			else 
+				hostWorkPath = workPath;
+		}
+		return hostWorkPath + path.substring(workPath.length());
+	}
+	
 	@OnWebSocketMessage
 	public void onMessage(byte[] bytes, int offset, int length) {
 		Message message = Message.of(bytes, offset, length); 
@@ -478,7 +493,7 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				public void accept(File dir) {
-					DockerExecutorUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), false);
+					DockerExecutorUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), Agent.isInDocker());
 				}
 				
 			});
@@ -539,14 +554,13 @@ public class AgentSocket implements Runnable {
 								@Nullable String workingDir, List<Integer> position, boolean useTTY) {
 							String containerName = network + "-step-" + stringifyPosition(position);
 							Commandline docker = new Commandline(Agent.dockerPath);
-							docker.clearArgs();
 							docker.addArgs("run", "--name=" + containerName, "--network=" + network);
 							if (jobData.getDockerOptions() != null)
 								docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 							
-							docker.addArgs("-v", hostBuildHome.getAbsolutePath() + ":" + containerBuildHome);
+							docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
 							if (workingDir != null) {
-								docker.addArgs("-v", hostWorkspace.getAbsolutePath() + ":" + workingDir);
+								docker.addArgs("-v", getHostPath(hostWorkspace.getAbsolutePath()) + ":" + workingDir);
 								docker.addArgs("-w", workingDir);
 							} else {
 								docker.addArgs("-w", containerWorkspace);
@@ -556,7 +570,7 @@ public class AgentSocket implements Runnable {
 								if (!PathUtils.isCurrent(entry.getValue())) {
 									String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
 									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
-									docker.addArgs("-v", hostCachePath + ":" + containerCachePath);
+									docker.addArgs("-v", getHostPath(hostCachePath) + ":" + containerCachePath);
 								} else {
 									throw new ExplicitException("Invalid cache path: " + entry.getValue());
 								}
@@ -568,12 +582,12 @@ public class AgentSocket implements Runnable {
 								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
 							
 							if (hostAuthInfoHome.get() != null) {
-								String outerPath = hostAuthInfoHome.get().getAbsolutePath();
+								String hostPath = getHostPath(hostAuthInfoHome.get().getAbsolutePath());
 								if (SystemUtils.IS_OS_WINDOWS) {
-									docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
-									docker.addArgs("-v",  outerPath + ":C:\\Users\\ContainerUser\\auth-info");
+									docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
+									docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
 								} else { 
-									docker.addArgs("-v", outerPath + ":/root/auth-info");
+									docker.addArgs("-v", hostPath + ":/root/auth-info");
 								}
 							}
 
@@ -621,8 +635,8 @@ public class AgentSocket implements Runnable {
 									return false;
 								}
 							} else if (facade instanceof BuildImageFacade) {
-								DockerExecutorUtils.buildImage(new Commandline(
-										Agent.dockerPath), (BuildImageFacade) facade, hostWorkspace, jobLogger);
+								DockerExecutorUtils.buildImage(new Commandline(Agent.dockerPath), 
+										(BuildImageFacade) facade, hostWorkspace, jobLogger);
 							} else if (facade instanceof RunContainerFacade) {
 								RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 
@@ -715,7 +729,7 @@ public class AgentSocket implements Runnable {
 			dockerJobThreads.remove(jobData.getJobToken());
 			client.close();
 			
-			cleanDirAsRoot(hostBuildHome, new Commandline(Agent.dockerPath), false);
+			cleanDirAsRoot(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
 			FileUtils.deleteDir(hostBuildHome);
 		}
 	}
@@ -798,8 +812,8 @@ public class AgentSocket implements Runnable {
 				containerWorkspacePath = "/onedev-build/workspace";
 				containerCachePath = "/onedev-build/cache";
 			}
-			docker.addArgs("-v", workspaceDir.getAbsolutePath() + ":" + containerWorkspacePath);
-			docker.addArgs("-v", cacheDir.getAbsolutePath() + ":" + containerCachePath);
+			docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath()) + ":" + containerWorkspacePath);
+			docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath()) + ":" + containerCachePath);
 			
 			docker.addArgs("-w", containerWorkspacePath);
 			docker.addArgs(jobData.getDockerImage());
