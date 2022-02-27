@@ -265,6 +265,8 @@ public class AgentSocket implements Runnable {
 	
 	private void executeShellJob(Session session, ShellJobData jobData) {
 		File buildDir = FileUtils.createTempDir("onedev-build");
+		File workspaceDir = new File(buildDir, "workspace");
+		
 		File attributesDir = new File(buildDir, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
@@ -307,7 +309,6 @@ public class AgentSocket implements Runnable {
 				
 			});
 			
-			File workspaceDir = new File(buildDir, "workspace");
 			FileUtils.createDir(workspaceDir);
 			
 			jobLogger.log("Downloading job dependencies...");
@@ -450,6 +451,10 @@ public class AgentSocket implements Runnable {
 		} finally {
 			shellJobThreads.remove(jobData.getJobToken());
 			client.close();
+			
+			// Fix https://code.onedev.io/projects/160/issues/597
+			if (SystemUtils.IS_OS_WINDOWS && workspaceDir.exists())
+				FileUtils.deleteDir(workspaceDir);
 			FileUtils.deleteDir(buildDir);
 		}
 	}
@@ -719,6 +724,9 @@ public class AgentSocket implements Runnable {
 				} catch (IOException e) {
 					throw new RuntimeException(e);
 				} finally {
+					// Fix https://code.onedev.io/projects/160/issues/597
+					if (SystemUtils.IS_OS_WINDOWS)
+						FileUtils.deleteDir(hostWorkspace);
 					if (hostAuthInfoHome.get() != null)
 						FileUtils.deleteDir(hostAuthInfoHome.get());
 				}
