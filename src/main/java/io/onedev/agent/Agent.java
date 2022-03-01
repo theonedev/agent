@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -59,6 +60,8 @@ public class Agent {
 	public static final String SERVER_URL_KEY = "serverUrl";
 	
 	public static final String AGENT_TOKEN_KEY = "agentToken";
+	
+	public static final String AGENT_TOKEN_FILE_KEY = "agentTokenFile";
 	
 	public static final String AGENT_NAME_KEY = "agentName";
 	
@@ -165,6 +168,20 @@ public class Agent {
 			
 			configureLogging();
 			
+			Properties agentProps = new Properties();
+			
+			try (InputStream is = new FileInputStream(new File(installDir, "conf/agent.properties"))) {
+				agentProps.load(is);
+			}
+			
+			name = System.getenv(AGENT_NAME_KEY);
+			if (StringUtils.isBlank(name))
+				name = System.getProperty(AGENT_NAME_KEY);
+			if (StringUtils.isBlank(name))
+				name = agentProps.getProperty(AGENT_NAME_KEY);
+			if (StringUtils.isBlank(name)) 
+				name = InetAddress.getLocalHost().getHostName();
+			
 	        File tempDir = getTempDir();
 			if (tempDir.exists()) {
 				logger.info("Cleaning temp directory...");
@@ -189,35 +206,23 @@ public class Agent {
 				}
 			}
 			
-			Properties props = new Properties();
+			Properties attributeProps = new Properties();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/attributes.properties"))) {
-				props.load(is);
+				attributeProps.load(is);
 				LinkedHashMap<String, String> attributes = new LinkedHashMap<>();
-				for (Map.Entry<Object, Object> entry: props.entrySet()) 
+				for (Map.Entry<Object, Object> entry: attributeProps.entrySet()) 
 					attributes.put((String)entry.getKey(), (String)entry.getValue());
 				Agent.attributes = attributes;
 			}
 
 			osInfo = ExecutorUtils.getOsInfo();
 			
-			try (InputStream is = new FileInputStream(new File(installDir, "conf/agent.properties"))) {
-				props.load(is);
-			}
-			
-			name = System.getenv(AGENT_NAME_KEY);
-			if (StringUtils.isBlank(name))
-				name = System.getProperty(AGENT_NAME_KEY);
-			if (StringUtils.isBlank(name))
-				name = props.getProperty(AGENT_NAME_KEY);
-			if (StringUtils.isBlank(name)) 
-				name = InetAddress.getLocalHost().getHostName();
-			
 			serverUrl = System.getenv(SERVER_URL_KEY);
 			if (StringUtils.isBlank(serverUrl))
 				serverUrl = System.getProperty(SERVER_URL_KEY);
 			if (StringUtils.isBlank(serverUrl))
-				serverUrl = props.getProperty(SERVER_URL_KEY);
+				serverUrl = agentProps.getProperty(SERVER_URL_KEY);
 			if (StringUtils.isBlank(serverUrl)) 
 				throw new ExplicitException("Property '" + SERVER_URL_KEY + "' not specified");
 			
@@ -236,8 +241,24 @@ public class Agent {
 			token = System.getenv(AGENT_TOKEN_KEY);
 			if (StringUtils.isBlank(token))
 				token = System.getProperty(AGENT_TOKEN_KEY);
+			if (StringUtils.isBlank(token)) {
+				// Fix issue https://code.onedev.io/projects/160/issues/601
+				String tokenFilePath = System.getenv(AGENT_TOKEN_FILE_KEY);
+				if (StringUtils.isBlank(tokenFilePath))
+					tokenFilePath = System.getProperty(AGENT_TOKEN_FILE_KEY);
+				if (StringUtils.isBlank(tokenFilePath))
+					tokenFilePath = agentProps.getProperty(AGENT_TOKEN_FILE_KEY);
+				if (StringUtils.isNotBlank(tokenFilePath)) {
+					File tokenFile = new File(tokenFilePath);
+					if (!tokenFile.isAbsolute())
+						tokenFile = new File(installDir, "conf/" + tokenFilePath);
+					token = FileUtils.readFileToString(tokenFile, StandardCharsets.UTF_8.name()).trim();
+				}
+			}
+			
 			if (StringUtils.isBlank(token))
-				token = props.getProperty(AGENT_TOKEN_KEY);
+				token = agentProps.getProperty(AGENT_TOKEN_KEY);
+			
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
@@ -247,7 +268,7 @@ public class Agent {
 			if (StringUtils.isBlank(cpuString))
 				cpuString = System.getProperty(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString))
-				cpuString = props.getProperty(AGENT_CPU_KEY);
+				cpuString = agentProps.getProperty(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString)) {
 				cpu = hardware.getProcessor().getLogicalProcessorCount()*1000;
 			} else {
@@ -262,7 +283,7 @@ public class Agent {
 			if (StringUtils.isBlank(memoryString))
 				memoryString = System.getProperty(AGENT_MEMORY_KEY);
 			if (StringUtils.isBlank(memoryString))
-				memoryString = props.getProperty(AGENT_MEMORY_KEY);
+				memoryString = agentProps.getProperty(AGENT_MEMORY_KEY);
 			if (StringUtils.isBlank(memoryString)) {
 				memory = (int) (hardware.getMemory().getTotal()/1024/1024); 
 			} else {
@@ -277,7 +298,7 @@ public class Agent {
 			if (StringUtils.isBlank(gitPath))
 				gitPath = System.getProperty(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath))
-				gitPath = props.getProperty(GIT_PATH_KEY);
+				gitPath = agentProps.getProperty(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath)) {
 				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/git").exists())
 					gitPath = "/usr/local/bin/git";
@@ -293,7 +314,7 @@ public class Agent {
 			if (StringUtils.isBlank(dockerPath))
 				dockerPath = System.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath))
-				dockerPath = props.getProperty(DOCKER_PATH_KEY);
+				dockerPath = agentProps.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath)) {
 				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/docker").exists())
 					dockerPath = "/usr/local/bin/docker";
@@ -337,7 +358,8 @@ public class Agent {
 	}
 	
 	public static File getTempDir() {
-		return new File(getWorkDir(), "temp");
+		// Fix issue https://code.onedev.io/projects/160/issues/601
+		return new File(getWorkDir(), name + "/temp");
 	}
 
 	@Nullable
@@ -452,7 +474,8 @@ public class Agent {
 	}
 	
 	public static File getCacheHome() {
-		File file = new File(getWorkDir(), "cache");
+		// Fix issue https://code.onedev.io/projects/160/issues/601
+		File file = new File(getWorkDir(), name + "/cache");
 		if (!file.exists()) synchronized (cacheHomeCreationLock) {
 			FileUtils.createDir(file);
 		}
