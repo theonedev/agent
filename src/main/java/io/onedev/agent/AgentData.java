@@ -19,15 +19,18 @@ public class AgentData implements Serializable {
 	
 	private final int memory;
 	
+	private final boolean temporal;
+	
 	private final Map<String, String> attributes;
 	
 	public AgentData(String token, OsInfo osInfo, String name, int cpu, int memory, 
-			Map<String, String> attributes) {
+			boolean temporal, Map<String, String> attributes) {
 		this.token = token;
 		this.osInfo = osInfo;
 		this.name = name;
 		this.cpu = cpu;
 		this.memory = memory;
+		this.temporal = temporal;
 		this.attributes = attributes;
 	}
 
@@ -49,6 +52,10 @@ public class AgentData implements Serializable {
 
 	public int getMemory() {
 		return memory;
+	}
+
+	public boolean isTemporal() {
+		return temporal;
 	}
 
 	public Map<String, String> getAttributes() {

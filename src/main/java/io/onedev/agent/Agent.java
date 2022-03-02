@@ -73,6 +73,8 @@ public class Agent {
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
 	
+	public static final String TEMPORAL_AGENT_KEY = "temporalAgent";
+	
 	public static boolean sandboxMode;
 	
 	public static File installDir;
@@ -100,6 +102,8 @@ public class Agent {
 	public static String version;
 	
 	public static String name;
+	
+	public static boolean temporal;
 	
 	public static OsInfo osInfo;
 	
@@ -263,6 +267,16 @@ public class Agent {
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
 			HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
+			
+			String temporalString = System.getenv(TEMPORAL_AGENT_KEY);
+			if (StringUtils.isBlank(temporalString))
+				temporalString = System.getProperty(TEMPORAL_AGENT_KEY);
+			if (StringUtils.isBlank(temporalString))
+				temporalString = agentProps.getProperty(TEMPORAL_AGENT_KEY);
+			if (StringUtils.isBlank(temporalString)) 
+				temporal = false;
+			else 
+				temporal = Boolean.parseBoolean(temporalString);
 			
 			String cpuString = System.getenv(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString))
