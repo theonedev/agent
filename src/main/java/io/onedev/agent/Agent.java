@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -102,6 +103,8 @@ public class Agent {
 	public static String version;
 	
 	public static String name;
+	
+	public static String ipAddress;
 	
 	public static boolean temporal;
 	
@@ -208,6 +211,12 @@ public class Agent {
 					if (!dir.getName().equals(version))
 						FileUtils.deleteDir(dir);
 				}
+			}
+			
+			try {
+				ipAddress = InetAddress.getLocalHost().getHostAddress();
+			} catch (UnknownHostException e) {
+				ipAddress = "127.0.0.1";
 			}
 			
 			Properties attributeProps = new Properties();
