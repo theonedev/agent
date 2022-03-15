@@ -141,7 +141,7 @@ public class Agent {
 				while (!stopped) {
 					thread.interrupt();
 					try {
-						Thread.sleep(1000);
+						Thread.sleep(100);
 					} catch (InterruptedException e) {
 					}
 				}
