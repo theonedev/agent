@@ -126,7 +126,7 @@
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
-			<version>${jackson.version}</version>
+			<version>${jacksondatabind.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.glassfish.hk2</groupId>
@@ -146,7 +146,8 @@
 	</dependencies>
 	<properties>	
 		<k8shelper.version>2.5.9</k8shelper.version>
-		<jackson.version>2.12.1</jackson.version>
+		<jackson.version>2.13.2</jackson.version>
+		<jacksondatabind.version>2.13.2.1</jacksondatabind.version>
 		<jersey.version>2.26</jersey.version>
 		<bootstrap>true</bootstrap>
 		<executables>bin/*.sh, boot/wrapper-*</executables>
