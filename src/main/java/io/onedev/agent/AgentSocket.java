@@ -401,7 +401,7 @@ public class AgentSocket implements Runnable {
 							CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 							jobLogger.log("Checking out code...");
 							Commandline git = new Commandline(Agent.gitPath);	
-							git.workingDir(workspaceDir);
+							checkoutFacade.setupWorkingDir(git, workspaceDir, cacheHomeDir, cacheAllocations);
 							Map<String, String> environments = new HashMap<>();
 							environments.put("HOME", userDir.getAbsolutePath());
 							git.environments(environments);
@@ -678,7 +678,8 @@ public class AgentSocket implements Runnable {
 										hostAuthInfoHome.set(FileUtils.createTempDir());
 									
 									Commandline git = new Commandline(Agent.gitPath);	
-									git.workingDir(hostWorkspace).environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
+									checkoutFacade.setupWorkingDir(git, hostWorkspace, hostCacheHome, cacheAllocations);
+									git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
 
 									CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
 									
