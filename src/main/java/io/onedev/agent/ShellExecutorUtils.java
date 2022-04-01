@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 
-import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
@@ -13,14 +12,6 @@ import io.onedev.k8shelper.KubernetesHelper;
 
 public class ShellExecutorUtils {
 
-	public static File resolveCachePath(File workspaceDir, String cachePath) {
-		File cacheDir = new File(cachePath);
-		if (cacheDir.isAbsolute()) 
-			throw new ExplicitException("Shell executor does not support absolute cache path: " + cachePath);
-		else 
-			return new File(workspaceDir, cachePath);
-	}
-	
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
 		CommandFacade executable = new CommandFacade(null, commands, true);
 		Commandline interpreter = executable.getInterpreter();

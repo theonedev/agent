@@ -8,13 +8,10 @@ import static io.onedev.agent.DockerExecutorUtils.isUseProcessIsolation;
 import static io.onedev.agent.DockerExecutorUtils.login;
 import static io.onedev.agent.DockerExecutorUtils.newDockerKiller;
 import static io.onedev.agent.DockerExecutorUtils.startService;
-import static io.onedev.agent.ShellExecutorUtils.resolveCachePath;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.k8shelper.KubernetesHelper.BEARER;
-import static io.onedev.k8shelper.KubernetesHelper.checkCacheAllocations;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
-import static io.onedev.k8shelper.KubernetesHelper.getCacheInstances;
 import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyPosition;
@@ -26,10 +23,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
@@ -88,6 +82,7 @@ import io.onedev.k8shelper.CheckoutFacade;
 import io.onedev.k8shelper.CloneInfo;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.CompositeFacade;
+import io.onedev.k8shelper.JobCache;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.LeafFacade;
 import io.onedev.k8shelper.LeafHandler;
@@ -291,35 +286,39 @@ public class AgentSocket implements Runnable {
 			
 			File cacheHomeDir = Agent.getCacheHome();
 			
-			jobLogger.log("Allocating job caches...") ;
+			jobLogger.log("Setting up job cache...") ;
 			
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-
-			Map<CacheInstance, String> cacheAllocations;
-			try (Response response = builder.post(Entity.entity(
-					new CacheAllocationRequest(new Date(), getCacheInstances(cacheHomeDir)).toString(),
-					MediaType.APPLICATION_OCTET_STREAM))) {
-				checkStatus(response);
-				cacheAllocations = SerializationUtils.deserialize(response.readEntity(byte[].class));
-			}
-			
-			checkCacheAllocations(cacheHomeDir, cacheAllocations, new Consumer<File>() {
+			JobCache cache = new JobCache(cacheHomeDir) {
 
 				@Override
-				public void accept(File dir) {
-					FileUtils.cleanDir(dir);
+				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
+					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
+					Invocation.Builder builder =  target.request();
+					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
+
+					try (Response response = builder.post(
+							Entity.entity(request.toString(),MediaType.APPLICATION_OCTET_STREAM))) {
+						checkStatus(response);
+						return SerializationUtils.deserialize(response.readEntity(byte[].class));
+					}
+				}
+
+				@Override
+				protected void clean(File cacheDir) {
+					FileUtils.cleanDir(cacheDir);					
 				}
 				
-			});
+			};
+			
+			cache.init(true);
 			
 			FileUtils.createDir(workspaceDir);
+			cache.installSymbolinks(workspaceDir);
 			
 			jobLogger.log("Downloading job dependencies...");
 			
-			target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
-			builder =  target.request();
+			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
+			Invocation.Builder builder =  target.request();
 			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 			
 			try (Response response = builder.get()){
@@ -363,24 +362,6 @@ public class AgentSocket implements Runnable {
 							throw new RuntimeException(e);
 						}
 						
-						for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
-							if (!PathUtils.isCurrent(entry.getValue())) {
-								File sourceDir = entry.getKey().getDirectory(cacheHomeDir);
-								File destDir = resolveCachePath(workspaceDir, entry.getValue());
-								if (destDir.exists())
-									FileUtils.deleteDir(destDir);
-								else
-									FileUtils.createDir(destDir.getParentFile());
-								try {
-									Files.createSymbolicLink(destDir.toPath(), sourceDir.toPath());
-								} catch (IOException e) {
-									throw new RuntimeException(e);
-								}
-							} else {
-								throw new ExplicitException("Invalid cache path: " + entry.getValue());
-							}
-						}
-						
 						Commandline interpreter = commandFacade.getInterpreter();
 						Map<String, String> environments = new HashMap<>();
 						environments.put("GIT_HOME", userDir.getAbsolutePath());
@@ -401,7 +382,7 @@ public class AgentSocket implements Runnable {
 							CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 							jobLogger.log("Checking out code...");
 							Commandline git = new Commandline(Agent.gitPath);	
-							checkoutFacade.setupWorkingDir(git, workspaceDir, cacheHomeDir, cacheAllocations);
+							checkoutFacade.setupWorkingDir(git, workspaceDir);
 							Map<String, String> environments = new HashMap<>();
 							environments.put("HOME", userDir.getAbsolutePath());
 							git.environments(environments);
@@ -471,6 +452,7 @@ public class AgentSocket implements Runnable {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), StandardCharsets.UTF_8.name());
 		}
+		
 		Client client = ClientBuilder.newClient();
 		dockerJobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		try {
@@ -485,28 +467,33 @@ public class AgentSocket implements Runnable {
 			
 			File hostCacheHome = Agent.getCacheHome();
 			
-			jobLogger.log("Allocating job caches...") ;
-			
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
+			jobLogger.log("Allocating job cache...") ;
 
-			Map<CacheInstance, String> cacheAllocations;
-			try (Response response = builder.post(Entity.entity(
-					new CacheAllocationRequest(new Date(), getCacheInstances(hostCacheHome)).toString(),
-					MediaType.APPLICATION_OCTET_STREAM))) {
-				checkStatus(response);
-				cacheAllocations = SerializationUtils.deserialize(response.readEntity(byte[].class));
-			}
-			
-			checkCacheAllocations(hostCacheHome, cacheAllocations, new Consumer<File>() {
+			JobCache cache = new JobCache(hostCacheHome) {
 
 				@Override
-				public void accept(File dir) {
-					DockerExecutorUtils.cleanDirAsRoot(dir, new Commandline(Agent.dockerPath), Agent.isInDocker());
+				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
+					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
+					Invocation.Builder builder =  target.request();
+					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
+
+					try (Response response = builder.post(Entity.entity(
+							request.toString(),
+							MediaType.APPLICATION_OCTET_STREAM))) {
+						checkStatus(response);
+						return SerializationUtils.deserialize(response.readEntity(byte[].class));
+					}
+				}
+
+				@Override
+				protected void clean(File cacheDir) {
+					DockerExecutorUtils.cleanDirAsRoot(
+							cacheDir, 
+							new Commandline(Agent.dockerPath), Agent.isInDocker());					
 				}
 				
-			});
+			};
+			cache.init(false);
 			
 			for (Map<String, String> each: jobData.getRegistryLogins()) {
 				login(new Commandline(Agent.dockerPath), each.get("url"), 
@@ -526,13 +513,14 @@ public class AgentSocket implements Runnable {
 				
 				File hostWorkspace = new File(hostBuildHome, "workspace");
 				FileUtils.createDir(hostWorkspace);
+				cache.installSymbolinks(hostWorkspace);
 				
 				AtomicReference<File> hostAuthInfoHome = new AtomicReference<>(null);
 				try {						
 					jobLogger.log("Downloading job dependencies...");
 					
-					target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
-					builder =  target.request();
+					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
+					Invocation.Builder builder =  target.request();
 					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 					
 					try (Response response = builder.get()){
@@ -563,70 +551,72 @@ public class AgentSocket implements Runnable {
 								List<String> arguments, Map<String, String> environments, 
 								@Nullable String workingDir, Map<String, String> volumeMounts, 
 								List<Integer> position, boolean useTTY) {
-							String containerName = network + "-step-" + stringifyPosition(position);
-							Commandline docker = new Commandline(Agent.dockerPath);
-							docker.addArgs("run", "--name=" + containerName, "--network=" + network);
-							if (jobData.getDockerOptions() != null)
-								docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
-							
-							docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
-
-							for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
-								String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath());
-								docker.addArgs("-v", hostPath + ":" + entry.getValue());
-							}
-							
-							if (entrypoint != null) 
-								docker.addArgs("-w", containerWorkspace);
-							else if (workingDir != null) 
-								docker.addArgs("-w", workingDir);
-							
-							for (Map.Entry<CacheInstance, String> entry: cacheAllocations.entrySet()) {
-								if (!PathUtils.isCurrent(entry.getValue())) {
+							// Docker can not process symbol links well
+							cache.uninstallSymbolinks(hostWorkspace);
+							try {
+								String containerName = network + "-step-" + stringifyPosition(position);
+								Commandline docker = new Commandline(Agent.dockerPath);
+								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
+								if (jobData.getDockerOptions() != null)
+									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
+								
+								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
+	
+								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
+									String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath());
+									docker.addArgs("-v", hostPath + ":" + entry.getValue());
+								}
+								
+								if (entrypoint != null) 
+									docker.addArgs("-w", containerWorkspace);
+								else if (workingDir != null) 
+									docker.addArgs("-w", workingDir);
+								
+								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
 									String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
 									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
 									docker.addArgs("-v", getHostPath(hostCachePath) + ":" + containerCachePath);
-								} else {
-									throw new ExplicitException("Invalid cache path: " + entry.getValue());
 								}
-							}
-							
-							if (SystemUtils.IS_OS_WINDOWS) 
-								docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
-							else
-								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
-							
-							if (hostAuthInfoHome.get() != null) {
-								String hostPath = getHostPath(hostAuthInfoHome.get().getAbsolutePath());
-								if (SystemUtils.IS_OS_WINDOWS) {
-									docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
-									docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
-								} else { 
-									docker.addArgs("-v", hostPath + ":/root/auth-info");
+								
+								if (SystemUtils.IS_OS_WINDOWS) 
+									docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
+								else
+									docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+								
+								if (hostAuthInfoHome.get() != null) {
+									String hostPath = getHostPath(hostAuthInfoHome.get().getAbsolutePath());
+									if (SystemUtils.IS_OS_WINDOWS) {
+										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
+										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
+									} else { 
+										docker.addArgs("-v", hostPath + ":/root/auth-info");
+									}
 								}
+	
+								for (Map.Entry<String, String> entry: environments.entrySet()) 
+									docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
+								
+								docker.addArgs("-e", "ONEDEV_WORKSPACE=" + containerWorkspace);
+								
+								if (useTTY)
+									docker.addArgs("-t");
+								
+								if (entrypoint != null)
+									docker.addArgs("--entrypoint=" + entrypoint);
+								
+								if (isUseProcessIsolation(new Commandline(Agent.dockerPath), image, Agent.osInfo, jobLogger))
+									docker.addArgs("--isolation=process");
+								
+								docker.addArgs(image);
+								docker.addArgs(arguments.toArray(new String[arguments.size()]));
+								
+								ExecutionResult result = docker.execute(
+										ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger), 
+										null, newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
+								return result.getReturnCode();
+							} finally {
+								cache.installSymbolinks(hostWorkspace);
 							}
-
-							for (Map.Entry<String, String> entry: environments.entrySet()) 
-								docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
-							
-							docker.addArgs("-e", "ONEDEV_WORKSPACE=" + containerWorkspace);
-							
-							if (useTTY)
-								docker.addArgs("-t");
-							
-							if (entrypoint != null)
-								docker.addArgs("--entrypoint=" + entrypoint);
-							
-							if (isUseProcessIsolation(new Commandline(Agent.dockerPath), image, Agent.osInfo, jobLogger))
-								docker.addArgs("--isolation=process");
-							
-							docker.addArgs(image);
-							docker.addArgs(arguments.toArray(new String[arguments.size()]));
-							
-							ExecutionResult result = docker.execute(
-									ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger), 
-									null, newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
-							return result.getReturnCode();
 						}
 						
 						@Override
@@ -678,7 +668,7 @@ public class AgentSocket implements Runnable {
 										hostAuthInfoHome.set(FileUtils.createTempDir());
 									
 									Commandline git = new Commandline(Agent.gitPath);	
-									checkoutFacade.setupWorkingDir(git, hostWorkspace, hostCacheHome, cacheAllocations);
+									checkoutFacade.setupWorkingDir(git, hostWorkspace);
 									git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
 
 									CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
@@ -738,6 +728,8 @@ public class AgentSocket implements Runnable {
 				} catch (IOException e) {
 					throw new RuntimeException(e);
 				} finally {
+					cache.uninstallSymbolinks(hostWorkspace);
+					
 					// Fix https://code.onedev.io/projects/160/issues/597
 					if (SystemUtils.IS_OS_WINDOWS)
 						FileUtils.deleteDir(hostWorkspace);
