@@ -414,8 +414,9 @@ public class AgentSocket implements Runnable {
 						
 						try {
 							KubernetesHelper.runServerSideStep(Agent.serverUrl, jobData.getJobToken(), position, 
-									serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(), 
-									serverSideFacade.getPlaceholders(), buildDir, workspaceDir, jobLogger);
+									serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
+									serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
+									buildDir, jobLogger);
 						} catch (Exception e) {
 							jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 							return false;
@@ -705,8 +706,9 @@ public class AgentSocket implements Runnable {
 								
 								try {
 									KubernetesHelper.runServerSideStep(Agent.serverUrl, jobData.getJobToken(), position, 
-											serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(), 
-											serverSideFacade.getPlaceholders(), hostBuildHome, hostWorkspace, jobLogger);
+											serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
+											serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
+											hostBuildHome, jobLogger);
 								} catch (Exception e) {
 									jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 									return false;
