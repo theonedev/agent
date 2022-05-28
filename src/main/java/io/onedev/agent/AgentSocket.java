@@ -264,6 +264,11 @@ public class AgentSocket implements Runnable {
 	}
 	
 	private void executeShellJob(Session session, ShellJobData jobData) {
+		if (Agent.isInDocker()) {
+			throw new ExplicitException("Remote shell executor can only execute jobs on agents running "
+					+ "directly on bare metal/virtual machine");
+		}
+		
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		File workspaceDir = new File(buildDir, "workspace");
 		
