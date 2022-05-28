@@ -52,8 +52,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 	
 	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, 
-			File workspace, TaskLogger jobLogger) {
-		String[] parsedTags = StringUtils.parseQuoteTokens(buildImageFacade.getTags());
+			File hostBuildHome, TaskLogger jobLogger) {
+		String[] parsedTags = StringUtils.parseQuoteTokens(
+				replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
 		
 		docker.clearArgs();
 		docker.addArgs("build");
@@ -61,15 +62,15 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		for (String tag: parsedTags) 
 			docker.addArgs("-t", tag);
 		if (buildImageFacade.getDockerfile() != null)
-			docker.addArgs("-f", buildImageFacade.getDockerfile());
+			docker.addArgs("-f", replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildHome));
 		else
 			docker.addArgs("-f", "Dockerfile");
 		if (buildImageFacade.getBuildPath() != null)
-			docker.addArgs(buildImageFacade.getBuildPath());
+			docker.addArgs(replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome));
 		else
 			docker.addArgs(".");
 
-		docker.workingDir(workspace);
+		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 		
 		if (buildImageFacade.isPublish()) {

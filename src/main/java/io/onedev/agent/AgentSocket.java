@@ -645,7 +645,7 @@ public class AgentSocket implements Runnable {
 								}
 							} else if (facade instanceof BuildImageFacade) {
 								DockerExecutorUtils.buildImage(new Commandline(Agent.dockerPath), 
-										(BuildImageFacade) facade, hostWorkspace, jobLogger);
+										(BuildImageFacade) facade, hostBuildHome, jobLogger);
 							} else if (facade instanceof RunContainerFacade) {
 								RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 
