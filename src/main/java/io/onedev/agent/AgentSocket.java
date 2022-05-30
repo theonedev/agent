@@ -584,10 +584,12 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", getHostPath(hostCachePath) + ":" + containerCachePath);
 								}
 								
-								if (SystemUtils.IS_OS_WINDOWS) 
-									docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
-								else
-									docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+								if (jobData.isMountDockerSock()) {
+									if (SystemUtils.IS_OS_WINDOWS) 
+										docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
+									else
+										docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+								}
 								
 								if (hostAuthInfoHome.get() != null) {
 									String hostPath = getHostPath(hostAuthInfoHome.get().getAbsolutePath());
