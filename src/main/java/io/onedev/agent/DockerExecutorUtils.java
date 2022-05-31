@@ -61,14 +61,22 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		
 		for (String tag: parsedTags) 
 			docker.addArgs("-t", tag);
-		if (buildImageFacade.getDockerfile() != null)
-			docker.addArgs("-f", replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildHome));
-		else
+		if (buildImageFacade.getDockerfile() != null) {
+			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildHome);
+			if (dockerFile.contains(".."))
+				throw new ExplicitException("Dockerfile path should not contain '..'");
+			docker.addArgs("-f", dockerFile);
+		} else {
 			docker.addArgs("-f", "Dockerfile");
-		if (buildImageFacade.getBuildPath() != null)
-			docker.addArgs(replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome));
-		else
+		}
+		if (buildImageFacade.getBuildPath() != null) {
+			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome);
+			if (buildPath.contains(".."))
+				throw new ExplicitException("Build path should not contain '..'");
+			docker.addArgs();
+		} else {
 			docker.addArgs(".");
+		}
 
 		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();

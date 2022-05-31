@@ -569,14 +569,19 @@ public class AgentSocket implements Runnable {
 								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
 	
 								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
+									if (entry.getKey().contains(".."))
+										throw new ExplicitException("Volume mount source path should not contain '..'");
 									String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath());
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 								
-								if (entrypoint != null) 
+								if (entrypoint != null) { 
 									docker.addArgs("-w", containerWorkspace);
-								else if (workingDir != null) 
+								} else if (workingDir != null) {
+									if (workingDir.contains(".."))
+										throw new ExplicitException("Container working dir should not contain '..'");
 									docker.addArgs("-w", workingDir);
+								}
 								
 								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
 									String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
