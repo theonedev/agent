@@ -289,7 +289,7 @@ public class AgentSocket implements Runnable {
 				
 			};
 			
-			File cacheHomeDir = Agent.getCacheHome();
+			File cacheHomeDir = Agent.getCacheHome(jobData.getExecutorName());
 			
 			jobLogger.log("Setting up job cache...") ;
 			
@@ -471,7 +471,7 @@ public class AgentSocket implements Runnable {
 				
 			};
 			
-			File hostCacheHome = Agent.getCacheHome();
+			File hostCacheHome = Agent.getCacheHome(jobData.getExecutorName());
 			
 			jobLogger.log("Allocating job cache...") ;
 
@@ -803,7 +803,7 @@ public class AgentSocket implements Runnable {
 			};
 			
 			workspaceDir = Bootstrap.createTempDir("workspace");
-			cacheDir = new File(Agent.getCacheHome(), UUID.randomUUID().toString());
+			cacheDir = new File(Agent.getCacheHome(jobData.getExecutorName()), UUID.randomUUID().toString());
 			FileUtils.createDir(cacheDir);
 			authInfoDir = FileUtils.createTempDir();
 			

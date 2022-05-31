@@ -8,6 +8,8 @@ public class TestDockerJobData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 	
+	private final String executorName;
+	
 	private final String jobToken;
 	
 	private final String dockerImage;
@@ -16,12 +18,17 @@ public class TestDockerJobData implements Serializable {
 
 	private final String dockerOptions;
 	
-	public TestDockerJobData(String jobToken, String dockerImage, List<Map<String, String>> registryLogins, 
-			String dockerOptions) {
+	public TestDockerJobData(String executorName, String jobToken, String dockerImage, 
+			List<Map<String, String>> registryLogins, String dockerOptions) {
+		this.executorName = executorName;
 		this.jobToken = jobToken;
 		this.dockerImage = dockerImage;
 		this.registryLogins = registryLogins;
 		this.dockerOptions = dockerOptions;
+	}
+
+	public String getExecutorName() {
+		return executorName;
 	}
 
 	public String getJobToken() {

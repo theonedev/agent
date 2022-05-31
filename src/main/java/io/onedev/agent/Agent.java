@@ -496,9 +496,9 @@ public class Agent {
 		new Message(MessageType.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
 	}
 	
-	public static File getCacheHome() {
+	public static File getCacheHome(String executorName) {
 		// Fix issue https://code.onedev.io/projects/160/issues/601
-		File file = new File(getWorkDir(), name + "/cache");
+		File file = new File(getWorkDir(), name + "/cache/" + executorName);
 		if (!file.exists()) synchronized (cacheHomeCreationLock) {
 			FileUtils.createDir(file);
 		}
