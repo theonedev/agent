@@ -163,6 +163,22 @@ public class AgentSocket implements Runnable {
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
 	    					
 	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, StandardCharsets.UTF_8);
+
+	    					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
+	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, StandardCharsets.UTF_8);
+	    					if (!logbackConfig.contains("MaskingPatternLayout")) {
+	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    								"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
+	    								"ch.qos.logback.core.encoder.LayoutWrappingEncoder");
+	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    								"<pattern>", 
+	    								"<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
+	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    								"</pattern>", 
+	    								"</pattern>\n			</layout>");
+	    						FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, StandardCharsets.UTF_8);
+	    					}
+	    					
 	    				} 
 	    			} finally {
 	    				client.close();
