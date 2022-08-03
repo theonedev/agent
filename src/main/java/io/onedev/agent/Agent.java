@@ -275,7 +275,12 @@ public class Agent {
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
-			HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
+			HardwareAbstractionLayer hardware = null;
+			try {
+				hardware = new SystemInfo().getHardware();
+			} catch (Exception e) {
+				logger.debug("Error calling oshi", e);
+			}
 			
 			String temporalString = System.getenv(TEMPORAL_AGENT_KEY);
 			if (StringUtils.isBlank(temporalString))
@@ -293,7 +298,14 @@ public class Agent {
 			if (StringUtils.isBlank(cpuString))
 				cpuString = agentProps.getProperty(AGENT_CPU_KEY);
 			if (StringUtils.isBlank(cpuString)) {
-				cpu = hardware.getProcessor().getLogicalProcessorCount()*1000;
+				if (hardware != null) {
+					cpu = hardware.getProcessor().getLogicalProcessorCount()*1000;
+				} else {
+					cpu = 4000;
+					logger.warn("Unable to call oshi to get default cpu quota (cpu cores x 1000). Assuming as 4000. "
+							+ "Configure it manually via environment variable or system property 'agentCpu' if you "
+							+ "do not want to use this value");
+				}
 			} else {
 				try {
 					cpu = Integer.parseInt(cpuString);
@@ -308,7 +320,14 @@ public class Agent {
 			if (StringUtils.isBlank(memoryString))
 				memoryString = agentProps.getProperty(AGENT_MEMORY_KEY);
 			if (StringUtils.isBlank(memoryString)) {
-				memory = (int) (hardware.getMemory().getTotal()/1024/1024); 
+				if (hardware != null) {
+					memory = (int) (hardware.getMemory().getTotal()/1024/1024); 
+				} else {
+					memory = 8000;
+					logger.warn("Unable to call oshi to get default memory quota (mega bytes of physical memory). "
+							+ "Assuming as 8000. Configure it manually via environment variable or system property "
+							+ "'agentMemory' if you do not want to use this value");
+				}
 			} else {
 				try {
 					memory = Integer.parseInt(memoryString);
