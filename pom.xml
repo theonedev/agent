@@ -10,13 +10,13 @@
 		<version>1.0.5</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>1.3.20</version>
+	<version>1.3.21</version>
 	<build>
 		<plugins>
 			<plugin>
 				<groupId>io.onedev</groupId>
 				<artifactId>plugin-maven</artifactId>
-				<version>2.1.1</version>
+				<version>2.2.0</version>
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
@@ -150,7 +150,7 @@
 		</dependency>
 	</dependencies>
 	<properties>	
-		<k8shelper.version>2.6.15</k8shelper.version>
+		<k8shelper.version>2.6.16</k8shelper.version>
 		<jackson.version>2.13.2</jackson.version>
 		<jacksondatabind.version>2.13.2.1</jacksondatabind.version>
 		<jersey.version>2.26</jersey.version>
