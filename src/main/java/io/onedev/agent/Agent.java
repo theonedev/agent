@@ -216,7 +216,7 @@ public class Agent {
 			try {
 				ipAddress = InetAddress.getLocalHost().getHostAddress();
 			} catch (UnknownHostException e) {
-				ipAddress = "127.0.0.1";
+				ipAddress = "unknown";
 			}
 			
 			Properties attributeProps = new Properties();
