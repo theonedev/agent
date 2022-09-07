@@ -5,8 +5,9 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -213,12 +214,6 @@ public class Agent {
 				}
 			}
 			
-			try {
-				ipAddress = InetAddress.getLocalHost().getHostAddress();
-			} catch (UnknownHostException e) {
-				ipAddress = "unknown";
-			}
-			
 			Properties attributeProps = new Properties();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/attributes.properties"))) {
@@ -240,7 +235,21 @@ public class Agent {
 				throw new ExplicitException("Property '" + SERVER_URL_KEY + "' not specified");
 			
 			serverUrl = StringUtils.stripEnd(serverUrl.trim(), "/");
-	
+			
+			URI serverUri = new URI(serverUrl);
+			int serverPort = serverUri.getPort();
+			if (serverPort == -1) {
+				if (serverUri.getScheme().equals("http"))
+					serverPort = 80;
+				else
+					serverPort = 443;
+			}
+			
+			try (Socket socket = new Socket()) {
+				socket.connect(new InetSocketAddress(serverUri.getHost(), serverPort));
+				ipAddress = socket.getLocalAddress().getHostAddress();
+			}
+			
 			String websocketUrl = serverUrl;
 			if (websocketUrl.startsWith("https://")) 
 				websocketUrl = websocketUrl.replace("https://", "wss://");
