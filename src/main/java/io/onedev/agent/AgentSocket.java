@@ -1,6 +1,6 @@
 package io.onedev.agent;
 
-import static io.onedev.agent.DockerExecutorUtils.cleanDirAsRoot;
+import static io.onedev.agent.DockerExecutorUtils.deleteDir;
 import static io.onedev.agent.DockerExecutorUtils.createNetwork;
 import static io.onedev.agent.DockerExecutorUtils.deleteNetwork;
 import static io.onedev.agent.DockerExecutorUtils.getEntrypoint;
@@ -325,7 +325,7 @@ public class AgentSocket implements Runnable {
 				}
 
 				@Override
-				protected void clean(File cacheDir) {
+				protected void delete(File cacheDir) {
 					FileUtils.cleanDir(cacheDir);					
 				}
 				
@@ -508,8 +508,8 @@ public class AgentSocket implements Runnable {
 				}
 
 				@Override
-				protected void clean(File cacheDir) {
-					DockerExecutorUtils.cleanDirAsRoot(
+				protected void delete(File cacheDir) {
+					DockerExecutorUtils.deleteDir(
 							cacheDir, 
 							new Commandline(Agent.dockerPath), Agent.isInDocker());					
 				}
@@ -774,8 +774,7 @@ public class AgentSocket implements Runnable {
 			dockerJobThreads.remove(jobData.getJobToken());
 			client.close();
 			
-			cleanDirAsRoot(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
-			FileUtils.deleteDir(hostBuildHome);
+			deleteDir(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
 		}
 	}
 		
