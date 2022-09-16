@@ -21,10 +21,10 @@ public class DockerJobData extends ShellJobData {
 	private final int retried;
 	
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId, 
-			String commitHash, Long buildNumber, List<Action> actions, int retried, 
+			String refName, String commitHash, Long buildNumber, List<Action> actions, int retried, 
 			List<Map<String, Serializable>> services, List<Map<String, String>> registryLogins, 
 			boolean mountDockerSock, List<String> trustCertContent, String dockerOptions) {
-		super(jobToken, executorName, projectPath, projectId, commitHash, buildNumber, 
+		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, 
 				actions, trustCertContent);
 		this.services = services;
 		this.registryLogins = registryLogins;

@@ -423,7 +423,7 @@ public class AgentSocket implements Runnable {
 							int cloneDepth = checkoutFacade.getCloneDepth();
 							
 							cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(), 
-									jobData.getCommitHash(), checkoutFacade.isWithLfs(), 
+									jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(), 
 									checkoutFacade.isWithSubmodules(), cloneDepth, 
 									ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 						} catch (Exception e) {
@@ -714,8 +714,9 @@ public class AgentSocket implements Runnable {
 										int cloneDepth = checkoutFacade.getCloneDepth();
 	
 										String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
+										String refName = jobData.getRefName();
 										String commitHash = jobData.getCommitHash();
-										cloneRepository(git, cloneUrl, cloneUrl, commitHash, 
+										cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash, 
 												checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth, 
 												ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 									} finally {
