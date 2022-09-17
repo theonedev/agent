@@ -329,7 +329,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			}).checkReturnCode();
 
 			docker.clearArgs();
-			docker.addArgs("container", "rm", container);
+			docker.addArgs("container", "rm", "-v", container);
 			docker.execute(new LineConsumer() {
 
 				@Override
