@@ -96,9 +96,9 @@ public class AgentSocket implements Runnable {
 
 	private static final Logger logger = LoggerFactory.getLogger(AgentSocket.class);
 	
-	private static final Map<String, Thread> dockerJobThreads = new ConcurrentHashMap<>();
+	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
 	
-	private static final Map<String, Thread> shellJobThreads = new ConcurrentHashMap<>();
+	private static final Map<String, File> buildHomes = new ConcurrentHashMap<>();
 	
 	private Session session;
 	
@@ -229,8 +229,11 @@ public class AgentSocket implements Runnable {
 	    		break;
 	    	case CANCEL_JOB:
 	    		String jobToken = new String(messageData, StandardCharsets.UTF_8);
-	    		cancelDockerJob(jobToken);
-	    		cancelShellJob(jobToken);
+	    		cancelJob(jobToken);
+	    		break;
+	    	case RESUME_JOB: 
+	    		jobToken = new String(messageData, StandardCharsets.UTF_8);
+	    		resumeJob(jobToken);
 	    		break;
 	    	default:
 	    	}
@@ -243,18 +246,20 @@ public class AgentSocket implements Runnable {
 		}
 	}
 	
-	private void cancelShellJob(String jobToken) {
-		Thread thread = shellJobThreads.get(jobToken);
+	private void cancelJob(String jobToken) {
+		Thread thread = jobThreads.get(jobToken);
 		if (thread != null)
 			thread.interrupt();
 	}
 		
-	private void cancelDockerJob(String jobToken) {
-		Thread thread = dockerJobThreads.get(jobToken);
-		if (thread != null)
-			thread.interrupt();
+	private void resumeJob(String jobToken) {
+		File buildHome = buildHomes.get(jobToken);
+		if (buildHome != null) synchronized (buildHome) {
+			if (buildHome.exists())
+				FileUtils.touchFile(new File(buildHome, "continue"));
+		}
 	}
-	
+		
 	@OnWebSocketClose
 	public void onClose(int statusCode, String reason) {
 		if (reason != null)
@@ -294,7 +299,8 @@ public class AgentSocket implements Runnable {
 					entry.getValue(), StandardCharsets.UTF_8.name());
 		}
 		Client client = ClientBuilder.newClient();
-		shellJobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		buildHomes.put(jobData.getJobToken(), buildDir);
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -373,6 +379,8 @@ public class AgentSocket implements Runnable {
 									+ "remote docker executor, or kubernetes executor");
 						}
 						
+						commandFacade.generatePauseCommand(buildDir);
+						
 						File jobScriptFile = new File(buildDir, "job-commands" + commandFacade.getScriptExtension());
 						try {
 							FileUtils.writeLines(
@@ -386,6 +394,7 @@ public class AgentSocket implements Runnable {
 						Commandline interpreter = commandFacade.getInterpreter();
 						Map<String, String> environments = new HashMap<>();
 						environments.put("GIT_HOME", userDir.getAbsolutePath());
+						environments.put("ONEDEV_WORKSPACE", workspaceDir.getAbsolutePath());
 						interpreter.workingDir(workspaceDir).environments(environments);
 						interpreter.addArgs(jobScriptFile.getAbsolutePath());
 						
@@ -457,13 +466,17 @@ public class AgentSocket implements Runnable {
 			if (!successful)
 				throw new FailedException();
 		} finally {
-			shellJobThreads.remove(jobData.getJobToken());
+			jobThreads.remove(jobData.getJobToken());
+			buildHomes.remove(jobData.getJobToken());
 			client.close();
 			
 			// Fix https://code.onedev.io/projects/160/issues/597
 			if (SystemUtils.IS_OS_WINDOWS && workspaceDir.exists())
 				FileUtils.deleteDir(workspaceDir);
-			FileUtils.deleteDir(buildDir);
+			
+			synchronized (buildDir) {
+				FileUtils.deleteDir(buildDir);
+			}
 		}
 	}
 		
@@ -476,7 +489,8 @@ public class AgentSocket implements Runnable {
 		}
 		
 		Client client = ClientBuilder.newClient();
-		dockerJobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		buildHomes.put(jobData.getJobToken(), hostBuildHome);
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -771,16 +785,19 @@ public class AgentSocket implements Runnable {
 				deleteNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
 			}
 		} finally {
-			dockerJobThreads.remove(jobData.getJobToken());
+			jobThreads.remove(jobData.getJobToken());
+			buildHomes.remove(jobData.getJobToken());
 			client.close();
 			
-			deleteDir(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
+			synchronized (hostBuildHome) {
+				deleteDir(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
+			}
 		}
 	}
 		
 	private void testShellExecutor(Session session, TestShellJobData jobData) {
 		Client client = ClientBuilder.newClient();
-		shellJobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -801,7 +818,7 @@ public class AgentSocket implements Runnable {
 			
 			testCommands(new Commandline(Agent.gitPath), jobData.getCommands(), jobLogger);
 		} finally {
-			shellJobThreads.remove(jobData.getJobToken());
+			jobThreads.remove(jobData.getJobToken());
 			client.close();
 		}		
 	}
@@ -812,7 +829,7 @@ public class AgentSocket implements Runnable {
 		File authInfoDir = null;
 		
 		Client client = ClientBuilder.newClient();
-		dockerJobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -906,7 +923,7 @@ public class AgentSocket implements Runnable {
 
 			KubernetesHelper.testGitLfsAvailability(new Commandline(Agent.gitPath), jobLogger);
 		} finally {
-			dockerJobThreads.remove(jobData.getJobToken());
+			jobThreads.remove(jobData.getJobToken());
 			client.close();
 			
 			if (authInfoDir != null)

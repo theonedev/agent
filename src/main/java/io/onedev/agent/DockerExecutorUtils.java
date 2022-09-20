@@ -123,7 +123,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		Commandline interpreter = commandFacade.getInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
-
+		
+		commandFacade.generatePauseCommand(hostBuildHome);
+		
 		File scriptFile = new File(hostBuildHome, "job-commands" + commandFacade.getScriptExtension());
 		try {
 			OsExecution execution = commandFacade.getExecution(osInfo);
@@ -133,7 +135,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
-
+		
 		if (SystemUtils.IS_OS_WINDOWS) {
 			if (withHostAuthInfo) {
 				entrypointExecutable = "cmd";
