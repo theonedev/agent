@@ -158,6 +158,7 @@ public class AgentSocket implements Runnable {
 	    					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
 	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
 	    					wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
+	    					wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
 	    					
 	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
