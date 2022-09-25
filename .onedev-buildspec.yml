@@ -10,7 +10,7 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: detect build version
-    image: 1dev/build-environment:1.1
+    image: 1dev/build-environment:1.4
     commands:
     - set -e
     - echo "Detecting project version (may require some time while downloading maven
@@ -25,7 +25,7 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: build & deploy
-    image: 1dev/build-environment:1.1
+    image: 1dev/build-environment:1.4
     commands:
     - mvn deploy -Dmaven.deploy.password=@secrets:maven-deploy-password@
     useTTY: false
