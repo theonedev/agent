@@ -11,31 +11,31 @@ public class Message implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
-	private final MessageType type;
+	private final MessageTypes type;
 	
 	private final byte[] data;
 	
-	public Message(MessageType type, byte[] data) {
+	public Message(MessageTypes type, byte[] data) {
 		this.type = type;
 		this.data = data;
 	}
 
-	public Message(MessageType type, String data) {
+	public Message(MessageTypes type, String data) {
 		this(type, data.getBytes(StandardCharsets.UTF_8));
 	}
 	
-	public Message(MessageType type, Serializable data) {
+	public Message(MessageTypes type, Serializable data) {
 		this(type, SerializationUtils.serialize(data));
 	}
 	
 	public static Message of(byte[] bytes, int offset, int length) {
-    	MessageType type = MessageType.values()[bytes[offset]];
+    	MessageTypes type = MessageTypes.values()[bytes[offset]];
 		byte[] data = new byte[length-1];
 		System.arraycopy(bytes, offset+1, data, 0, length-1);
 		return new Message(type, data);
 	}
 	
-	public MessageType getType() {
+	public MessageTypes getType() {
 		return type;
 	}
 

@@ -21,7 +21,7 @@ public class WebsocketUtils {
 			throws InterruptedException, TimeoutException {
 		String uuid = UUID.randomUUID().toString();
 		CallData callData = new CallData(uuid, request);
-		new Message(MessageType.REQUEST, SerializationUtils.serialize(callData)).sendBy(session);
+		new Message(MessageTypes.REQUEST, SerializationUtils.serialize(callData)).sendBy(session);
 		
 		synchronized (responses) {
 			responses.put(uuid, null);

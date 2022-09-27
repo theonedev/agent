@@ -521,7 +521,7 @@ public class Agent {
 	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
 		if (sessionId == null)
 			sessionId = "";
-		new Message(MessageType.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
+		new Message(MessageTypes.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
 	}
 	
 	public static File getCacheHome(String executorName) {
