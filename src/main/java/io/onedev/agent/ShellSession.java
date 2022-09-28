@@ -78,9 +78,9 @@ public class ShellSession {
 
                         @Override
                         public void kill(Process process, String executionId) {
-	                        super.kill(process, executionId);
 	                        outputHandler.close();
 	                        errorHandler.close();
+	                        super.kill(process, executionId);
                         }
 
                     };
