@@ -120,7 +120,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, OsInfo osInfo,
 			boolean withHostAuthInfo) {
-		Commandline interpreter = commandFacade.getInterpreter();
+		Commandline interpreter = commandFacade.getScriptInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		

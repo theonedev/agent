@@ -14,7 +14,7 @@ public class ShellExecutorUtils {
 
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
 		CommandFacade executable = new CommandFacade(null, commands, true);
-		Commandline interpreter = executable.getInterpreter();
+		Commandline interpreter = executable.getScriptInterpreter();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {
 			jobLogger.log("Running specified commands...");

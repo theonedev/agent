@@ -251,15 +251,11 @@ public class AgentSocket implements Runnable {
 	    		File buildHome;
 	    		if (containerName != null) {
 					Commandline docker = new Commandline(Agent.dockerPath);
-	    			if (SystemUtils.IS_OS_WINDOWS)
-	    				docker.workingDir(new File("C:\\onedev-build\\workspace"));
-	    			else
-	    				docker.workingDir(new File("/onedev-build/workspace"));
 	    			docker.addArgs("exec", "-it", containerName);
 	    			LeafFacade runningStep = runningSteps.get(jobToken);
 	    			if (runningStep instanceof CommandFacade) {
 	    				CommandFacade commandStep = (CommandFacade) runningStep;
-	    				docker.addArgs(commandStep.getShellExecutable());
+	    				docker.addArgs(commandStep.getShell(SystemUtils.IS_OS_WINDOWS, null));
 	    			} else if (SystemUtils.IS_OS_WINDOWS) {
 	    				docker.addArgs("cmd");
 	    			} else {
@@ -271,7 +267,7 @@ public class AgentSocket implements Runnable {
 	    			LeafFacade runningStep = runningSteps.get(jobToken);
 	    			if (runningStep instanceof CommandFacade) {
 	    				CommandFacade commandStep = (CommandFacade) runningStep;
-	    				shell = new Commandline(commandStep.getShellExecutable());
+	    				shell = new Commandline(commandStep.getShell(SystemUtils.IS_OS_WINDOWS, null)[0]);
 	    			} else if (SystemUtils.IS_OS_WINDOWS) {
 	    				shell = new Commandline("cmd");
 	    			} else {
@@ -280,7 +276,7 @@ public class AgentSocket implements Runnable {
 	    			shell.workingDir(new File(buildHome, "workspace"));
 	    			shellSessions.put(sessionId, new ShellSession(sessionId, session, shell));
 	    		} else {
-	    			sendError(sessionId, session, "Build not running");
+	    			sendError(sessionId, session, "Shell not ready");
 	    		}
 	    		break;
 	    	case SHELL_EXIT:
@@ -465,7 +461,7 @@ public class AgentSocket implements Runnable {
 								throw new RuntimeException(e);
 							}
 							
-							Commandline interpreter = commandFacade.getInterpreter();
+							Commandline interpreter = commandFacade.getScriptInterpreter();
 							Map<String, String> environments = new HashMap<>();
 							environments.put("GIT_HOME", userDir.getAbsolutePath());
 							environments.put("ONEDEV_WORKSPACE", workspaceDir.getAbsolutePath());
