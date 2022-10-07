@@ -451,8 +451,28 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		}).checkReturnCode();
 
+		if (containerIds.isEmpty()) { // podman has a bug not being able to filter by volume
+			docker.clearArgs();
+			docker.addArgs("ps", "--format={{.ID}}");
+			docker.execute(new LineConsumer() {
+
+				@Override
+				public void consume(String line) {
+					containerIds.add(line);
+				}
+
+			}, new LineConsumer() {
+
+				@Override
+				public void consume(String line) {
+					logger.error(line);
+				}
+
+			}).checkReturnCode();
+		}
+		
 		if (containerIds.isEmpty())
-			throw new IllegalStateException("No any mount container found");
+			throw new IllegalStateException("Unable to find any running container");
 
 		docker.clearArgs();
 		String inspectFormat = String.format("{{range .Mounts}}{{if eq .Destination \"%s\"}}{{.Source}}{{end}}{{end}}",
@@ -467,7 +487,8 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 			@Override
 			public void consume(String line) {
-				possibleHostInstallPaths.add(line);
+				if (StringUtils.isNotBlank(line))
+					possibleHostInstallPaths.add(line);
 			}
 
 		}, new LineConsumer() {
