@@ -312,7 +312,7 @@ public class Agent {
 				} else {
 					cpu = 4000;
 					logger.warn("Unable to call oshi to get default cpu quota (cpu cores x 1000). Assuming as 4000. "
-							+ "Configure it manually via environment variable or system property 'agentCpu' if you "
+							+ "Configure it manually via environment variable or agent property 'agentCpu' if you "
 							+ "do not want to use this value");
 				}
 			} else {
@@ -334,7 +334,7 @@ public class Agent {
 				} else {
 					memory = 8000;
 					logger.warn("Unable to call oshi to get default memory quota (mega bytes of physical memory). "
-							+ "Assuming as 8000. Configure it manually via environment variable or system property "
+							+ "Assuming as 8000. Configure it manually via environment variable or agent property "
 							+ "'agentMemory' if you do not want to use this value");
 				}
 			} else {
