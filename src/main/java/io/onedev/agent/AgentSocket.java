@@ -38,11 +38,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.Entity;
 import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
 import org.apache.commons.lang3.SerializationUtils;
@@ -150,7 +148,7 @@ public class AgentSocket implements Runnable {
 	    			try {
 	    				WebTarget target = client.target(Agent.serverUrl).path("downloads/agent-lib");
 	    				Invocation.Builder builder =  target.request();
-	    				builder.header(HttpHeaders.AUTHORIZATION, Agent.BEARER + " " + Agent.token);
+	    				builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
 	    				
 	    				try (Response response = builder.get()){
 	    					KubernetesHelper.checkStatus(response);
@@ -366,7 +364,6 @@ public class AgentSocket implements Runnable {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), StandardCharsets.UTF_8.name());
 		}
-		Client client = ClientBuilder.newClient();
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildHomes.put(jobData.getJobToken(), buildDir);
 		try {
@@ -387,15 +384,7 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
-					Invocation.Builder builder =  target.request();
-					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-
-					try (Response response = builder.post(
-							Entity.entity(request.toString(),MediaType.APPLICATION_OCTET_STREAM))) {
-						checkStatus(response);
-						return SerializationUtils.deserialize(response.readEntity(byte[].class));
-					}
+					return KubernetesHelper.allocateCaches(Agent.serverUrl, jobData.getJobToken(), request);
 				}
 
 				@Override
@@ -412,18 +401,7 @@ public class AgentSocket implements Runnable {
 			
 			jobLogger.log("Downloading job dependencies...");
 			
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-			
-			try (Response response = builder.get()){
-				checkStatus(response);
-				try (InputStream is = response.readEntity(InputStream.class)) {
-					FileUtils.untar(is, workspaceDir, false);
-				} catch (IOException e) {
-					throw new RuntimeException(e);
-				}
-			}
+			KubernetesHelper.downloadDependencies(jobData.getJobToken(), Agent.serverUrl, workspaceDir);
 			
 			File userDir = new File(buildDir, "user");
 			FileUtils.createDir(userDir);
@@ -513,7 +491,7 @@ public class AgentSocket implements Runnable {
 							ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 							
 							try {
-								KubernetesHelper.runServerSideStep(Agent.serverUrl, jobData.getJobToken(), position, 
+								KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
 										serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
 										serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
 										buildDir, jobLogger);
@@ -541,7 +519,6 @@ public class AgentSocket implements Runnable {
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
-			client.close();
 			
 			// Fix https://code.onedev.io/projects/160/issues/597
 			if (SystemUtils.IS_OS_WINDOWS && workspaceDir.exists())
@@ -582,16 +559,7 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/allocate-job-caches");
-					Invocation.Builder builder =  target.request();
-					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-
-					try (Response response = builder.post(Entity.entity(
-							request.toString(),
-							MediaType.APPLICATION_OCTET_STREAM))) {
-						checkStatus(response);
-						return SerializationUtils.deserialize(response.readEntity(byte[].class));
-					}
+					return KubernetesHelper.allocateCaches(Agent.serverUrl, jobData.getJobToken(), request);
 				}
 
 				@Override
@@ -627,17 +595,8 @@ public class AgentSocket implements Runnable {
 				AtomicReference<File> hostAuthInfoHome = new AtomicReference<>(null);
 				try {						
 					jobLogger.log("Downloading job dependencies...");
-					
-					WebTarget target = client.target(Agent.serverUrl).path("api/k8s/download-dependencies");
-					Invocation.Builder builder =  target.request();
-					builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-					
-					try (Response response = builder.get()){
-						checkStatus(response);
-						try (InputStream is = response.readEntity(InputStream.class)) {
-							FileUtils.untar(is, hostWorkspace, false);
-						}
-					}
+
+					KubernetesHelper.downloadDependencies(jobData.getJobToken(), Agent.serverUrl, hostWorkspace);
 					
 					String containerBuildHome;
 					String containerWorkspace;
@@ -826,7 +785,7 @@ public class AgentSocket implements Runnable {
 									ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 									
 									try {
-										KubernetesHelper.runServerSideStep(Agent.serverUrl, jobData.getJobToken(), position, 
+										KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
 												serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
 												serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
 												hostBuildHome, jobLogger);
@@ -851,8 +810,6 @@ public class AgentSocket implements Runnable {
 					
 					if (!successful)
 						throw new FailedException();
-				} catch (IOException e) {
-					throw new RuntimeException(e);
 				} finally {
 					cache.uninstallSymbolinks(hostWorkspace);
 					

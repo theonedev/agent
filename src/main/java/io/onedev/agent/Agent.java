@@ -38,6 +38,7 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.OsInfo;
 import oshi.SystemInfo;
 import oshi.hardware.HardwareAbstractionLayer;
@@ -50,8 +51,6 @@ public class Agent {
 	public static final String GIT_MIN_VERSION = "2.11.1";
 	
 	public static final String LOGBACK_CONFIG_FILE_PROPERTY_NAME = "logback.configurationFile";
-	
-	public static final String BEARER = "Bearer";
 	
 	public static final long SOCKET_IDLE_TIMEOUT = 30000;
 	
@@ -380,7 +379,7 @@ public class Agent {
 			client.getPolicy().setMaxBinaryMessageSize(MAX_MESSAGE_BYTES);
 			
 			ClientUpgradeRequest request = new ClientUpgradeRequest();
-			request.setHeader(HttpHeaders.AUTHORIZATION, BEARER + " " + token);
+			request.setHeader(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + token);
 			
 			while (!stopping) {
 				logger.info("Connecting to " + serverUrl + "...");
