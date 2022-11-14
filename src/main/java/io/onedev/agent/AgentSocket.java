@@ -654,10 +654,17 @@ public class AgentSocket implements Runnable {
 								}
 								
 								if (jobData.isMountDockerSock()) {
-									if (SystemUtils.IS_OS_WINDOWS) 
-										docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
-									else
-										docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+									if (jobData.getDockerSock() != null) {
+										if (SystemUtils.IS_OS_WINDOWS) 
+											docker.addArgs("-v", jobData.getDockerSock() + "://./pipe/docker_engine");
+										else
+											docker.addArgs("-v", jobData.getDockerSock() + ":/var/run/docker.sock");
+									} else {
+										if (SystemUtils.IS_OS_WINDOWS) 
+											docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
+										else
+											docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+									}
 								}
 								
 								if (hostAuthInfoHome.get() != null) {

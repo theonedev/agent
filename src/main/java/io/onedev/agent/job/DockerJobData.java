@@ -16,6 +16,8 @@ public class DockerJobData extends ShellJobData {
 	
 	private final boolean mountDockerSock;
 	
+	private final String dockerSock;
+	
 	private final String dockerOptions;
 	
 	private final int retried;
@@ -23,12 +25,13 @@ public class DockerJobData extends ShellJobData {
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId, 
 			String refName, String commitHash, Long buildNumber, List<Action> actions, int retried, 
 			List<Map<String, Serializable>> services, List<Map<String, String>> registryLogins, 
-			boolean mountDockerSock, List<String> trustCertContent, String dockerOptions) {
+			boolean mountDockerSock, String dockerSock, List<String> trustCertContent, String dockerOptions) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, 
 				actions, trustCertContent);
 		this.services = services;
 		this.registryLogins = registryLogins;
 		this.mountDockerSock = mountDockerSock;
+		this.dockerSock = dockerSock;
 		this.dockerOptions = dockerOptions;
 		this.retried = retried;
 	}
@@ -43,6 +46,10 @@ public class DockerJobData extends ShellJobData {
 
 	public boolean isMountDockerSock() {
 		return mountDockerSock;
+	}
+
+	public String getDockerSock() {
+		return dockerSock;
 	}
 
 	public String getDockerOptions() {
