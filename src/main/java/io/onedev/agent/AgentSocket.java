@@ -214,9 +214,11 @@ public class AgentSocket implements Runnable {
 	    		}
 	    		break;
 	    	case RESTART:
+				logger.info("Request to restart by server");
 	    		Agent.restart();
 	    		break;
 	    	case STOP:
+				logger.info("Request to stop by server");
 	    		Agent.stop();
 	    		break;
 	    	case ERROR:
@@ -312,7 +314,8 @@ public class AgentSocket implements Runnable {
 	    	default:
 	    	}
 		} catch (Exception e) {
-			logger.error("Error processing websocket message", e);
+			if (!Agent.logCommonError(e, logger))
+				logger.error("Error processing websocket message", e);
 			try {
 				session.disconnect();
 			} catch (IOException e2) {
@@ -1040,7 +1043,8 @@ public class AgentSocket implements Runnable {
 
     @OnWebSocketError
     public void onError(Throwable t) {
-    	logger.error("Websocket error", t);
+    	if (!Agent.logCommonError(t, logger))
+    		logger.error("Websocket error", t);
     	Agent.reconnect = true;
     }
     

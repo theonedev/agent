@@ -243,10 +243,26 @@ public class Agent {
 				else
 					serverPort = 443;
 			}
-			
-			try (Socket socket = new Socket()) {
-				socket.connect(new InetSocketAddress(serverUri.getHost(), serverPort));
-				ipAddress = socket.getLocalAddress().getHostAddress();
+
+			while (true) {
+				if (stopping) {
+					stopped = true;
+					System.exit(0);
+				} else {
+					try (Socket socket = new Socket()) {
+						logger.info("Connecting to " + serverUrl + "...");
+						socket.connect(new InetSocketAddress(serverUri.getHost(), serverPort));
+						ipAddress = socket.getLocalAddress().getHostAddress();
+						break;
+					} catch (Exception e) {
+				    	if (!logCommonError(e, logger))
+				    		logger.error("Error connecting to server", e);
+						try {
+							Thread.sleep(5000);
+						} catch (Exception e2) {
+						}
+					}
+				}
 			}
 			
 			String websocketUrl = serverUrl;
@@ -382,28 +398,59 @@ public class Agent {
 			request.setHeader(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + token);
 			
 			while (!stopping) {
-				logger.info("Connecting to " + serverUrl + "...");
-				
-				reconnect = false;
-				client.start();
-				client.connect(new AgentSocket(), new URI(websocketUrl), request);
-				
-				while (!reconnect && !stopping) {
+				try {
+					logger.info("Connecting to " + serverUrl + "...");
+					
+					reconnect = false;
+					client.start();
+					client.connect(new AgentSocket(), new URI(websocketUrl), request);
+					
+					while (!reconnect && !stopping) {
+						try {
+							Thread.sleep(5000);
+						} catch (Exception e) {
+						}
+					}
+	
 					try {
-						Thread.sleep(5000);
+						client.stop();
 					} catch (Exception e) {
 					}
-				}
-
-				try {
-					client.stop();
 				} catch (Exception e) {
+			    	if (!logCommonError(e, logger))
+			    		logger.error("Error connecting to server", e);
+					try {
+						Thread.sleep(5000);
+					} catch (Exception e2) {
+					}
 				}
 			}
 		} catch (Exception e) {
-			logger.error("Error running agent", e);
+	    	logger.error("Error running agent", e);
 		} finally {
 			stopped = true;
+		}
+	}
+	
+	static boolean logCommonError(Throwable t, Logger logger) {
+		if (t.getMessage() != null) {
+	    	if (t.getMessage().contains("Connection refused")) {
+	    		logger.error("Connection refused. Is server up?");
+	    		return true;
+	    	} else if (t.getMessage().contains("500 Server Error")) {
+	    		logger.error("Server internal error, please check server log");
+	    		return true;
+	    	} else if (t.getMessage().contains("503 Service Unavailable")) {
+	    		logger.error("Server service not available yet");
+	    		return true;
+	    	} else if (t.getMessage().contains("403 Forbidden")) {
+	    		logger.error("Agent token rejected by server");
+	    		return true;
+	    	} else {
+	    		return false;
+	    	}
+		} else {
+			return false;
 		}
 	}
 	
@@ -503,10 +550,10 @@ public class Agent {
 	public static void stop() {
 		if (wrapperManagerClass != null) {
 			try {
-				Method method = wrapperManagerClass.getDeclaredMethod("stopAndReturn");
-				method.invoke(null, new Object[0]);
+				Method method = wrapperManagerClass.getDeclaredMethod("stopAndReturn", int.class);
+				method.invoke(null, new Object[] {0});
 			} catch (Exception e) {
-				logger.error("Error restarting agent", e);
+				logger.error("Error stopping agent", e);
 			}
 		} else {
 			logger.warn("Stop request ignored as there is no wrapper manager available");
