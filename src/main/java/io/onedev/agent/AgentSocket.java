@@ -146,7 +146,7 @@ public class AgentSocket implements Runnable {
 	    			logger.info("Updating agent to version " + versionAtServer + "...");
 	    			Client client = ClientBuilder.newClient();
 	    			try {
-	    				WebTarget target = client.target(Agent.serverUrl).path("downloads/agent-lib");
+	    				WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
 	    				Invocation.Builder builder =  target.request();
 	    				builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
 	    				
@@ -531,7 +531,7 @@ public class AgentSocket implements Runnable {
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
 			
-			// Fix https://code.onedev.io/projects/160/issues/597
+			// Fix https://code.onedev.io/onedev/server/~issues/597
 			if (SystemUtils.IS_OS_WINDOWS && workspaceDir.exists())
 				FileUtils.deleteDir(workspaceDir);
 			
@@ -831,7 +831,7 @@ public class AgentSocket implements Runnable {
 				} finally {
 					cache.uninstallSymbolinks(hostWorkspace);
 					
-					// Fix https://code.onedev.io/projects/160/issues/597
+					// Fix https://code.onedev.io/onedev/server/~issues/597
 					if (SystemUtils.IS_OS_WINDOWS)
 						FileUtils.deleteDir(hostWorkspace);
 					if (hostAuthInfoHome.get() != null)
@@ -865,7 +865,7 @@ public class AgentSocket implements Runnable {
 			};
 			
 			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/test");
+			WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
 			Invocation.Builder builder =  target.request();
 			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 			try (Response response = builder.get()) {
@@ -902,7 +902,7 @@ public class AgentSocket implements Runnable {
 			authInfoDir = FileUtils.createTempDir();
 			
 			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-			WebTarget target = client.target(Agent.serverUrl).path("api/k8s/test");
+			WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
 			Invocation.Builder builder =  target.request();
 			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 			try (Response response = builder.get()) {

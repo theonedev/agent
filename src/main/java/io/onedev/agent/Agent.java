@@ -273,13 +273,13 @@ public class Agent {
 			else 
 				throw new ExplicitException("Property '" + SERVER_URL_KEY + "' should start either with 'http://' or 'https://'");
 			
-			websocketUrl = websocketUrl + "/server";
+			websocketUrl = websocketUrl + "/~server";
 			
 			token = System.getenv(AGENT_TOKEN_KEY);
 			if (StringUtils.isBlank(token))
 				token = System.getProperty(AGENT_TOKEN_KEY);
 			if (StringUtils.isBlank(token)) {
-				// Fix issue https://code.onedev.io/projects/160/issues/601
+				// Fix issue https://code.onedev.io/onedev/server/~issues/601
 				String tokenFilePath = System.getenv(AGENT_TOKEN_FILE_KEY);
 				if (StringUtils.isBlank(tokenFilePath))
 					tokenFilePath = System.getProperty(AGENT_TOKEN_FILE_KEY);
@@ -455,7 +455,7 @@ public class Agent {
 	}
 	
 	public static File getTempDir() {
-		// Fix issue https://code.onedev.io/projects/160/issues/601
+		// Fix issue https://code.onedev.io/onedev/server/~issues/601
 		return new File(getWorkDir(), name + "/temp");
 	}
 
@@ -571,7 +571,7 @@ public class Agent {
 	}
 	
 	public static File getCacheHome(String executorName) {
-		// Fix issue https://code.onedev.io/projects/160/issues/601
+		// Fix issue https://code.onedev.io/onedev/server/~issues/601
 		File file = new File(getWorkDir(), name + "/cache/" + executorName);
 		if (!file.exists()) synchronized (cacheHomeCreationLock) {
 			FileUtils.createDir(file);
