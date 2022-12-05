@@ -7,16 +7,16 @@
 	<parent>
 		<groupId>io.onedev</groupId>
 		<artifactId>parent</artifactId>
-		<version>1.1.0</version>
+		<version>1.2.0</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>1.7.5</version>
+	<version>1.7.6</version>
 	<build>
 		<plugins>
 			<plugin>
 				<groupId>io.onedev</groupId>
 				<artifactId>plugin-maven</artifactId>
-				<version>2.3.0</version>
+				<version>2.4.0</version>
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
@@ -30,7 +30,6 @@
 			</plugin>
 			<plugin>
 				<artifactId>maven-resources-plugin</artifactId>
-				<version>2.6</version>
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
@@ -150,7 +149,7 @@
 		</dependency>
 	</dependencies>
 	<properties>	
-		<k8shelper.version>2.9.3</k8shelper.version>
+		<k8shelper.version>2.9.4</k8shelper.version>
 		<jackson.version>2.14.0-rc1</jackson.version>
 		<jersey.version>2.37</jersey.version>
 		<bootstrap>true</bootstrap>
