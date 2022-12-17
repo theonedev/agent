@@ -421,7 +421,7 @@ public class Agent {
 			    		logger.error("Error connecting to server", e);
 					try {
 						Thread.sleep(5000);
-					} catch (Exception e2) {
+					} catch (Exception ignored) {
 					}
 				}
 			}
