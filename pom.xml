@@ -10,20 +10,20 @@
 		<version>1.2.0</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>1.7.7</version>
+	<version>1.7.8</version>
 	<build>
 		<plugins>
 			<plugin>
 				<groupId>io.onedev</groupId>
 				<artifactId>plugin-maven</artifactId>
-				<version>2.4.0</version>
+				<version>2.4.1</version>
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
-						<id>populate-resources</id>
-						<phase>generate-sources</phase>
+						<id>generate-resources</id>
+						<phase>generate-resources</phase>
 						<goals>
-							<goal>populate-agent-resources</goal>
+							<goal>generate-agent-resources</goal>
 						</goals>
 					</execution>
 				</executions>
@@ -33,7 +33,7 @@
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
-						<id>generate-sandbox</id>
+						<id>copy-sandbox</id>
 						<phase>process-resources</phase>
 						<goals>
 							<goal>copy-resources</goal>
@@ -149,7 +149,7 @@
 		</dependency>
 	</dependencies>
 	<properties>	
-		<k8shelper.version>2.9.6</k8shelper.version>
+		<k8shelper.version>2.9.7</k8shelper.version>
 		<jackson.version>2.14.0-rc1</jackson.version>
 		<jersey.version>2.37</jersey.version>
 		<bootstrap>true</bootstrap>
