@@ -192,11 +192,24 @@ public class Agent {
 	        File tempDir = getTempDir();
 			if (tempDir.exists()) {
 				logger.info("Cleaning temp directory...");
-				FileUtils.cleanDir(tempDir);
+				for (var child: tempDir.listFiles()) {
+					try {
+						if (child.isFile())
+							FileUtils.deleteFile(child);
+						else
+							FileUtils.deleteDir(child);
+					} catch (Exception e) {
+						String errorMessage = "Unable to delete '" + child.getAbsolutePath() + "'";
+						if (child.getName().startsWith("onedev-build"))
+							logger.warn(errorMessage);
+						else
+							throw new RuntimeException(errorMessage);
+					}
+				}
 			} else if (!tempDir.mkdirs()) {
 				throw new RuntimeException("Can not create directory '" + tempDir.getAbsolutePath() + "'");
 			}
-			
+
 			System.setProperty("java.io.tmpdir", tempDir.getAbsolutePath());
 			
 			try (InputStream is = Agent.class.getClassLoader().getResourceAsStream("META-INF/onedev-agent.properties")) {
