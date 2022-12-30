@@ -17,22 +17,19 @@ public class AgentData implements Serializable {
 	
 	private final String ipAddress;
 	
-	private final int cpu;
-	
-	private final int memory;
+	private final int cpus;
 	
 	private final boolean temporal;
 	
 	private final Map<String, String> attributes;
 	
-	public AgentData(String token, OsInfo osInfo, String name, String ipAddress, 
-			int cpu, int memory, boolean temporal, Map<String, String> attributes) {
+	public AgentData(String token, OsInfo osInfo, String name, String ipAddress,
+					 int cpus, boolean temporal, Map<String, String> attributes) {
 		this.token = token;
 		this.osInfo = osInfo;
 		this.name = name;
 		this.ipAddress = ipAddress;
-		this.cpu = cpu;
-		this.memory = memory;
+		this.cpus = cpus;
 		this.temporal = temporal;
 		this.attributes = attributes;
 	}
@@ -53,12 +50,8 @@ public class AgentData implements Serializable {
 		return ipAddress;
 	}
 
-	public int getCpu() {
-		return cpu;
-	}
-
-	public int getMemory() {
-		return memory;
+	public int getCpus() {
+		return cpus;
 	}
 
 	public boolean isTemporal() {

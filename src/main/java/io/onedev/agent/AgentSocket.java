@@ -1,39 +1,20 @@
 package io.onedev.agent;
 
-import static io.onedev.agent.DockerExecutorUtils.createNetwork;
-import static io.onedev.agent.DockerExecutorUtils.deleteDir;
-import static io.onedev.agent.DockerExecutorUtils.deleteNetwork;
-import static io.onedev.agent.DockerExecutorUtils.getEntrypoint;
-import static io.onedev.agent.DockerExecutorUtils.isUseProcessIsolation;
-import static io.onedev.agent.DockerExecutorUtils.login;
-import static io.onedev.agent.DockerExecutorUtils.newDockerKiller;
-import static io.onedev.agent.DockerExecutorUtils.startService;
-import static io.onedev.agent.ShellExecutorUtils.testCommands;
-import static io.onedev.k8shelper.KubernetesHelper.BEARER;
-import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
-import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
-import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
-import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
-import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
-
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.Serializable;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicReference;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
+import io.onedev.agent.job.*;
+import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.utils.*;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.ExecutionResult;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.*;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.SystemUtils;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.annotations.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
@@ -42,52 +23,17 @@ import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.commons.lang3.SystemUtils;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
-import org.eclipse.jetty.websocket.api.annotations.WebSocket;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
-
-import io.onedev.agent.job.DockerJobData;
-import io.onedev.agent.job.FailedException;
-import io.onedev.agent.job.LogRequest;
-import io.onedev.agent.job.ShellJobData;
-import io.onedev.agent.job.TestDockerJobData;
-import io.onedev.agent.job.TestShellJobData;
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.utils.ExceptionUtils;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.PathUtils;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.commons.utils.TaskLogger;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.ExecutionResult;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.k8shelper.BuildImageFacade;
-import io.onedev.k8shelper.CacheAllocationRequest;
-import io.onedev.k8shelper.CacheInstance;
-import io.onedev.k8shelper.CheckoutFacade;
-import io.onedev.k8shelper.CloneInfo;
-import io.onedev.k8shelper.CommandFacade;
-import io.onedev.k8shelper.CompositeFacade;
-import io.onedev.k8shelper.JobCache;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.LeafFacade;
-import io.onedev.k8shelper.LeafHandler;
-import io.onedev.k8shelper.OsContainer;
-import io.onedev.k8shelper.OsExecution;
-import io.onedev.k8shelper.RunContainerFacade;
-import io.onedev.k8shelper.ServerSideFacade;
+import static io.onedev.agent.DockerExecutorUtils.*;
+import static io.onedev.agent.ShellExecutorUtils.testCommands;
+import static io.onedev.k8shelper.KubernetesHelper.*;
 
 @WebSocket
 public class AgentSocket implements Runnable {
@@ -199,8 +145,8 @@ public class AgentSocket implements Runnable {
 	        		Agent.restart();
 	    		} else {
 	    			AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
-	    					Agent.name, Agent.ipAddress, Agent.cpu, Agent.memory, 
-	    					Agent.temporal, Agent.attributes);
+	    					Agent.name, Agent.ipAddress, Agent.cpus,
+							Agent.temporal, Agent.attributes);
 	    			new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
 	    		}
 	    		break;
@@ -595,8 +541,10 @@ public class AgentSocket implements Runnable {
 			createNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
 			try {
 				for (Map<String, Serializable> jobService: jobData.getServices()) {
-					jobLogger.log("Starting service (name: " + jobService.get("name") + ", image: " + jobService.get("image") + ")...");
-					startService(new Commandline(Agent.dockerPath), network, jobService, Agent.osInfo, jobLogger);
+					jobLogger.log("Starting service (name: " + jobService.get("name")
+							+ ", image: " + jobService.get("image") + ")...");
+					startService(new Commandline(Agent.dockerPath), network, jobService, Agent.osInfo,
+							jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
 				}
 				
 				File hostWorkspace = new File(hostBuildHome, "workspace");
@@ -638,6 +586,11 @@ public class AgentSocket implements Runnable {
 							try {
 								Commandline docker = new Commandline(Agent.dockerPath);
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
+
+								if (jobData.getCpuLimit() != null)
+									docker.addArgs("--cpus", jobData.getCpuLimit());
+								if (jobData.getMemoryLimit() != null)
+									docker.addArgs("--memory", jobData.getMemoryLimit());
 								if (jobData.getDockerOptions() != null)
 									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 								

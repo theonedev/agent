@@ -554,7 +554,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	@SuppressWarnings({ "resource", "unchecked" })
 	public static void startService(Commandline docker, String network, Map<String, Serializable> jobService,
-			OsInfo nodeOsInfo, TaskLogger jobLogger) {
+			OsInfo nodeOsInfo, @Nullable String cpuLimit, @Nullable String memoryLimit, TaskLogger jobLogger) {
 		String image = (String) jobService.get("image");
 		docker.clearArgs();
 		boolean useProcessIsolation = isUseProcessIsolation(docker, image, nodeOsInfo, jobLogger);
@@ -566,6 +566,12 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		docker.clearArgs();
 		docker.addArgs("run", "-d", "--name=" + containerName, "--network=" + network,
 				"--network-alias=" + jobService.get("name"));
+
+		if (cpuLimit != null)
+			docker.addArgs("--cpus", cpuLimit);
+		if (memoryLimit != null)
+			docker.addArgs("--memory", memoryLimit);
+
 		for (Map.Entry<String, String> entry : ((Map<String, String>) jobService.get("envVars")).entrySet())
 			docker.addArgs("--env", entry.getKey() + "=" + entry.getValue());
 		if (useProcessIsolation)

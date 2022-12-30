@@ -1,5 +1,29 @@
 package io.onedev.agent;
 
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import ch.qos.logback.core.joran.spi.JoranException;
+import ch.qos.logback.core.util.StatusPrinter;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.net.HttpHeaders;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.OsInfo;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
+import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.bridge.SLF4JBridgeHandler;
+import oshi.SystemInfo;
+
+import javax.annotation.Nullable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -14,34 +38,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
-
-import javax.annotation.Nullable;
-
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
-import org.eclipse.jetty.websocket.client.WebSocketClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.bridge.SLF4JBridgeHandler;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.net.HttpHeaders;
-
-import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.joran.JoranConfigurator;
-import ch.qos.logback.core.joran.spi.JoranException;
-import ch.qos.logback.core.util.StatusPrinter;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.OsInfo;
-import oshi.SystemInfo;
-import oshi.hardware.HardwareAbstractionLayer;
 
 public class Agent {
 
@@ -66,10 +62,6 @@ public class Agent {
 	
 	public static final String AGENT_NAME_KEY = "agentName";
 	
-	public static final String AGENT_CPU_KEY = "agentCpu";
-	
-	public static final String AGENT_MEMORY_KEY = "agentMemory";
-	
 	public static final String GIT_PATH_KEY = "gitPath";
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
@@ -90,9 +82,7 @@ public class Agent {
 	
 	public static String token;
 	
-	public static int cpu;
-	
-	public static int memory;
+	public static int cpus;
 	
 	public static String gitPath;
 	
@@ -130,7 +120,7 @@ public class Agent {
 				if (client != null) {
 					for (Session session: client.getOpenSessions()) { 
 						try {
-							WebsocketUtils.call(session, new WaitingForAgentResourceToBeReleased(), 0);
+							WebsocketUtils.call(session, new WantToDisconnectAgent(), 0);
 						} catch (InterruptedException | TimeoutException e) {
 							logger.error("Error waiting for running jobs", e);
 						}
@@ -312,13 +302,6 @@ public class Agent {
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
-			HardwareAbstractionLayer hardware = null;
-			try {
-				hardware = new SystemInfo().getHardware();
-			} catch (Exception e) {
-				logger.debug("Error calling oshi", e);
-			}
-			
 			String temporalString = System.getenv(TEMPORAL_AGENT_KEY);
 			if (StringUtils.isBlank(temporalString))
 				temporalString = System.getProperty(TEMPORAL_AGENT_KEY);
@@ -328,51 +311,14 @@ public class Agent {
 				temporal = false;
 			else 
 				temporal = Boolean.parseBoolean(temporalString);
-			
-			String cpuString = System.getenv(AGENT_CPU_KEY);
-			if (StringUtils.isBlank(cpuString))
-				cpuString = System.getProperty(AGENT_CPU_KEY);
-			if (StringUtils.isBlank(cpuString))
-				cpuString = agentProps.getProperty(AGENT_CPU_KEY);
-			if (StringUtils.isBlank(cpuString)) {
-				if (hardware != null) {
-					cpu = hardware.getProcessor().getLogicalProcessorCount()*1000;
-				} else {
-					cpu = 4000;
-					logger.warn("Unable to call oshi to get default cpu quota (cpu cores x 1000). Assuming as 4000. "
-							+ "Configure it manually via environment variable or agent property 'agentCpu' if you "
-							+ "do not want to use this value");
-				}
-			} else {
-				try {
-					cpu = Integer.parseInt(cpuString);
-				} catch (NumberFormatException e) {
-					throw new ExplicitException("Property '" + AGENT_CPU_KEY + "' should be a number");
-				}
+
+			try {
+				cpus = new SystemInfo().getHardware().getProcessor().getLogicalProcessorCount();
+			} catch (Exception e) {
+				logger.debug("Error calling oshi", e);
+				cpus = 2;
 			}
 
-			String memoryString = System.getenv(AGENT_MEMORY_KEY);
-			if (StringUtils.isBlank(memoryString))
-				memoryString = System.getProperty(AGENT_MEMORY_KEY);
-			if (StringUtils.isBlank(memoryString))
-				memoryString = agentProps.getProperty(AGENT_MEMORY_KEY);
-			if (StringUtils.isBlank(memoryString)) {
-				if (hardware != null) {
-					memory = (int) (hardware.getMemory().getTotal()/1024/1024); 
-				} else {
-					memory = 8000;
-					logger.warn("Unable to call oshi to get default memory quota (mega bytes of physical memory). "
-							+ "Assuming as 8000. Configure it manually via environment variable or agent property "
-							+ "'agentMemory' if you do not want to use this value");
-				}
-			} else {
-				try {
-					memory = Integer.parseInt(memoryString);
-				} catch (NumberFormatException e) {
-					throw new ExplicitException("Property '" + AGENT_MEMORY_KEY + "' should be a number");
-				}
-			}
-			
 			gitPath = System.getenv(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath))
 				gitPath = System.getProperty(GIT_PATH_KEY);
