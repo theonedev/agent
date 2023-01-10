@@ -24,9 +24,7 @@ import org.slf4j.bridge.SLF4JBridgeHandler;
 import oshi.SystemInfo;
 
 import javax.annotation.Nullable;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
+import java.io.*;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -36,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
 
@@ -162,6 +161,15 @@ public class Agent {
 			}
 	
 			installDir = installDir.getCanonicalFile();
+
+			File testFile = new File(installDir, "test");
+			try (OutputStream os = new FileOutputStream(testFile)){
+				os.write(UUID.randomUUID().toString().getBytes());
+			} catch (Exception e) {
+				System.err.println(String.format("Unable to write test file. Make sure current user owns everything under '%s'",
+						installDir.getAbsolutePath()));
+				System.exit(1);
+			}
 			
 			configureLogging();
 			
