@@ -12,8 +12,6 @@ import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.OsExecution;
 import io.onedev.k8shelper.OsInfo;
 import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.text.WordUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
@@ -41,47 +38,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			return Throwables.getStackTraceAsString(exception);
 		else
 			return explicitException.getMessage();
-	}
-
-	public static Long getUid() {
-		Commandline cmd = new Commandline("id").addArgs("-u");
-
-		AtomicLong uid = new AtomicLong(-1);
-
-		cmd.execute(new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				uid.set(Long.parseLong(line));
-			}
-
-		}, new LineConsumer() {
-			@Override
-			public void consume(String line) {
-				logger.warn(line);
-			}
-
-		}).checkReturnCode();
-
-		return uid.get();
-	}
-
-	public static void changeOwner(Commandline docker, File directory, long uid) {
-		docker.clearArgs();
-		docker.addArgs("run", "--rm", "-v", directory.getPath() + ":/dir-to-change-owner",
-				"busybox", "chown", "-R", String.valueOf(uid), "/dir-to-change-owner");
-		docker.execute(new LineConsumer() {
-			@Override
-			public void consume(String line) {
-				logger.debug(line);
-			}
-		}, new LineConsumer() {
-			@Override
-			public void consume(String line) {
-				logger.warn(line);
-			}
-
-		}).checkReturnCode();
 	}
 
 	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome,
