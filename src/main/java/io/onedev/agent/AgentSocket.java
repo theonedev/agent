@@ -583,11 +583,17 @@ public class AgentSocket implements Runnable {
 								List<Integer> position, boolean useTTY) {
 							// Docker can not process symbol links well
 							cache.uninstallSymbolinks(hostWorkspace);
-							
+
+							Commandline docker = new Commandline(Agent.dockerPath);
+							Long uid = null;
+							if (!SystemUtils.IS_OS_WINDOWS && !Bootstrap.isInDocker()) {
+								uid = DockerExecutorUtils.getUid();
+								DockerExecutorUtils.changeOwner(docker, hostWorkspace, 1L);
+							}
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
-								Commandline docker = new Commandline(Agent.dockerPath);
+								docker.clearArgs();
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
 
 								if (jobData.getCpuLimit() != null)
@@ -667,6 +673,8 @@ public class AgentSocket implements Runnable {
 								return result.getReturnCode();
 							} finally {
 								containerNames.remove(jobData.getJobToken());
+								if (uid != null)
+									DockerExecutorUtils.changeOwner(docker, hostWorkspace, uid);
 								cache.installSymbolinks(hostWorkspace);
 							}
 						}

@@ -1,35 +1,8 @@
 package io.onedev.agent;
 
-import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
-import static java.nio.charset.StandardCharsets.UTF_8;
-
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-
-import javax.annotation.Nullable;
-
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.text.WordUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Throwables;
-
-import io.onedev.commons.utils.ExceptionUtils;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.commons.utils.TaskLogger;
+import io.onedev.commons.utils.*;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
@@ -38,6 +11,25 @@ import io.onedev.k8shelper.BuildImageFacade;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.OsExecution;
 import io.onedev.k8shelper.OsInfo;
+import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.text.WordUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class DockerExecutorUtils extends ExecutorUtils {
 
@@ -49,6 +41,47 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			return Throwables.getStackTraceAsString(exception);
 		else
 			return explicitException.getMessage();
+	}
+
+	public static Long getUid() {
+		Commandline cmd = new Commandline("id").addArgs("-u");
+
+		AtomicLong uid = new AtomicLong(-1);
+
+		cmd.execute(new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				uid.set(Long.parseLong(line));
+			}
+
+		}, new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				logger.warn(line);
+			}
+
+		}).checkReturnCode();
+
+		return uid.get();
+	}
+
+	public static void changeOwner(Commandline docker, File directory, long uid) {
+		docker.clearArgs();
+		docker.addArgs("run", "--rm", "-v", directory.getPath() + ":/dir-to-change-owner",
+				"busybox", "chown", "-R", String.valueOf(uid), "/dir-to-change-owner");
+		docker.execute(new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				logger.debug(line);
+			}
+		}, new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				logger.warn(line);
+			}
+
+		}).checkReturnCode();
 	}
 
 	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome,
