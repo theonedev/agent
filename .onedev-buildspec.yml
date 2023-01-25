@@ -1,4 +1,7 @@
-version: 13
+version: 19
+properties:
+- name: buildEnvironment
+  value: 1dev/build-environment:1.5
 jobs:
 - name: Release
   steps:
@@ -10,13 +13,15 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: detect build version
-    image: 1dev/build-environment:1.4
-    commands:
-    - set -e
-    - echo "Detecting project version (may require some time while downloading maven
-      dependencies)..."
-    - echo $(mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version
-      -q -DforceStdout) > buildVersion
+    runInContainer: true
+    image: '@property:buildEnvironment@'
+    interpreter: !DefaultInterpreter
+      commands:
+      - set -e
+      - echo "Detecting project version (may require some time while downloading maven
+        dependencies)..."
+      - echo $(mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version
+        -q -DforceStdout) > buildVersion
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !SetBuildVersionStep
@@ -25,9 +30,11 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: build & deploy
-    image: 1dev/build-environment:1.4
-    commands:
-    - mvn deploy -Dmaven.deploy.password=@secrets:maven-deploy-password@
+    runInContainer: true
+    image: '@property:buildEnvironment@'
+    interpreter: !DefaultInterpreter
+      commands:
+      - mvn deploy -Dmaven.deploy.password=@secrets:maven-deploy-password@
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CreateTagStep
@@ -40,8 +47,6 @@ jobs:
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
-  cpuRequirement: 250
-  memoryRequirement: 128
   caches:
   - key: maven-cache
     path: /root/.m2/repository
@@ -56,11 +61,13 @@ jobs:
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: sync
+    runInContainer: true
     image: alpine/git:1.0.7
-    commands:
-    - git config --global --unset http.extraHeader
-    - git push -f https://robinshine:@secrets:github-token@@@github.com/theonedev/agent
-      HEAD:main
+    interpreter: !DefaultInterpreter
+      commands:
+      - git config --global --unset http.extraHeader
+      - git push -f https://robinshine:@secrets:github-token@@@github.com/theonedev/agent
+        HEAD:main
     useTTY: false
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   triggers:
@@ -70,6 +77,4 @@ jobs:
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
-  cpuRequirement: 250
-  memoryRequirement: 128
   timeout: 3600
