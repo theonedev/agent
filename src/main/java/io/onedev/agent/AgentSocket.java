@@ -425,21 +425,20 @@ public class AgentSocket implements Runnable {
 								environments.put("HOME", userDir.getAbsolutePath());
 								git.environments(environments);
 	
-								CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-								
-								cloneInfo.writeAuthData(userDir, git, 
-										ExecutorUtils.newInfoLogger(jobLogger), 
-										ExecutorUtils.newWarningLogger(jobLogger));
-								
 								List<String> trustCertContent = jobData.getTrustCertContent();
 								if (!trustCertContent.isEmpty()) {
-									installGitCert(new File(userDir, "trust-cert.pem"), trustCertContent, git, 
+									installGitCert(new File(userDir, "trust-cert.pem"), trustCertContent, git,
 											ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 								}
-	
+
+								CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
+
+								cloneInfo.writeAuthData(userDir, git, false,
+										ExecutorUtils.newInfoLogger(jobLogger),
+										ExecutorUtils.newWarningLogger(jobLogger));
+
 								int cloneDepth = checkoutFacade.getCloneDepth();
-								
-								cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(), 
+								cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
 										jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(), 
 										checkoutFacade.isWithSubmodules(), cloneDepth, 
 										ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
@@ -724,33 +723,26 @@ public class AgentSocket implements Runnable {
 										Commandline git = new Commandline(Agent.gitPath);	
 										checkoutFacade.setupWorkingDir(git, hostWorkspace);
 										git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
-	
-										CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-										
-										cloneInfo.writeAuthData(hostAuthInfoHome.get(), git, 
-												ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-										try {
-											List<String> trustCertContent = jobData.getTrustCertContent();
-											if (!trustCertContent.isEmpty()) {
-												installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, git, 
-														ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-											}
-		
-											int cloneDepth = checkoutFacade.getCloneDepth();
-		
-											String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
-											String refName = jobData.getRefName();
-											String commitHash = jobData.getCommitHash();
-											cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash, 
-													checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth, 
+
+										List<String> trustCertContent = jobData.getTrustCertContent();
+										if (!trustCertContent.isEmpty()) {
+											installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, git,
 													ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-										} finally {
-											git.clearArgs();
-											git.addArgs("config", "--global", "--unset", "core.sshCommand");
-											ExecutionResult result = git.execute(ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-											if (result.getReturnCode() != 5 && result.getReturnCode() != 0)
-												result.checkReturnCode();
 										}
+
+										CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
+										cloneInfo.writeAuthData(hostAuthInfoHome.get(), git, true,
+												ExecutorUtils.newInfoLogger(jobLogger),
+												ExecutorUtils.newWarningLogger(jobLogger));
+
+										int cloneDepth = checkoutFacade.getCloneDepth();
+
+										String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
+										String refName = jobData.getRefName();
+										String commitHash = jobData.getCommitHash();
+										cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash,
+												checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
+												ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 									} catch (Exception e) {
 										jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 										return false;
