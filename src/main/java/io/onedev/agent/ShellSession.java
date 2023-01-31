@@ -1,24 +1,17 @@
 package io.onedev.agent;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Future;
-
+import io.onedev.commons.utils.ExceptionUtils;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.command.*;
+import io.onedev.commons.utils.command.PtyMode.ResizeSupport;
 import org.eclipse.jetty.websocket.api.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.commons.utils.ExceptionUtils;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.ExecutionResult;
-import io.onedev.commons.utils.command.ExposeOutputStream;
-import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.commons.utils.command.ProcessTreeKiller;
-import io.onedev.commons.utils.command.PtyMode;
-import io.onedev.commons.utils.command.PtyMode.ResizeSupport;
-import io.onedev.commons.utils.command.PumpInputToOutput;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Future;
 
 public class ShellSession {
 
@@ -74,7 +67,7 @@ public class ShellSession {
                         }
 
                     });
-                    ProcessKiller processKiller = new ProcessTreeKiller() {
+                    cmdline.processKiller(new ProcessTreeKiller() {
 
                         @Override
                         public void kill(Process process, String executionId) {
@@ -83,8 +76,9 @@ public class ShellSession {
 	                        super.kill(process, executionId);
                         }
 
-                    };
-                    ExecutionResult result = cmdline.execute(outputHandler, errorHandler, shellInput, processKiller);
+                    });
+
+                    ExecutionResult result = cmdline.execute(outputHandler, errorHandler, shellInput);
                     if (result.getReturnCode() != 0)
                     	sendError("Shell exited");
                     else

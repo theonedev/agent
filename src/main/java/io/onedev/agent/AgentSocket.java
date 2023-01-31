@@ -659,10 +659,9 @@ public class AgentSocket implements Runnable {
 								
 								docker.addArgs(image);
 								docker.addArgs(arguments.toArray(new String[arguments.size()]));
-								
-								ExecutionResult result = docker.execute(
-										ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger), 
-										null, newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
+								docker.processKiller(newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
+								ExecutionResult result = docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger),
+										null);
 								return result.getReturnCode();
 							} finally {
 								containerNames.remove(jobData.getJobToken());
@@ -720,9 +719,14 @@ public class AgentSocket implements Runnable {
 										if (hostAuthInfoHome.get() == null)
 											hostAuthInfoHome.set(FileUtils.createTempDir());
 										
-										Commandline git = new Commandline(Agent.gitPath);	
-										checkoutFacade.setupWorkingDir(git, hostWorkspace);
+										Commandline git = new Commandline(Agent.gitPath);
 										git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
+
+										checkoutFacade.setupWorkingDir(git, hostWorkspace);
+										if (!Bootstrap.isInDocker()) {
+											checkoutFacade.setupSafeDirectory(git, containerWorkspace,
+													newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+										}
 
 										List<String> trustCertContent = jobData.getTrustCertContent();
 										if (!trustCertContent.isEmpty()) {
