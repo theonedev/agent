@@ -419,12 +419,15 @@ public class AgentSocket implements Runnable {
 							try {
 								CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 								jobLogger.log("Checking out code...");
-								Commandline git = new Commandline(Agent.gitPath);	
-								checkoutFacade.setupWorkingDir(git, workspaceDir);
+
+								Commandline git = new Commandline(Agent.gitPath);
+
 								Map<String, String> environments = new HashMap<>();
 								environments.put("HOME", userDir.getAbsolutePath());
 								git.environments(environments);
-	
+
+								checkoutFacade.setupWorkingDir(git, workspaceDir);
+
 								List<String> trustCertContent = jobData.getTrustCertContent();
 								if (!trustCertContent.isEmpty()) {
 									installGitCert(new File(userDir, "trust-cert.pem"), trustCertContent, git,
@@ -716,10 +719,10 @@ public class AgentSocket implements Runnable {
 										CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 										jobLogger.log("Checking out code...");
 										
+										Commandline git = new Commandline(Agent.gitPath);
+
 										if (hostAuthInfoHome.get() == null)
 											hostAuthInfoHome.set(FileUtils.createTempDir());
-										
-										Commandline git = new Commandline(Agent.gitPath);
 										git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
 
 										checkoutFacade.setupWorkingDir(git, hostWorkspace);
