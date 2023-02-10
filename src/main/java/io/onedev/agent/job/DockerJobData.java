@@ -31,10 +31,9 @@ public class DockerJobData extends ShellJobData {
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<Map<String, Serializable>> services,
 						 List<Map<String, String>> registryLogins, boolean mountDockerSock,
-						 String dockerSock, List<String> trustCertContent, @Nullable String cpuLimit,
-						 @Nullable String memoryLimit, String dockerOptions) {
-		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, 
-				actions, trustCertContent);
+						 String dockerSock, @Nullable String cpuLimit, @Nullable String memoryLimit,
+						 String dockerOptions) {
+		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
 		this.mountDockerSock = mountDockerSock;

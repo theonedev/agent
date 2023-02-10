@@ -13,9 +13,7 @@ import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.OsInfo;
 import nl.altindag.ssl.SSLFactory;
-import nl.altindag.ssl.util.HostnameVerifierUtils;
 import nl.altindag.ssl.util.JettySslUtils;
-import nl.altindag.ssl.util.PemUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -30,7 +28,6 @@ import org.slf4j.bridge.SLF4JBridgeHandler;
 import oshi.SystemInfo;
 
 import javax.annotation.Nullable;
-import javax.net.ssl.X509ExtendedTrustManager;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
@@ -111,6 +108,8 @@ public class Agent {
 	public static volatile Map<String, String> attributes;
 	
 	public static ObjectMapper objectMapper = new ObjectMapper();
+
+	public static SSLFactory sslFactory;
 	
 	private static Object cacheHomeCreationLock = new Object();
 	
@@ -362,23 +361,11 @@ public class Agent {
 					dockerPath = "docker";
 			}
 
-			File trustCertsDir = new File(installDir, "conf/trust-certs");
-			if (trustCertsDir.exists()) {
-				SSLFactory.Builder builder = SSLFactory.builder().withDefaultTrustMaterial();
-				for (var file: trustCertsDir.listFiles()) {
-					X509ExtendedTrustManager trustManager = PemUtils.loadTrustMaterial(file.toPath());
-					builder = builder.withTrustMaterial(trustManager);
-				}
-				builder.withHostnameVerifier(HostnameVerifierUtils.createBasic());
+			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
+			SslContextFactory.Client sslContextFactory = JettySslUtils.forClient(sslFactory);
 
-				SSLFactory sslFactory = builder.build();
-				SslContextFactory.Client sslContextFactory = JettySslUtils.forClient(sslFactory);
-
-				HttpClient httpClient = new HttpClient(sslContextFactory);
-				client = new WebSocketClient(httpClient);
-			} else {
-				client = new WebSocketClient();
-			}
+			HttpClient httpClient = new HttpClient(sslContextFactory);
+			client = new WebSocketClient(httpClient);
 
 			client.setStopAtShutdown(false);
 			client.setMaxIdleTimeout(SOCKET_IDLE_TIMEOUT);
@@ -421,6 +408,10 @@ public class Agent {
 		} finally {
 			stopped = true;
 		}
+	}
+
+	static File getTrustCertsDir() {
+		return new File(installDir, "conf/trust-certs");
 	}
 	
 	static boolean logCommonError(Throwable t, Logger logger) {

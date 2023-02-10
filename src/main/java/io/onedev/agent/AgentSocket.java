@@ -316,16 +316,16 @@ public class AgentSocket implements Runnable {
 					+ "directly on bare metal/virtual machine");
 		}
 		
-		File buildDir = FileUtils.createTempDir("onedev-build");
-		File workspaceDir = new File(buildDir, "workspace");
+		File buildHome = FileUtils.createTempDir("onedev-build");
+		File workspaceDir = new File(buildHome, "workspace");
 		
-		File attributesDir = new File(buildDir, KubernetesHelper.ATTRIBUTES);
+		File attributesDir = new File(buildHome, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), StandardCharsets.UTF_8.name());
 		}
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
-		buildHomes.put(jobData.getJobToken(), buildDir);
+		buildHomes.put(jobData.getJobToken(), buildHome);
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -344,7 +344,8 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					return KubernetesHelper.allocateCaches(Agent.serverUrl, jobData.getJobToken(), request);
+					return KubernetesHelper.allocateCaches(Agent.sslFactory, Agent.serverUrl,
+							jobData.getJobToken(), request);
 				}
 
 				@Override
@@ -361,10 +362,11 @@ public class AgentSocket implements Runnable {
 			
 			jobLogger.log("Downloading job dependencies...");
 			
-			KubernetesHelper.downloadDependencies(jobData.getJobToken(), Agent.serverUrl, workspaceDir);
+			KubernetesHelper.downloadDependencies(Agent.sslFactory, jobData.getJobToken(),
+					Agent.serverUrl, workspaceDir);
 			
-			File userDir = new File(buildDir, "user");
-			FileUtils.createDir(userDir);
+			File userHome = new File(buildHome, "user");
+			FileUtils.createDir(userHome);
 			
 			String messageData = jobData.getJobToken() + ":" + workspaceDir.getAbsolutePath();
 			new Message(MessageTypes.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
@@ -387,13 +389,13 @@ public class AgentSocket implements Runnable {
 										+ "remote docker executor, or kubernetes executor");
 							}
 							
-							commandFacade.generatePauseCommand(buildDir);
+							commandFacade.generatePauseCommand(buildHome);
 							
-							File jobScriptFile = new File(buildDir, "job-commands" + commandFacade.getScriptExtension());
+							File jobScriptFile = new File(buildHome, "job-commands" + commandFacade.getScriptExtension());
 							try {
 								FileUtils.writeLines(
 										jobScriptFile, 
-										new ArrayList<>(replacePlaceholders(execution.getCommands(), buildDir)), 
+										new ArrayList<>(replacePlaceholders(execution.getCommands(), buildHome)),
 										commandFacade.getEndOfLine());
 							} catch (IOException e) {
 								throw new RuntimeException(e);
@@ -401,7 +403,7 @@ public class AgentSocket implements Runnable {
 							
 							Commandline interpreter = commandFacade.getScriptInterpreter();
 							Map<String, String> environments = new HashMap<>();
-							environments.put("GIT_HOME", userDir.getAbsolutePath());
+							environments.put("GIT_HOME", userHome.getAbsolutePath());
 							environments.put("ONEDEV_WORKSPACE", workspaceDir.getAbsolutePath());
 							interpreter.workingDir(workspaceDir).environments(environments);
 							interpreter.addArgs(jobScriptFile.getAbsolutePath());
@@ -423,20 +425,19 @@ public class AgentSocket implements Runnable {
 								Commandline git = new Commandline(Agent.gitPath);
 
 								Map<String, String> environments = new HashMap<>();
-								environments.put("HOME", userDir.getAbsolutePath());
+								environments.put("HOME", userHome.getAbsolutePath());
 								git.environments(environments);
 
 								checkoutFacade.setupWorkingDir(git, workspaceDir);
 
-								List<String> trustCertContent = jobData.getTrustCertContent();
-								if (!trustCertContent.isEmpty()) {
-									installGitCert(new File(userDir, "trust-cert.pem"), trustCertContent, git,
-											ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-								}
+								File trustCertsFile = new File(buildHome, "trust-certs.pem");
+								installGitCert(git, Agent.getTrustCertsDir(), trustCertsFile,
+										trustCertsFile.getAbsolutePath(), newInfoLogger(jobLogger),
+										newWarningLogger(jobLogger));
 
 								CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
 
-								cloneInfo.writeAuthData(userDir, git, false,
+								cloneInfo.writeAuthData(userHome, git, false,
 										ExecutorUtils.newInfoLogger(jobLogger),
 										ExecutorUtils.newWarningLogger(jobLogger));
 
@@ -453,10 +454,10 @@ public class AgentSocket implements Runnable {
 							ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 							
 							try {
-								KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
-										serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
-										serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
-										buildDir, jobLogger);
+								KubernetesHelper.runServerStep(Agent.sslFactory, Agent.serverUrl,
+										jobData.getJobToken(), position, serverSideFacade.getSourcePath(),
+										serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
+										serverSideFacade.getPlaceholders(), buildHome, jobLogger);
 							} catch (Exception e) {
 								jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 								return false;
@@ -486,8 +487,8 @@ public class AgentSocket implements Runnable {
 			if (SystemUtils.IS_OS_WINDOWS && workspaceDir.exists())
 				FileUtils.deleteDir(workspaceDir);
 			
-			synchronized (buildDir) {
-				FileUtils.deleteDir(buildDir);
+			synchronized (buildHome) {
+				FileUtils.deleteDir(buildHome);
 			}
 		}
 	}
@@ -521,7 +522,8 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					return KubernetesHelper.allocateCaches(Agent.serverUrl, jobData.getJobToken(), request);
+					return KubernetesHelper.allocateCaches(Agent.sslFactory, Agent.serverUrl,
+							jobData.getJobToken(), request);
 				}
 
 				@Override
@@ -556,20 +558,24 @@ public class AgentSocket implements Runnable {
 				FileUtils.createDir(hostWorkspace);
 				cache.installSymbolinks(hostWorkspace);
 				
-				AtomicReference<File> hostAuthInfoHome = new AtomicReference<>(null);
+				AtomicReference<File> hostAuthInfoDir = new AtomicReference<>(null);
 				try {						
 					jobLogger.log("Downloading job dependencies...");
 
-					KubernetesHelper.downloadDependencies(jobData.getJobToken(), Agent.serverUrl, hostWorkspace);
+					KubernetesHelper.downloadDependencies(Agent.sslFactory, jobData.getJobToken(),
+							Agent.serverUrl, hostWorkspace);
 					
 					String containerBuildHome;
 					String containerWorkspace;
+					String containerTrustCerts;
 					if (SystemUtils.IS_OS_WINDOWS) {
 						containerBuildHome = "C:\\onedev-build";
 						containerWorkspace = "C:\\onedev-build\\workspace";
+						containerTrustCerts = "C:\\onedev-build\\trust-certs.pem";
 					} else {
 						containerBuildHome = "/onedev-build";
 						containerWorkspace = "/onedev-build/workspace";
+						containerTrustCerts = "/onedev-build/trust-certs.pem";
 					}
 					
 					String messageData = jobData.getJobToken() + ":" + containerWorkspace;
@@ -636,8 +642,8 @@ public class AgentSocket implements Runnable {
 									}
 								}
 								
-								if (hostAuthInfoHome.get() != null) {
-									String hostPath = getHostPath(hostAuthInfoHome.get().getAbsolutePath());
+								if (hostAuthInfoDir.get() != null) {
+									String hostPath = getHostPath(hostAuthInfoDir.get().getAbsolutePath());
 									if (SystemUtils.IS_OS_WINDOWS) {
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
@@ -688,7 +694,7 @@ public class AgentSocket implements Runnable {
 									}
 									
 									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, 
-											Agent.osInfo, hostAuthInfoHome.get() != null);
+											Agent.osInfo, hostAuthInfoDir.get() != null);
 									int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(), 
 											entrypoint.arguments(), new HashMap<>(), null, new HashMap<>(), 
 											position, commandFacade.isUseTTY());
@@ -721,9 +727,9 @@ public class AgentSocket implements Runnable {
 										
 										Commandline git = new Commandline(Agent.gitPath);
 
-										if (hostAuthInfoHome.get() == null)
-											hostAuthInfoHome.set(FileUtils.createTempDir());
-										git.environments().put("HOME", hostAuthInfoHome.get().getAbsolutePath());
+										if (hostAuthInfoDir.get() == null)
+											hostAuthInfoDir.set(FileUtils.createTempDir());
+										git.environments().put("HOME", hostAuthInfoDir.get().getAbsolutePath());
 
 										checkoutFacade.setupWorkingDir(git, hostWorkspace);
 										if (!Bootstrap.isInDocker()) {
@@ -731,16 +737,19 @@ public class AgentSocket implements Runnable {
 													newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 										}
 
-										List<String> trustCertContent = jobData.getTrustCertContent();
-										if (!trustCertContent.isEmpty()) {
-											installGitCert(new File(hostAuthInfoHome.get(), "trust-cert.pem"), trustCertContent, git,
-													ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
-										}
-
-										CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-										cloneInfo.writeAuthData(hostAuthInfoHome.get(), git, true,
+										File trustCertsFile = new File(hostBuildHome, "trust-certs.pem");
+										installGitCert(git, Agent.getTrustCertsDir(),
+												trustCertsFile, containerTrustCerts,
 												ExecutorUtils.newInfoLogger(jobLogger),
 												ExecutorUtils.newWarningLogger(jobLogger));
+
+										CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
+										cloneInfo.writeAuthData(hostAuthInfoDir.get(), git, true,
+												ExecutorUtils.newInfoLogger(jobLogger),
+												ExecutorUtils.newWarningLogger(jobLogger));
+
+										if (trustCertsFile.exists())
+											git.addArgs("-c", "http.sslCAInfo=" + trustCertsFile.getAbsolutePath());
 
 										int cloneDepth = checkoutFacade.getCloneDepth();
 
@@ -758,10 +767,10 @@ public class AgentSocket implements Runnable {
 									ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 									
 									try {
-										KubernetesHelper.runServerStep(Agent.serverUrl, jobData.getJobToken(), position, 
-												serverSideFacade.getSourcePath(), serverSideFacade.getIncludeFiles(), 
-												serverSideFacade.getExcludeFiles(), serverSideFacade.getPlaceholders(), 
-												hostBuildHome, jobLogger);
+										KubernetesHelper.runServerStep(Agent.sslFactory, Agent.serverUrl,
+												jobData.getJobToken(), position, serverSideFacade.getSourcePath(),
+												serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
+												serverSideFacade.getPlaceholders(), hostBuildHome, jobLogger);
 									} catch (Exception e) {
 										jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
 										return false;
@@ -789,8 +798,8 @@ public class AgentSocket implements Runnable {
 					// Fix https://code.onedev.io/onedev/server/~issues/597
 					if (SystemUtils.IS_OS_WINDOWS)
 						FileUtils.deleteDir(hostWorkspace);
-					if (hostAuthInfoHome.get() != null)
-						FileUtils.deleteDir(hostAuthInfoHome.get());
+					if (hostAuthInfoDir.get() != null)
+						FileUtils.deleteDir(hostAuthInfoDir.get());
 				}
 			} finally {
 				deleteNetwork(new Commandline(Agent.dockerPath), network, jobLogger);

@@ -25,10 +25,8 @@ public class ShellJobData implements Serializable {
 	
 	private final List<Action> actions;
 	
-	private final List<String> trustCertContent;
-	
-	public ShellJobData(String jobToken, String executorName, String projectPath, Long projectId, 
-			String refName, String commitHash, Long buildNumber, List<Action> actions, List<String> trustCertContent) {
+	public ShellJobData(String jobToken, String executorName, String projectPath, Long projectId,
+			String refName, String commitHash, Long buildNumber, List<Action> actions) {
 		this.jobToken = jobToken;
 		this.executorName = executorName;
 		this.projectPath = projectPath;
@@ -37,7 +35,6 @@ public class ShellJobData implements Serializable {
 		this.commitHash = commitHash;
 		this.buildNumber = buildNumber;
 		this.actions = actions;
-		this.trustCertContent = trustCertContent;
 	}
 
 	public String getJobToken() {
@@ -72,8 +69,4 @@ public class ShellJobData implements Serializable {
 		return actions;
 	}
 
-	public List<String> getTrustCertContent() {
-		return trustCertContent;
-	}
-	
 }
