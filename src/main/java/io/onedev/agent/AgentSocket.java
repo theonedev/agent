@@ -309,7 +309,7 @@ public class AgentSocket implements Runnable {
 		else
 			return explicitException.getMessage();
 	}
-	
+
 	private void executeShellJob(Session session, ShellJobData jobData) {
 		if (Agent.isInDocker()) {
 			throw new ExplicitException("Remote shell executor can only execute jobs on agents running "
@@ -380,7 +380,8 @@ public class AgentSocket implements Runnable {
 					try {
 						String stepNames = entryFacade.getNamesAsString(position);
 						jobLogger.notice("Running step \"" + stepNames + "\"...");
-						
+
+						long time = System.currentTimeMillis();
 						if (facade instanceof CommandFacade) {
 							CommandFacade commandFacade = (CommandFacade) facade;
 							OsExecution execution = commandFacade.getExecution(Agent.osInfo);
@@ -411,7 +412,8 @@ public class AgentSocket implements Runnable {
 							ExecutionResult result = interpreter.execute(
 									ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 							if (result.getReturnCode() != 0) {
-								jobLogger.error("Step \"" + stepNames + "\" is failed: Command exited with code " + result.getReturnCode());
+								long duration = System.currentTimeMillis() - time;
+								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Command exited with code " + result.getReturnCode());
 								return false;
 							} 
 						} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade) {
@@ -447,7 +449,8 @@ public class AgentSocket implements Runnable {
 										checkoutFacade.isWithSubmodules(), cloneDepth, 
 										ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 							} catch (Exception e) {
-								jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+								long duration = System.currentTimeMillis() - time;
+								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 								return false;
 							}
 						} else {
@@ -459,11 +462,13 @@ public class AgentSocket implements Runnable {
 										serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
 										serverSideFacade.getPlaceholders(), buildHome, jobLogger);
 							} catch (Exception e) {
-								jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+								long duration = System.currentTimeMillis() - time;
+								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 								return false;
 							}
 						}
-						jobLogger.success("Step \"" + stepNames + "\" is successful");
+						long duration = System.currentTimeMillis() - time;
+						jobLogger.success("Step \"" + stepNames + "\" is successful (" + formatDuration(duration) + ")");
 						return true;
 					} finally {
 						runningSteps.remove(jobData.getJobToken());
@@ -684,7 +689,8 @@ public class AgentSocket implements Runnable {
 							try {
 								String stepNames = entryFacade.getNamesAsString(position);
 								jobLogger.notice("Running step \"" + stepNames + "\"...");
-								
+
+								long time = System.currentTimeMillis();
 								if (facade instanceof CommandFacade) {
 									CommandFacade commandFacade = (CommandFacade) facade;
 									OsExecution execution = commandFacade.getExecution(Agent.osInfo);
@@ -700,7 +706,8 @@ public class AgentSocket implements Runnable {
 											position, commandFacade.isUseTTY());
 									
 									if (exitCode != 0) {
-										jobLogger.error("Step \"" + stepNames + "\" is failed: Command exited with code " + exitCode);
+										long duration = System.currentTimeMillis() - time;
+										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Command exited with code " + exitCode);
 										return false;
 									}
 								} else if (facade instanceof BuildImageFacade) {
@@ -717,7 +724,8 @@ public class AgentSocket implements Runnable {
 											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
 											position, runContainerFacade.isUseTTY());
 									if (exitCode != 0) {
-										jobLogger.error("Step \"" + stepNames + "\" is failed: Container exit with code " + exitCode);
+										long duration = System.currentTimeMillis() - time;
+										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Container exit with code " + exitCode);
 										return false;
 									} 
 								} else if (facade instanceof CheckoutFacade) {
@@ -760,7 +768,8 @@ public class AgentSocket implements Runnable {
 												checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
 												ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 									} catch (Exception e) {
-										jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+										long duration = System.currentTimeMillis() - time;
+										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 										return false;
 									}
 								} else {
@@ -772,11 +781,13 @@ public class AgentSocket implements Runnable {
 												serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
 												serverSideFacade.getPlaceholders(), hostBuildHome, jobLogger);
 									} catch (Exception e) {
-										jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+										long duration = System.currentTimeMillis() - time;
+										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 										return false;
 									}
 								}
-								jobLogger.success("Step \"" + stepNames + "\" is successful");
+								long duration = System.currentTimeMillis() - time;
+								jobLogger.success("Step \"" + stepNames + "\" is successful (" + formatDuration(duration) + ")");
 								return true;
 							} finally {
 								runningSteps.remove(jobData.getJobToken());

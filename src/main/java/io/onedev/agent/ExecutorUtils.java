@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,6 +84,12 @@ public class ExecutorUtils {
 		}
 
 		return new OsInfo(osName, osVersion, System.getProperty("os.arch"));
+	}
+
+	public static String formatDuration(long durationMillis) {
+		if (durationMillis < 0)
+			durationMillis = 0;
+		return DurationFormatUtils.formatDurationWords(durationMillis, true, true);
 	}
 
 }
