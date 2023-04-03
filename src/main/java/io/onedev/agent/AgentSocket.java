@@ -173,20 +173,15 @@ public class AgentSocket implements Runnable {
 	    	case ERROR:
 	    		throw new RuntimeException(new String(messageData, StandardCharsets.UTF_8));
 	    	case REQUEST:
-	    		executorService.execute(new Runnable() {
-
-					@Override
-					public void run() {
-						try {
-				    		CallData request = SerializationUtils.deserialize(messageData);
-				    		CallData response = new CallData(request.getUuid(), service(request.getPayload()));
-				    		new Message(MessageTypes.RESPONSE, response).sendBy(session);
-						} catch (Exception e) {
-							logger.error("Error handling websocket request", e);
-						}
+	    		executorService.execute(() -> {
+					try {
+						CallData request = SerializationUtils.deserialize(messageData);
+						CallData response = new CallData(request.getUuid(), service(request.getPayload()));
+						new Message(MessageTypes.RESPONSE, response).sendBy(session);
+					} catch (Exception e) {
+						logger.error("Error handling websocket request", e);
 					}
-	    			
-	    		});
+				});
 	    		break;
 	    	case RESPONSE:
 	    		WebsocketUtils.onResponse(SerializationUtils.deserialize(messageData));
