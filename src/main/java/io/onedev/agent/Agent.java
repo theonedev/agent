@@ -118,31 +118,27 @@ public class Agent {
 	public static void main(String[] args) throws Exception {
 		thread = Thread.currentThread();
 		
-		Runtime.getRuntime().addShutdownHook(new Thread() {
-			
-			public void run() {
-				logger.info("Waiting for running jobs to finish...");
-				if (client != null) {
-					for (Session session: client.getOpenSessions()) { 
-						try {
-							WebsocketUtils.call(session, new WantToDisconnectAgent(), 0);
-						} catch (InterruptedException | TimeoutException e) {
-							logger.error("Error waiting for running jobs", e);
-						}
-					}
-				}
-				
-				stopping = true;
-				while (!stopped) {
-					thread.interrupt();
+		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+			if (client != null) {
+				for (Session session: client.getOpenSessions()) {
+					logger.info("Waiting for running jobs to finish...");
 					try {
-						Thread.sleep(100);
-					} catch (InterruptedException e) {
+						WebsocketUtils.call(session, new WantToDisconnectAgent(), 0);
+					} catch (InterruptedException | TimeoutException e) {
+						logger.error("Error waiting for running jobs", e);
 					}
 				}
 			}
-			
-		});
+
+			stopping = true;
+			while (!stopped) {
+				thread.interrupt();
+				try {
+					Thread.sleep(100);
+				} catch (InterruptedException e) {
+				}
+			}
+		}));
 		
 		try {
 			wrapperManagerClass = Class.forName("org.tanukisoftware.wrapper.WrapperManager");
