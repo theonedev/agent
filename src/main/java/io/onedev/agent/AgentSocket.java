@@ -263,7 +263,7 @@ public class AgentSocket implements Runnable {
 	    	default:
 	    	}
 		} catch (Exception e) {
-			if (!Agent.logCommonError(e, logger))
+			if (!Agent.logExpectedError(e, logger))
 				logger.error("Error processing websocket message", e);
 			try {
 				session.disconnect();
@@ -1018,7 +1018,7 @@ public class AgentSocket implements Runnable {
 
     @OnWebSocketError
     public void onError(Throwable t) {
-    	if (!Agent.logCommonError(t, logger))
+    	if (!Agent.logExpectedError(t, logger))
     		logger.error("Websocket error", t);
     	Agent.reconnect = true;
     }

@@ -272,7 +272,7 @@ public class Agent {
 						ipAddress = socket.getLocalAddress().getHostAddress();
 						break;
 					} catch (Exception e) {
-				    	if (!logCommonError(e, logger))
+				    	if (!logExpectedError(e, logger))
 				    		logger.error("Error connecting to server", e);
 						try {
 							Thread.sleep(5000);
@@ -395,7 +395,7 @@ public class Agent {
 					} catch (Exception e) {
 					}
 				} catch (Exception e) {
-			    	if (!logCommonError(e, logger))
+			    	if (!logExpectedError(e, logger))
 			    		logger.error("Error connecting to server", e);
 					try {
 						Thread.sleep(5000);
@@ -414,7 +414,7 @@ public class Agent {
 		return new File(installDir, "conf/trust-certs");
 	}
 	
-	static boolean logCommonError(Throwable t, Logger logger) {
+	static boolean logExpectedError(Throwable t, Logger logger) {
 		if (t.getMessage() != null) {
 	    	if (t.getMessage().contains("Connection refused")) {
 	    		logger.error("Connection refused. Is server up?");
@@ -423,11 +423,16 @@ public class Agent {
 	    		logger.error("Server internal error, please check server log");
 	    		return true;
 	    	} else if (t.getMessage().contains("503 Service Unavailable")) {
-	    		logger.error("Server service not available yet");
+	    		logger.error("Service unavailable");
 	    		return true;
 	    	} else if (t.getMessage().contains("403 Forbidden")) {
-	    		logger.error("Agent token rejected by server");
-	    		return true;
+				logger.error("Agent token rejected by server");
+				return true;
+			} else if (t.getMessage().contains("Token already used by another agent")
+					|| t.getMessage().contains("Server not ready")
+					|| t.getMessage().contains("Internal server error, check log for details")) {
+				logger.error(t.getMessage());
+				return true;
 	    	} else {
 	    		return false;
 	    	}
