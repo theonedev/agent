@@ -103,7 +103,7 @@ public class Agent {
 	
 	public static OsInfo osInfo;
 	
-	public static Class<?> wrapperManagerClass;
+	private static Class<?> wrapperManagerClass;
 	
 	public static volatile Map<String, String> attributes;
 	
