@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -42,14 +43,18 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome,
 			TaskLogger jobLogger) {
-		String[] parsedTags = StringUtils
-				.parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
+		String[] parsedTags = parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
 
 		docker.clearArgs();
 		docker.addArgs("build");
 
 		for (String tag : parsedTags)
 			docker.addArgs("-t", tag);
+
+		if (buildImageFacade.getMoreOptions() != null) {
+			for (var option : parseQuoteTokens(buildImageFacade.getMoreOptions()))
+				docker.addArgs(option);
+		}
 		
 		if (buildImageFacade.getBuildPath() != null) {
 			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome);
@@ -567,7 +572,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("--isolation=process");
 		docker.addArgs(image);
 		if (jobService.get("arguments") != null) {
-			for (String token : StringUtils.parseQuoteTokens((String) jobService.get("arguments")))
+			for (String token : parseQuoteTokens((String) jobService.get("arguments")))
 				docker.addArgs(token);
 		}
 
