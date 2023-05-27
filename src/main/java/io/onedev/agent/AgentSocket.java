@@ -513,7 +513,8 @@ public class AgentSocket implements Runnable {
 		Client client = ClientBuilder.newClient();
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildHomes.put(jobData.getJobToken(), hostBuildHome);
-		dockerSocks.put(jobData.getJobToken(), dockerSock);
+		if (dockerSock != null)
+			dockerSocks.put(jobData.getJobToken(), dockerSock);
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -823,7 +824,8 @@ public class AgentSocket implements Runnable {
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
-			dockerSocks.remove(jobData.getJobToken());
+			if (dockerSock != null)
+				dockerSocks.remove(jobData.getJobToken());
 			client.close();
 			
 			synchronized (hostBuildHome) {
