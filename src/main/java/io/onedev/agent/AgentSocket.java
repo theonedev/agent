@@ -43,7 +43,9 @@ public class AgentSocket implements Runnable {
 	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
 	
 	private static final Map<String, File> buildHomes = new ConcurrentHashMap<>();
-	
+
+	private static final Map<String, String> dockerSocks = new ConcurrentHashMap<>();
+
 	private static final Map<String, ShellSession> shellSessions = new ConcurrentHashMap<>();
 	
 	private static final Map<String, LeafFacade> runningSteps = new ConcurrentHashMap<>();
@@ -68,12 +70,12 @@ public class AgentSocket implements Runnable {
 		thread.start();
 	}
 
-	private String getHostPath(String path) {
+	private String getHostPath(String path, @Nullable String dockerSock) {
 		String workPath = Agent.getWorkDir().getAbsolutePath();
 		Preconditions.checkState(path.startsWith(workPath + "/") || path.startsWith(workPath + "\\"));
 		if (hostWorkPath == null) {
 			if (Agent.isInDocker()) 
-				hostWorkPath = DockerExecutorUtils.getHostPath(new Commandline(Agent.dockerPath), workPath);
+				hostWorkPath = DockerExecutorUtils.getHostPath(newDocker(dockerSock), workPath);
 			else 
 				hostWorkPath = workPath;
 		}
@@ -202,7 +204,7 @@ public class AgentSocket implements Runnable {
 	    		String containerName = containerNames.get(jobToken);
 	    		File buildHome;
 	    		if (containerName != null) {
-					Commandline docker = new Commandline(Agent.dockerPath);
+					Commandline docker = newDocker(dockerSocks.get(jobToken));
 	    			docker.addArgs("exec", "-it", containerName);
 	    			LeafFacade runningStep = runningSteps.get(jobToken);
 	    			if (runningStep instanceof CommandFacade) {
@@ -492,6 +494,12 @@ public class AgentSocket implements Runnable {
 			}
 		}
 	}
+
+	private Commandline newDocker(@Nullable String dockerSock) {
+		var docker = new Commandline(Agent.dockerPath);
+		DockerExecutorUtils.useDockerSock(docker, dockerSock);
+		return docker;
+	}
 		
 	private void executeDockerJob(Session session, DockerJobData jobData) {
 		File hostBuildHome = FileUtils.createTempDir("onedev-build");
@@ -500,10 +508,12 @@ public class AgentSocket implements Runnable {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), StandardCharsets.UTF_8.name());
 		}
-		
+		var dockerSock = jobData.getDockerSock();
+
 		Client client = ClientBuilder.newClient();
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildHomes.put(jobData.getJobToken(), hostBuildHome);
+		dockerSocks.put(jobData.getJobToken(), dockerSock);
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -530,28 +540,28 @@ public class AgentSocket implements Runnable {
 				protected void delete(File cacheDir) {
 					DockerExecutorUtils.deleteDir(
 							cacheDir, 
-							new Commandline(Agent.dockerPath), Agent.isInDocker());					
+							newDocker(dockerSock), Agent.isInDocker());
 				}
 				
 			};
 			cache.init(false);
 			
 			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(new Commandline(Agent.dockerPath), each.get("url"), 
-						each.get("userName"), each.get("password"), jobLogger);
+				login(newDocker(dockerSock), each.get("url"), each.get("userName"),
+						each.get("password"), jobLogger);
 			}
 			
 			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-" 
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
-			createNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
+			createNetwork(newDocker(dockerSock), network, jobLogger);
 			try {
 				for (Map<String, Serializable> jobService: jobData.getServices()) {
 					jobLogger.log("Starting service (name: " + jobService.get("name")
 							+ ", image: " + jobService.get("image") + ")...");
-					startService(new Commandline(Agent.dockerPath), network, jobService, Agent.osInfo,
-							jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
+					startService(newDocker(dockerSock), network, jobService,
+							Agent.osInfo, jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
 				}
 				
 				File hostWorkspace = new File(hostBuildHome, "workspace");
@@ -595,7 +605,7 @@ public class AgentSocket implements Runnable {
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
-								Commandline docker = new Commandline(Agent.dockerPath);
+								Commandline docker = newDocker(dockerSock);
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
 
 								if (jobData.getCpuLimit() != null)
@@ -605,12 +615,12 @@ public class AgentSocket implements Runnable {
 								if (jobData.getDockerOptions() != null)
 									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 								
-								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
+								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath(), dockerSock) + ":" + containerBuildHome);
 	 
 								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
 									if (entry.getKey().contains(".."))
 										throw new ExplicitException("Volume mount source path should not contain '..'");
-									String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath());
+									String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath(), dockerSock);
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 								
@@ -625,15 +635,15 @@ public class AgentSocket implements Runnable {
 								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
 									String hostCachePath = new File(hostCacheHome, entry.getKey().toString()).getAbsolutePath();
 									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
-									docker.addArgs("-v", getHostPath(hostCachePath) + ":" + containerCachePath);
+									docker.addArgs("-v", getHostPath(hostCachePath, dockerSock) + ":" + containerCachePath);
 								}
 								
 								if (jobData.isMountDockerSock()) {
-									if (jobData.getDockerSock() != null) {
+									if (dockerSock != null) {
 										if (SystemUtils.IS_OS_WINDOWS) 
-											docker.addArgs("-v", jobData.getDockerSock() + "://./pipe/docker_engine");
+											docker.addArgs("-v", dockerSock + "://./pipe/docker_engine");
 										else
-											docker.addArgs("-v", jobData.getDockerSock() + ":/var/run/docker.sock");
+											docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
 									} else {
 										if (SystemUtils.IS_OS_WINDOWS) 
 											docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
@@ -643,7 +653,7 @@ public class AgentSocket implements Runnable {
 								}
 								
 								if (hostAuthInfoDir.get() != null) {
-									String hostPath = getHostPath(hostAuthInfoDir.get().getAbsolutePath());
+									String hostPath = getHostPath(hostAuthInfoDir.get().getAbsolutePath(), dockerSock);
 									if (SystemUtils.IS_OS_WINDOWS) {
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
@@ -663,12 +673,12 @@ public class AgentSocket implements Runnable {
 								if (entrypoint != null)
 									docker.addArgs("--entrypoint=" + entrypoint);
 								
-								if (isUseProcessIsolation(new Commandline(Agent.dockerPath), image, Agent.osInfo, jobLogger))
+								if (isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger))
 									docker.addArgs("--isolation=process");
 								
 								docker.addArgs(image);
 								docker.addArgs(arguments.toArray(new String[arguments.size()]));
-								docker.processKiller(newDockerKiller(new Commandline(Agent.dockerPath), containerName, jobLogger));
+								docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
 								ExecutionResult result = docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger),
 										null);
 								return result.getReturnCode();
@@ -706,8 +716,8 @@ public class AgentSocket implements Runnable {
 										return false;
 									}
 								} else if (facade instanceof BuildImageFacade) {
-									DockerExecutorUtils.buildImage(new Commandline(Agent.dockerPath), 
-											(BuildImageFacade) facade, hostBuildHome, jobLogger);
+									DockerExecutorUtils.buildImage(newDocker(dockerSock), (BuildImageFacade) facade,
+											hostBuildHome, jobLogger);
 								} else if (facade instanceof RunContainerFacade) {
 									RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 	
@@ -808,15 +818,16 @@ public class AgentSocket implements Runnable {
 						FileUtils.deleteDir(hostAuthInfoDir.get());
 				}
 			} finally {
-				deleteNetwork(new Commandline(Agent.dockerPath), network, jobLogger);
+				deleteNetwork(newDocker(dockerSock), network, jobLogger);
 			}
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
+			dockerSocks.remove(jobData.getJobToken());
 			client.close();
 			
 			synchronized (hostBuildHome) {
-				deleteDir(hostBuildHome, new Commandline(Agent.dockerPath), Agent.isInDocker());
+				deleteDir(hostBuildHome, newDocker(dockerSock), Agent.isInDocker());
 			}
 		}
 	}
@@ -878,14 +889,15 @@ public class AgentSocket implements Runnable {
 			try (Response response = builder.get()) {
 				checkStatus(response);
 			} 
-			
+
+			var dockerSock = jobData.getDockerSock();
 			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(new Commandline(Agent.dockerPath), each.get("url"), 
-						each.get("userName"), each.get("password"), jobLogger);
+				login(newDocker(dockerSock), each.get("url"), each.get("userName"),
+						each.get("password"), jobLogger);
 			}
 
 			jobLogger.log("Testing specified docker image...");
-			Commandline docker = new Commandline(Agent.dockerPath);
+			Commandline docker = newDocker(dockerSock);
 			docker.addArgs("run", "--rm");
 			if (jobData.getDockerOptions() != null)
 				docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
@@ -899,8 +911,8 @@ public class AgentSocket implements Runnable {
 				containerWorkspacePath = "/onedev-build/workspace";
 				containerCachePath = "/onedev-build/cache";
 			}
-			docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath()) + ":" + containerWorkspacePath);
-			docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath()) + ":" + containerCachePath);
+			docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + containerWorkspacePath);
+			docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath(), dockerSock) + ":" + containerCachePath);
 			
 			docker.addArgs("-w", containerWorkspacePath);
 			docker.addArgs(jobData.getDockerImage());
@@ -928,7 +940,7 @@ public class AgentSocket implements Runnable {
 			
 			if (!SystemUtils.IS_OS_WINDOWS) {
 				jobLogger.log("Checking busybox availability...");
-				docker = new Commandline(Agent.dockerPath);
+				docker = newDocker(dockerSock);
 				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");			
 				docker.execute(new LineConsumer() {
 

@@ -217,6 +217,15 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}, input).checkReturnCode();
 	}
 
+	public static void useDockerSock(Commandline docker, @Nullable String dockerSock) {
+		if (dockerSock != null) {
+			if (SystemUtils.IS_OS_WINDOWS)
+				docker.environments().put("DOCKER_HOST", "npipe://" + dockerSock);
+			else
+				docker.environments().put("DOCKER_HOST", "unix://" + dockerSock);
+		}
+	}
+
 	public static void createNetwork(Commandline docker, String network, TaskLogger jobLogger) {
 		docker.clearArgs();
 		AtomicBoolean networkExists = new AtomicBoolean(false);
