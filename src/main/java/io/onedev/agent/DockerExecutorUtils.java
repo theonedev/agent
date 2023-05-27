@@ -226,7 +226,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static void createNetwork(Commandline docker, String network, TaskLogger jobLogger) {
+	public static void createNetwork(Commandline docker, String network, @Nullable String options, TaskLogger jobLogger) {
 		docker.clearArgs();
 		AtomicBoolean networkExists = new AtomicBoolean(false);
 		docker.addArgs("network", "ls", "-q", "--filter", "name=" + network);
@@ -253,6 +253,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("network", "create");
 			if (SystemUtils.IS_OS_WINDOWS)
 				docker.addArgs("-d", "nat");
+			if (options != null) {
+				for (var option: StringUtils.parseQuoteTokens(options))
+					docker.addArgs(option);
+			}
 			docker.addArgs(network);
 			docker.execute(new LineConsumer() {
 

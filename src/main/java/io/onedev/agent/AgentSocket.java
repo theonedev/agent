@@ -556,7 +556,7 @@ public class AgentSocket implements Runnable {
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
-			createNetwork(newDocker(dockerSock), network, jobLogger);
+			createNetwork(newDocker(dockerSock), network, jobData.getNetworkOptions(), jobLogger);
 			try {
 				for (Map<String, Serializable> jobService: jobData.getServices()) {
 					jobLogger.log("Starting service (name: " + jobService.get("name")

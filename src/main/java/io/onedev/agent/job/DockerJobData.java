@@ -24,6 +24,8 @@ public class DockerJobData extends ShellJobData {
 	private final String memoryLimit;
 
 	private final String dockerOptions;
+
+	private final String networkOptions;
 	
 	private final int retried;
 	
@@ -32,7 +34,7 @@ public class DockerJobData extends ShellJobData {
 						 int retried, List<Map<String, Serializable>> services,
 						 List<Map<String, String>> registryLogins, boolean mountDockerSock,
 						 String dockerSock, @Nullable String cpuLimit, @Nullable String memoryLimit,
-						 String dockerOptions) {
+						 String dockerOptions, @Nullable String networkOptions) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
@@ -41,6 +43,7 @@ public class DockerJobData extends ShellJobData {
 		this.cpuLimit = cpuLimit;
 		this.memoryLimit = memoryLimit;
 		this.dockerOptions = dockerOptions;
+		this.networkOptions = networkOptions;
 		this.retried = retried;
 	}
 
@@ -72,6 +75,11 @@ public class DockerJobData extends ShellJobData {
 
 	public String getDockerOptions() {
 		return dockerOptions;
+	}
+
+	@Nullable
+	public String getNetworkOptions() {
+		return networkOptions;
 	}
 
 	public int getRetried() {
