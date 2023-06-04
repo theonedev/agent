@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.k8shelper.KubernetesHelper.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 @WebSocket
 public class AgentSocket implements Runnable {
@@ -547,11 +548,9 @@ public class AgentSocket implements Runnable {
 			};
 			cache.init(false);
 			
-			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(newDocker(dockerSock), each.get("url"), each.get("userName"),
-						each.get("password"), jobLogger);
-			}
-			
+			for (var registryLogin: jobData.getRegistryLogins())
+				login(newDocker(dockerSock), registryLogin, jobLogger);
+
 			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-" 
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
@@ -599,7 +598,7 @@ public class AgentSocket implements Runnable {
 						private int runStepContainer(String image, @Nullable String entrypoint, 
 								List<String> arguments, Map<String, String> environments, 
 								@Nullable String workingDir, Map<String, String> volumeMounts, 
-								List<Integer> position, boolean useTTY) {
+								List<Integer> position, boolean useTTY, boolean kaniko) {
 							// Docker can not process symbol links well
 							cache.uninstallSymbolinks(hostWorkspace);
 
@@ -617,7 +616,14 @@ public class AgentSocket implements Runnable {
 									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 								
 								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath(), dockerSock) + ":" + containerBuildHome);
-	 
+
+								if (kaniko) {
+									var dockerConfigFile = new File(hostBuildHome, "kaniko/.docker/config.json");
+									FileUtils.writeFile(dockerConfigFile, buildDockerConfig(jobData.getRegistryLogins()), UTF_8.name());
+									String hostPath = getHostPath(dockerConfigFile.getAbsolutePath(), dockerSock);
+									docker.addArgs("-v", hostPath + ":/kaniko/.docker/config.json");
+								}
+
 								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
 									if (entry.getKey().contains(".."))
 										throw new ExplicitException("Volume mount source path should not contain '..'");
@@ -709,7 +715,7 @@ public class AgentSocket implements Runnable {
 											Agent.osInfo, hostAuthInfoDir.get() != null);
 									int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(), 
 											entrypoint.arguments(), new HashMap<>(), null, new HashMap<>(), 
-											position, commandFacade.isUseTTY());
+											position, commandFacade.isUseTTY(), false);
 									
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
@@ -728,7 +734,7 @@ public class AgentSocket implements Runnable {
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
 									int exitCode = runStepContainer(container.getImage(), null, arguments, 
 											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
-											position, runContainerFacade.isUseTTY());
+											position, runContainerFacade.isUseTTY(), runContainerFacade.isKaniko());
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Container exit with code " + exitCode);
@@ -893,10 +899,8 @@ public class AgentSocket implements Runnable {
 			} 
 
 			var dockerSock = jobData.getDockerSock();
-			for (Map<String, String> each: jobData.getRegistryLogins()) {
-				login(newDocker(dockerSock), each.get("url"), each.get("userName"),
-						each.get("password"), jobLogger);
-			}
+			for (var registryLogin: jobData.getRegistryLogins())
+				login(newDocker(dockerSock), registryLogin, jobLogger);
 
 			jobLogger.log("Testing specified docker image...");
 			Commandline docker = newDocker(dockerSock);

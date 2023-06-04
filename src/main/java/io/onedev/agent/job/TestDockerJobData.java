@@ -1,9 +1,10 @@
 package io.onedev.agent.job;
 
+import io.onedev.k8shelper.RegistryLoginFacade;
+
 import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.util.List;
-import java.util.Map;
 
 public class TestDockerJobData implements Serializable {
 
@@ -17,12 +18,12 @@ public class TestDockerJobData implements Serializable {
 
 	private final String dockerSock;
 
-	private final List<Map<String, String>> registryLogins;
+	private final List<RegistryLoginFacade> registryLogins;
 
 	private final String dockerOptions;
 	
 	public TestDockerJobData(String executorName, String jobToken, String dockerImage,
-							 @Nullable String dockerSock, List<Map<String, String>> registryLogins,
+							 @Nullable String dockerSock, List<RegistryLoginFacade> registryLogins,
 							 String dockerOptions) {
 		this.executorName = executorName;
 		this.jobToken = jobToken;
@@ -49,7 +50,7 @@ public class TestDockerJobData implements Serializable {
 		return dockerSock;
 	}
 
-	public List<Map<String, String>> getRegistryLogins() {
+	public List<RegistryLoginFacade> getRegistryLogins() {
 		return registryLogins;
 	}
 

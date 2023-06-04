@@ -1,6 +1,7 @@
 package io.onedev.agent.job;
 
 import io.onedev.k8shelper.Action;
+import io.onedev.k8shelper.RegistryLoginFacade;
 
 import javax.annotation.Nullable;
 import java.io.Serializable;
@@ -13,7 +14,7 @@ public class DockerJobData extends ShellJobData {
 	
 	private final List<Map<String, Serializable>> services;
 	
-	private final List<Map<String, String>> registryLogins;
+	private final List<RegistryLoginFacade> registryLogins;
 	
 	private final boolean mountDockerSock;
 	
@@ -32,7 +33,7 @@ public class DockerJobData extends ShellJobData {
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<Map<String, Serializable>> services,
-						 List<Map<String, String>> registryLogins, boolean mountDockerSock,
+						 List<RegistryLoginFacade> registryLogins, boolean mountDockerSock,
 						 String dockerSock, @Nullable String cpuLimit, @Nullable String memoryLimit,
 						 String dockerOptions, @Nullable String networkOptions) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
@@ -51,7 +52,7 @@ public class DockerJobData extends ShellJobData {
 		return services;
 	}
 
-	public List<Map<String, String>> getRegistryLogins() {
+	public List<RegistryLoginFacade> getRegistryLogins() {
 		return registryLogins;
 	}
 
