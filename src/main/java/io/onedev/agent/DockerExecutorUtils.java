@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
+import static io.onedev.commons.utils.StringUtils.splitAndTrim;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Base64.getEncoder;
@@ -49,7 +50,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("-t", tag);
 
 		if (buildImageFacade.getMoreOptions() != null) {
-			for (var option : parseQuoteTokens(buildImageFacade.getMoreOptions()))
+			for (var option : splitAndTrim(buildImageFacade.getMoreOptions(), " "))
 				docker.addArgs(option);
 		}
 		
@@ -404,7 +405,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		} else {
 			result.checkReturnCode();
 
-			List<String> fields = StringUtils.splitAndTrim(osInfoString.get(), "%");
+			List<String> fields = splitAndTrim(osInfoString.get(), "%");
 			String osName = WordUtils.capitalize(fields.get(0));
 			String osVersion = fields.get(1);
 			if (osName.equals("Windows"))
