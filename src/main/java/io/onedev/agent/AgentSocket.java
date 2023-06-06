@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
+import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.k8shelper.KubernetesHelper.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -501,7 +502,7 @@ public class AgentSocket implements Runnable {
 		DockerExecutorUtils.useDockerSock(docker, dockerSock);
 		return docker;
 	}
-		
+
 	private void executeDockerJob(Session session, DockerJobData jobData) {
 		File hostBuildHome = FileUtils.createTempDir("onedev-build");
 		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
@@ -558,10 +559,9 @@ public class AgentSocket implements Runnable {
 			createNetwork(newDocker(dockerSock), network, jobData.getNetworkOptions(), jobLogger);
 			try {
 				for (Map<String, Serializable> jobService: jobData.getServices()) {
-					jobLogger.log("Starting service (name: " + jobService.get("name")
-							+ ", image: " + jobService.get("image") + ")...");
-					startService(newDocker(dockerSock), network, jobService,
-							Agent.osInfo, jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
+					startService(newDocker(dockerSock), network, jobService, Agent.osInfo,
+							jobData.getImageMappings(), jobData.getCpuLimit(), jobData.getMemoryLimit(),
+							jobLogger);
 				}
 				
 				File hostWorkspace = new File(hostBuildHome, "workspace");
@@ -599,6 +599,7 @@ public class AgentSocket implements Runnable {
 								List<String> arguments, Map<String, String> environments, 
 								@Nullable String workingDir, Map<String, String> volumeMounts, 
 								List<Integer> position, boolean useTTY, boolean kaniko) {
+							image = map(jobData.getImageMappings(), image);
 							// Docker can not process symbol links well
 							cache.uninstallSymbolinks(hostWorkspace);
 
