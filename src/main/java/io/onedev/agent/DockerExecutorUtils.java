@@ -1,8 +1,6 @@
 package io.onedev.agent;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
 import io.onedev.agent.job.ImageMappingFacade;
 import io.onedev.agent.job.RegistryLoginFacade;
@@ -11,7 +9,10 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.*;
+import io.onedev.k8shelper.BuildImageFacade;
+import io.onedev.k8shelper.CommandFacade;
+import io.onedev.k8shelper.OsExecution;
+import io.onedev.k8shelper.OsInfo;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.text.WordUtils;
 import org.slf4j.Logger;
@@ -19,7 +20,10 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.io.*;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -28,7 +32,6 @@ import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
 import static io.onedev.commons.utils.StringUtils.splitAndTrim;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Base64.getEncoder;
 
 public class DockerExecutorUtils extends ExecutorUtils {
 
@@ -692,22 +695,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			} catch (InterruptedException e) {
 				throw new RuntimeException(e);
 			}
-		}
-	}
-
-	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins) {
-		Map<Object, Object> configMap = new HashMap<>();
-		Map<Object, Object> authsMap = new HashMap<>();
-		for (var login: registryLogins) {
-			Map<Object, Object> authMap = new HashMap<>();
-			authMap.put("auth", getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
-			authsMap.put(login.getRegistryUrl(), authMap);
-		}
-		configMap.put("auths", authsMap);
-		try {
-			return new ObjectMapper().writeValueAsString(configMap);
-		} catch (JsonProcessingException e) {
-			throw new RuntimeException(e);
 		}
 	}
 

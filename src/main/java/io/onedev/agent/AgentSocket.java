@@ -35,7 +35,6 @@ import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.k8shelper.KubernetesHelper.*;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 @WebSocket
 public class AgentSocket implements Runnable {
@@ -598,7 +597,7 @@ public class AgentSocket implements Runnable {
 						private int runStepContainer(String image, @Nullable String entrypoint, 
 								List<String> arguments, Map<String, String> environments, 
 								@Nullable String workingDir, Map<String, String> volumeMounts, 
-								List<Integer> position, boolean useTTY, boolean kaniko) {
+								List<Integer> position, boolean useTTY) {
 							image = map(jobData.getImageMappings(), image);
 							// Docker can not process symbol links well
 							cache.uninstallSymbolinks(hostWorkspace);
@@ -617,13 +616,6 @@ public class AgentSocket implements Runnable {
 									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 								
 								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath(), dockerSock) + ":" + containerBuildHome);
-
-								if (kaniko) {
-									var dockerConfigFile = new File(hostBuildHome, "kaniko/.docker/config.json");
-									FileUtils.writeFile(dockerConfigFile, buildDockerConfig(jobData.getRegistryLogins()), UTF_8.name());
-									String hostPath = getHostPath(dockerConfigFile.getAbsolutePath(), dockerSock);
-									docker.addArgs("-v", hostPath + ":/kaniko/.docker/config.json");
-								}
 
 								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
 									if (entry.getKey().contains(".."))
@@ -716,7 +708,7 @@ public class AgentSocket implements Runnable {
 											Agent.osInfo, hostAuthInfoDir.get() != null);
 									int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(), 
 											entrypoint.arguments(), new HashMap<>(), null, new HashMap<>(), 
-											position, commandFacade.isUseTTY(), false);
+											position, commandFacade.isUseTTY());
 									
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
@@ -735,7 +727,7 @@ public class AgentSocket implements Runnable {
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
 									int exitCode = runStepContainer(container.getImage(), null, arguments, 
 											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
-											position, runContainerFacade.isUseTTY(), runContainerFacade.isKaniko());
+											position, runContainerFacade.isUseTTY());
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Container exit with code " + exitCode);
