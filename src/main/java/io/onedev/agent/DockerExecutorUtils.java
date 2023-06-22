@@ -79,10 +79,12 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 
-		for (String tag : parsedTags) {
-			docker.clearArgs();
-			docker.addArgs("push", tag);
-			docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+		if (buildImageFacade.isPublish()) {
+			for (String tag : parsedTags) {
+				docker.clearArgs();
+				docker.addArgs("push", tag);
+				docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+			}
 		}
 	}
 
