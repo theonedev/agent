@@ -1,6 +1,7 @@
 package io.onedev.agent;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 import io.onedev.agent.job.*;
 import io.onedev.commons.bootstrap.Bootstrap;
@@ -595,7 +596,7 @@ public class AgentSocket implements Runnable {
 					boolean successful = entryFacade.execute(new LeafHandler() {
 
 						private int runStepContainer(String image, @Nullable String entrypoint, 
-								List<String> arguments, Map<String, String> environments, 
+								List<String> options, List<String> arguments, Map<String, String> environments,
 								@Nullable String workingDir, Map<String, String> volumeMounts, 
 								List<Integer> position, boolean useTTY) {
 							image = map(jobData.getImageMappings(), image);
@@ -675,7 +676,9 @@ public class AgentSocket implements Runnable {
 								
 								if (isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger))
 									docker.addArgs("--isolation=process");
-								
+
+								docker.addArgs(options.toArray(new String[options.size()]));
+
 								docker.addArgs(image);
 								docker.addArgs(arguments.toArray(new String[arguments.size()]));
 								docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
@@ -707,8 +710,8 @@ public class AgentSocket implements Runnable {
 									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, 
 											Agent.osInfo, hostAuthInfoDir.get() != null);
 									int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(), 
-											entrypoint.arguments(), new HashMap<>(), null, new HashMap<>(), 
-											position, commandFacade.isUseTTY());
+											new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null,
+											new HashMap<>(), position, commandFacade.isUseTTY());
 									
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
@@ -721,11 +724,17 @@ public class AgentSocket implements Runnable {
 								} else if (facade instanceof RunContainerFacade) {
 									RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 	
-									OsContainer container = runContainerFacade.getContainer(Agent.osInfo); 
+									OsContainer container = runContainerFacade.getContainer(Agent.osInfo);
+									List<String> options;
+									if (container.getOpts() != null)
+										options = Splitter.on(" ").trimResults().omitEmptyStrings().splitToList(container.getOpts());
+									else
+										options = new ArrayList<>();
+
 									List<String> arguments = new ArrayList<>();
 									if (container.getArgs() != null)
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
-									int exitCode = runStepContainer(container.getImage(), null, arguments, 
+									int exitCode = runStepContainer(container.getImage(), null, options, arguments,
 											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
 											position, runContainerFacade.isUseTTY());
 									if (exitCode != 0) {
