@@ -86,6 +86,11 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 			}
 		}
+		if (buildImageFacade.isRemoveDanglingImages()) {
+			docker.clearArgs();
+			docker.addArgs("image", "prune", "-f");
+			docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+		}
 	}
 
 	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {
