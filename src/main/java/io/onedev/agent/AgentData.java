@@ -1,9 +1,9 @@
 package io.onedev.agent;
 
+import io.onedev.k8shelper.OsInfo;
+
 import java.io.Serializable;
 import java.util.Map;
-
-import io.onedev.k8shelper.OsInfo;
 
 public class AgentData implements Serializable {
 
@@ -18,19 +18,16 @@ public class AgentData implements Serializable {
 	private final String ipAddress;
 	
 	private final int cpus;
-	
-	private final boolean temporal;
-	
+
 	private final Map<String, String> attributes;
 	
 	public AgentData(String token, OsInfo osInfo, String name, String ipAddress,
-					 int cpus, boolean temporal, Map<String, String> attributes) {
+					 int cpus, Map<String, String> attributes) {
 		this.token = token;
 		this.osInfo = osInfo;
 		this.name = name;
 		this.ipAddress = ipAddress;
 		this.cpus = cpus;
-		this.temporal = temporal;
 		this.attributes = attributes;
 	}
 
@@ -52,10 +49,6 @@ public class AgentData implements Serializable {
 
 	public int getCpus() {
 		return cpus;
-	}
-
-	public boolean isTemporal() {
-		return temporal;
 	}
 
 	public Map<String, String> getAttributes() {

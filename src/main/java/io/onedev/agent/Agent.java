@@ -68,9 +68,7 @@ public class Agent {
 	public static final String GIT_PATH_KEY = "gitPath";
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
-	
-	public static final String TEMPORAL_AGENT_KEY = "temporalAgent";
-	
+
 	public static boolean sandboxMode;
 	
 	public static File installDir;
@@ -98,9 +96,7 @@ public class Agent {
 	public static String name;
 	
 	public static String ipAddress;
-	
-	public static boolean temporal;
-	
+
 	public static OsInfo osInfo;
 	
 	private static Class<?> wrapperManagerClass;
@@ -312,16 +308,6 @@ public class Agent {
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
-			String temporalString = System.getenv(TEMPORAL_AGENT_KEY);
-			if (StringUtils.isBlank(temporalString))
-				temporalString = System.getProperty(TEMPORAL_AGENT_KEY);
-			if (StringUtils.isBlank(temporalString))
-				temporalString = agentProps.getProperty(TEMPORAL_AGENT_KEY);
-			if (StringUtils.isBlank(temporalString)) 
-				temporal = false;
-			else 
-				temporal = Boolean.parseBoolean(temporalString);
-
 			try {
 				cpus = new SystemInfo().getHardware().getProcessor().getLogicalProcessorCount();
 			} catch (Exception e) {
