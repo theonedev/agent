@@ -424,8 +424,7 @@ public class Agent {
 	}
 	
 	public static File getTempDir() {
-		// Fix issue https://code.onedev.io/onedev/server/~issues/601
-		return new File(getWorkDir(), name + "/temp");
+		return new File(getWorkDir(), "temp");
 	}
 
 	@Nullable
@@ -540,8 +539,7 @@ public class Agent {
 	}
 	
 	public static File getCacheHome(String executorName) {
-		// Fix issue https://code.onedev.io/onedev/server/~issues/601
-		File file = new File(getWorkDir(), name + "/cache/" + executorName);
+		File file = new File(getWorkDir(), "cache/" + executorName);
 		if (!file.exists()) synchronized (cacheHomeCreationLock) {
 			FileUtils.createDir(file);
 		}
