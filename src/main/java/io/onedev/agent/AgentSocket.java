@@ -36,6 +36,7 @@ import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.k8shelper.KubernetesHelper.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 @WebSocket
 public class AgentSocket implements Runnable {
@@ -127,7 +128,7 @@ public class AgentSocket implements Runnable {
 
 	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
-	    					
+
 	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, StandardCharsets.UTF_8);
 
 	    					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
@@ -151,9 +152,34 @@ public class AgentSocket implements Runnable {
 	    			}
 	        		Agent.restart();
 	    		} else {
-	    			AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
-	    					Agent.name, Agent.ipAddress, Agent.cpus, Agent.attributes);
-	    			new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
+					var needToRestart = false;
+					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
+					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
+					var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
+					if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
+						needToRestart = true;
+						lines = new ArrayList<>(lines);
+						lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
+
+						int appendIndex = lines.size();
+						for (int i = 0; i < lines.size(); i++) {
+							if (lines.get(i).contains("wrapper.java.additional.50")) {
+								appendIndex = i + 1;
+								break;
+							}
+						}
+						lines.add(appendIndex, "set.default.max_memory_percent=50");
+						lines.add(appendIndex, "");
+						lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
+						FileUtils.writeLines(wrapperConfFile, UTF_8.name(), lines);
+					}
+					if (needToRestart) {
+						Agent.restart();
+					} else {
+						AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
+								Agent.name, Agent.ipAddress, Agent.cpus, Agent.attributes);
+						new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
+					}
 	    		}
 	    		break;
 	    	case UPDATE_ATTRIBUTES:
