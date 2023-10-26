@@ -2,7 +2,7 @@ package io.onedev.agent.job;
 
 import javax.annotation.Nullable;
 import java.io.Serializable;
-import java.util.List;
+import java.util.Collection;
 
 public class TestDockerJobData implements Serializable {
 
@@ -16,18 +16,25 @@ public class TestDockerJobData implements Serializable {
 
 	private final String dockerSock;
 
-	private final List<RegistryLoginFacade> registryLogins;
+	private final Collection<RegistryLoginFacade> registryLogins;
+
+	private final String builtInRegistryUrl;
+
+	private final String builtInRegistryAccessToken;
 
 	private final String dockerOptions;
 	
 	public TestDockerJobData(String executorName, String jobToken, String dockerImage,
-							 @Nullable String dockerSock, List<RegistryLoginFacade> registryLogins,
+							 @Nullable String dockerSock, Collection<RegistryLoginFacade> registryLogins,
+							 String builtInRegistryUrl, @Nullable String builtInRegistryAccessToken,
 							 String dockerOptions) {
 		this.executorName = executorName;
 		this.jobToken = jobToken;
 		this.dockerImage = dockerImage;
 		this.dockerSock = dockerSock;
 		this.registryLogins = registryLogins;
+		this.builtInRegistryUrl = builtInRegistryUrl;
+		this.builtInRegistryAccessToken = builtInRegistryAccessToken;
 		this.dockerOptions = dockerOptions;
 	}
 
@@ -48,8 +55,17 @@ public class TestDockerJobData implements Serializable {
 		return dockerSock;
 	}
 
-	public List<RegistryLoginFacade> getRegistryLogins() {
+	public Collection<RegistryLoginFacade> getRegistryLogins() {
 		return registryLogins;
+	}
+
+	public String getBuiltInRegistryUrl() {
+		return builtInRegistryUrl;
+	}
+
+	@Nullable
+	public String getBuiltInRegistryAccessToken() {
+		return builtInRegistryAccessToken;
 	}
 
 	public String getDockerOptions() {

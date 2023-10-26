@@ -1,6 +1,8 @@
 package io.onedev.agent;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Throwables;
 import io.onedev.agent.job.ImageMappingFacade;
 import io.onedev.agent.job.RegistryLoginFacade;
@@ -9,21 +11,17 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.BuildImageFacade;
-import io.onedev.k8shelper.CommandFacade;
-import io.onedev.k8shelper.OsExecution;
-import io.onedev.k8shelper.OsInfo;
+import io.onedev.k8shelper.*;
 import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.text.WordUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
-import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -32,6 +30,7 @@ import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
 import static io.onedev.commons.utils.StringUtils.splitAndTrim;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Base64.getEncoder;
 
 public class DockerExecutorUtils extends ExecutorUtils {
 
@@ -45,8 +44,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			return explicitException.getMessage();
 	}
 
-	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome,
-			TaskLogger jobLogger) {
+	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome, TaskLogger jobLogger) {
 		String[] parsedTags = parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
 
 		docker.clearArgs();
@@ -59,7 +57,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			for (var option : splitAndTrim(buildImageFacade.getMoreOptions(), " "))
 				docker.addArgs(option);
 		}
-		
+
 		if (buildImageFacade.getBuildPath() != null) {
 			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome);
 			if (buildPath.contains(".."))
@@ -75,7 +73,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				throw new ExplicitException("Dockerfile path should not contain '..'");
 			docker.addArgs("-f", dockerFile);
 		}
-		
+
 		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 
@@ -194,31 +192,60 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static void login(Commandline docker, RegistryLoginFacade registryLogin, TaskLogger jobLogger) {
-		jobLogger.log(String.format("Login to docker registry '%s'...", registryLogin.getRegistryUrl()));
-		docker.addArgs("login", "-u", registryLogin.getUserName(), "--password-stdin");
-		docker.addArgs(registryLogin.getRegistryUrl());
-		ByteArrayInputStream input;
+	public static String buildDockerConfig(@Nullable String jobToken,
+										   Collection<RegistryLoginFacade> registryLogins,
+										   String builtInRegistryUrl,
+										   @Nullable String builtInRegistryAccessToken) {
+		Map<Object, Object> configMap = new HashMap<>();
+		Map<Object, Object> authsMap = new HashMap<>();
+		for (var login: registryLogins) {
+			Map<Object, Object> authMap = new HashMap<>();
+			authMap.put("auth", getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
+			authsMap.put(login.getRegistryUrl(), authMap);
+		}
+		String builtInRegistryAuth;
+		if (jobToken != null && builtInRegistryAccessToken != null)
+			builtInRegistryAuth = jobToken + " " + builtInRegistryAccessToken;
+		else if (jobToken != null)
+			builtInRegistryAuth = jobToken;
+		else if (builtInRegistryAccessToken != null)
+			builtInRegistryAuth = builtInRegistryAccessToken;
+		else
+			builtInRegistryAuth = null;
+		if (builtInRegistryAuth != null) {
+			Map<Object, Object> authMap = new HashMap<>();
+			authMap.put("auth", getEncoder().encodeToString(("onedev:" + builtInRegistryAuth).getBytes(UTF_8)));
+			authsMap.put(builtInRegistryUrl, authMap);
+		}
+		configMap.put("auths", authsMap);
 		try {
-			input = new ByteArrayInputStream(registryLogin.getPassword().getBytes(UTF_8.name()));
-		} catch (UnsupportedEncodingException e) {
+			return new ObjectMapper().writeValueAsString(configMap);
+		} catch (JsonProcessingException e) {
 			throw new RuntimeException(e);
 		}
-		docker.execute(new LineConsumer() {
+	}
 
-			@Override
-			public void consume(String line) {
-				logger.debug(line);
-			}
-
-		}, new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				jobLogger.log(line);
-			}
-
-		}, input).checkReturnCode();
+	public static <T> T callWithDockerAuth(Commandline docker, @Nullable String jobToken,
+										   Collection<RegistryLoginFacade> registryLogins,
+										   String builtInRegistryUrl,
+										   @Nullable String builtInRegistryAccessToken,
+										   Callable<T> callable) {
+		var dockerHome = FileUtils.createTempDir("docker");
+		var prevHome = docker.environments().put("HOME", dockerHome.getAbsolutePath());
+		try {
+			var config = buildDockerConfig(jobToken, registryLogins,
+					builtInRegistryUrl, builtInRegistryAccessToken);
+			FileUtils.writeStringToFile(new File(dockerHome, ".docker/config.json"), config, UTF_8);
+			return callable.call();
+		} catch (Exception e) {
+			throw ExceptionUtils.unchecked(e);
+		} finally {
+			if (prevHome != null)
+				docker.environments().put("HOME", prevHome);
+			else
+				docker.environments().remove("HOME");
+			FileUtils.deleteDir(dockerHome);
+		}
 	}
 
 	public static void useDockerSock(Commandline docker, @Nullable String dockerSock) {
@@ -564,36 +591,36 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	@SuppressWarnings({ "resource", "unchecked" })
-	public static void startService(Commandline docker, String network, Map<String, Serializable> jobService,
+	public static void startService(Commandline docker, String network, ServiceFacade jobService,
 									OsInfo nodeOsInfo, List<ImageMappingFacade> imageMappings,
 									@Nullable String cpuLimit, @Nullable String memoryLimit,
 									TaskLogger jobLogger) {
-		String image = map(imageMappings, (String) jobService.get("image"));
-		jobLogger.log("Starting service (name: " + jobService.get("name") + ", image: " + image + ")...");
+		String image = map(imageMappings, jobService.getImage());
+		jobLogger.log("Starting service (name: " + jobService.getName() + ", image: " + image + ")...");
 
 		docker.clearArgs();
 		boolean useProcessIsolation = isUseProcessIsolation(docker, image, nodeOsInfo, jobLogger);
 
 		jobLogger.log("Creating service container...");
 
-		String containerName = network + "-service-" + jobService.get("name");
+		String containerName = network + "-service-" + jobService.getName();
 
 		docker.clearArgs();
 		docker.addArgs("run", "-d", "--name=" + containerName, "--network=" + network,
-				"--network-alias=" + jobService.get("name"));
+				"--network-alias=" + jobService.getName());
 
 		if (cpuLimit != null)
 			docker.addArgs("--cpus", cpuLimit);
 		if (memoryLimit != null)
 			docker.addArgs("--memory", memoryLimit);
 
-		for (Map.Entry<String, String> entry : ((Map<String, String>) jobService.get("envVars")).entrySet())
+		for (var entry : jobService.getEnvs().entrySet())
 			docker.addArgs("--env", entry.getKey() + "=" + entry.getValue());
 		if (useProcessIsolation)
 			docker.addArgs("--isolation=process");
 		docker.addArgs(image);
-		if (jobService.get("arguments") != null) {
-			for (String token : parseQuoteTokens((String) jobService.get("arguments")))
+		if (jobService.getArguments() != null) {
+			for (String token : parseQuoteTokens(jobService.getArguments()))
 				docker.addArgs(token);
 		}
 
@@ -646,9 +673,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				docker.addArgs("exec", containerName);
 
 				if (SystemUtils.IS_OS_WINDOWS)
-					docker.addArgs("cmd", "/c", (String) jobService.get("readinessCheckCommand"));
+					docker.addArgs("cmd", "/c", jobService.getReadinessCheckCommand());
 				else
-					docker.addArgs("sh", "-c", (String) jobService.get("readinessCheckCommand"));
+					docker.addArgs("sh", "-c", jobService.getReadinessCheckCommand());
 
 				ExecutionResult result = docker.execute(new LineConsumer() {
 
@@ -694,7 +721,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				}).checkReturnCode();
 
 				throw new ExplicitException(
-						String.format("Service '" + jobService.get("name") + "' is stopped unexpectedly"));
+						String.format("Service '" + jobService.getName() + "' is stopped unexpectedly"));
 			}
 
 			try {

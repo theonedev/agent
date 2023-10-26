@@ -580,21 +580,21 @@ public class AgentSocket implements Runnable {
 			};
 			cache.init(false);
 			
-			for (var registryLogin: jobData.getRegistryLogins())
-				login(newDocker(dockerSock), registryLogin, jobLogger);
-
-			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-" 
+			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
 			createNetwork(newDocker(dockerSock), network, jobData.getNetworkOptions(), jobLogger);
 			try {
-				for (Map<String, Serializable> jobService: jobData.getServices()) {
-					startService(newDocker(dockerSock), network, jobService, Agent.osInfo,
-							jobData.getImageMappings(), jobData.getCpuLimit(), jobData.getMemoryLimit(),
-							jobLogger);
-				}
-				
+				var docker = newDocker(dockerSock);
+				callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+					for (var jobService: jobData.getServices()) {
+						startService(docker, network, jobService, Agent.osInfo, jobData.getImageMappings(),
+								jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
+					}
+					return null;
+				});
+
 				File hostWorkspace = new File(hostBuildHome, "workspace");
 				FileUtils.createDir(hostWorkspace);
 				cache.installSymbolinks(hostWorkspace);
@@ -626,9 +626,9 @@ public class AgentSocket implements Runnable {
 
 					boolean successful = entryFacade.execute(new LeafHandler() {
 
-						private int runStepContainer(String image, @Nullable String entrypoint, 
+						private int runStepContainer(Commandline docker, String image, @Nullable String entrypoint,
 								List<String> options, List<String> arguments, Map<String, String> environments,
-								@Nullable String workingDir, Map<String, String> volumeMounts, 
+								@Nullable String workingDir, Map<String, String> volumeMounts,
 								List<Integer> position, boolean useTTY) {
 							image = map(jobData.getImageMappings(), image);
 							// Docker can not process symbol links well
@@ -637,7 +637,6 @@ public class AgentSocket implements Runnable {
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
-								Commandline docker = newDocker(dockerSock);
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
 
 								if (jobData.getCpuLimit() != null)
@@ -646,7 +645,7 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("--memory", jobData.getMemoryLimit());
 								if (jobData.getDockerOptions() != null)
 									docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
-								
+
 								docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath(), dockerSock) + ":" + containerBuildHome);
 
 								for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
@@ -655,56 +654,56 @@ public class AgentSocket implements Runnable {
 									String hostPath = getHostPath(new File(hostWorkspace, entry.getKey()).getAbsolutePath(), dockerSock);
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
-								
-								if (entrypoint != null) { 
+
+								if (entrypoint != null) {
 									docker.addArgs("-w", containerWorkspace);
 								} else if (workingDir != null) {
 									if (workingDir.contains(".."))
 										throw new ExplicitException("Container working dir should not contain '..'");
 									docker.addArgs("-w", workingDir);
 								}
-								
+
 								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
 									String hostCachePath = new File(hostCacheHome, entry.getKey().toString()).getAbsolutePath();
 									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
 									docker.addArgs("-v", getHostPath(hostCachePath, dockerSock) + ":" + containerCachePath);
 								}
-								
+
 								if (jobData.isMountDockerSock()) {
 									if (dockerSock != null) {
-										if (SystemUtils.IS_OS_WINDOWS) 
+										if (SystemUtils.IS_OS_WINDOWS)
 											docker.addArgs("-v", dockerSock + "://./pipe/docker_engine");
 										else
 											docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
 									} else {
-										if (SystemUtils.IS_OS_WINDOWS) 
+										if (SystemUtils.IS_OS_WINDOWS)
 											docker.addArgs("-v", "//./pipe/docker_engine://./pipe/docker_engine");
 										else
 											docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
 									}
 								}
-								
+
 								if (hostAuthInfoDir.get() != null) {
 									String hostPath = getHostPath(hostAuthInfoDir.get().getAbsolutePath(), dockerSock);
 									if (SystemUtils.IS_OS_WINDOWS) {
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
 										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
-									} else { 
+									} else {
 										docker.addArgs("-v", hostPath + ":/root/auth-info");
 									}
 								}
-	
-								for (Map.Entry<String, String> entry: environments.entrySet()) 
+
+								for (Map.Entry<String, String> entry: environments.entrySet())
 									docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
-								
+
 								docker.addArgs("-e", "ONEDEV_WORKSPACE=" + containerWorkspace);
-								
+
 								if (useTTY)
 									docker.addArgs("-t");
-								
+
 								if (entrypoint != null)
 									docker.addArgs("--entrypoint=" + entrypoint);
-								
+
 								if (isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger))
 									docker.addArgs("--isolation=process");
 
@@ -740,18 +739,25 @@ public class AgentSocket implements Runnable {
 									
 									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, 
 											Agent.osInfo, hostAuthInfoDir.get() != null);
-									int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(), 
-											new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null,
-											new HashMap<>(), position, commandFacade.isUseTTY());
-									
+
+									var docker = newDocker(dockerSock);
+									int exitCode = callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+										return runStepContainer(docker, execution.getImage(), entrypoint.executable(),
+												new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null,
+												new HashMap<>(), position, commandFacade.isUseTTY());
+									});
+
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Command exited with code " + exitCode);
 										return false;
 									}
 								} else if (facade instanceof BuildImageFacade) {
-									DockerExecutorUtils.buildImage(newDocker(dockerSock), (BuildImageFacade) facade,
-											hostBuildHome, jobLogger);
+									var docker = newDocker(dockerSock);
+									callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+										buildImage(docker, (BuildImageFacade) facade, hostBuildHome, jobLogger);
+										return null;
+									});
 								} else if (facade instanceof RunContainerFacade) {
 									RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 	
@@ -765,9 +771,12 @@ public class AgentSocket implements Runnable {
 									List<String> arguments = new ArrayList<>();
 									if (container.getArgs() != null)
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
-									int exitCode = runStepContainer(container.getImage(), null, options, arguments,
-											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
-											position, runContainerFacade.isUseTTY());
+									var docker = newDocker(dockerSock);
+									int exitCode = callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+										return runStepContainer(docker, container.getImage(), null, options, arguments,
+												container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
+												position, runContainerFacade.isUseTTY());
+									});
 									if (exitCode != 0) {
 										long duration = System.currentTimeMillis() - time;
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Container exit with code " + exitCode);
@@ -903,115 +912,115 @@ public class AgentSocket implements Runnable {
 	}
 	
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
-		File workspaceDir = null;
-		File cacheDir = null;
-		File authInfoDir = null;
-		
-		Client client = ClientBuilder.newClient();
-		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
-		try {
-			TaskLogger jobLogger = new TaskLogger() {
+		var dockerSock = jobData.getDockerSock();
+		Commandline docker = newDocker(dockerSock);
+		callWithDockerAuth(docker, null, jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+			File workspaceDir = null;
+			File cacheDir = null;
+			File authInfoDir = null;
 
-				@Override
-				public void log(String message, String sessionId) {
-					Agent.log(session, jobData.getJobToken(), message, sessionId);
+			Client client = ClientBuilder.newClient();
+			jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+			try {
+				TaskLogger jobLogger = new TaskLogger() {
+
+					@Override
+					public void log(String message, String sessionId) {
+						Agent.log(session, jobData.getJobToken(), message, sessionId);
+					}
+
+				};
+
+				workspaceDir = Bootstrap.createTempDir("workspace");
+				cacheDir = new File(Agent.getCacheHome(jobData.getExecutorName()), UUID.randomUUID().toString());
+				FileUtils.createDir(cacheDir);
+				authInfoDir = FileUtils.createTempDir();
+
+				jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
+				WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
+				Invocation.Builder builder =  target.request();
+				builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
+				try (Response response = builder.get()) {
+					checkStatus(response);
 				}
-				
-			};
-			
-			workspaceDir = Bootstrap.createTempDir("workspace");
-			cacheDir = new File(Agent.getCacheHome(jobData.getExecutorName()), UUID.randomUUID().toString());
-			FileUtils.createDir(cacheDir);
-			authInfoDir = FileUtils.createTempDir();
-			
-			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-			WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
-			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
-			try (Response response = builder.get()) {
-				checkStatus(response);
-			} 
 
-			var dockerSock = jobData.getDockerSock();
-			for (var registryLogin: jobData.getRegistryLogins())
-				login(newDocker(dockerSock), registryLogin, jobLogger);
+				jobLogger.log("Testing specified docker image...");
+				docker.addArgs("run", "--rm");
+				if (jobData.getDockerOptions() != null)
+					docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 
-			jobLogger.log("Testing specified docker image...");
-			Commandline docker = newDocker(dockerSock);
-			docker.addArgs("run", "--rm");
-			if (jobData.getDockerOptions() != null)
-				docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
-			
-			String containerWorkspacePath;
-			String containerCachePath;
-			if (SystemUtils.IS_OS_WINDOWS) {
-				containerWorkspacePath = "C:\\onedev-build\\workspace";
-				containerCachePath = "C:\\onedev-build\\cache";
-			} else {
-				containerWorkspacePath = "/onedev-build/workspace";
-				containerCachePath = "/onedev-build/cache";
-			}
-			docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + containerWorkspacePath);
-			docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath(), dockerSock) + ":" + containerCachePath);
-			
-			docker.addArgs("-w", containerWorkspacePath);
-			docker.addArgs(jobData.getDockerImage());
-			
-			if (SystemUtils.IS_OS_WINDOWS) 
-				docker.addArgs("cmd", "/c", "echo hello from container");
-			else 
-				docker.addArgs("sh", "-c", "echo hello from container");
-			
-			docker.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
+				String containerWorkspacePath;
+				String containerCachePath;
+				if (SystemUtils.IS_OS_WINDOWS) {
+					containerWorkspacePath = "C:\\onedev-build\\workspace";
+					containerCachePath = "C:\\onedev-build\\cache";
+				} else {
+					containerWorkspacePath = "/onedev-build/workspace";
+					containerCachePath = "/onedev-build/cache";
 				}
-				
-			}, new LineConsumer() {
+				docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + containerWorkspacePath);
+				docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath(), dockerSock) + ":" + containerCachePath);
 
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-				
-			}).checkReturnCode();
-			
-			if (!SystemUtils.IS_OS_WINDOWS) {
-				jobLogger.log("Checking busybox availability...");
-				docker = newDocker(dockerSock);
-				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");			
+				docker.addArgs("-w", containerWorkspacePath);
+				docker.addArgs(jobData.getDockerImage());
+
+				if (SystemUtils.IS_OS_WINDOWS)
+					docker.addArgs("cmd", "/c", "echo hello from container");
+				else
+					docker.addArgs("sh", "-c", "echo hello from container");
+
 				docker.execute(new LineConsumer() {
 
 					@Override
 					public void consume(String line) {
 						jobLogger.log(line);
 					}
-					
+
 				}, new LineConsumer() {
 
 					@Override
 					public void consume(String line) {
 						jobLogger.log(line);
 					}
-					
-				}).checkReturnCode();
-			}
 
-			KubernetesHelper.testGitLfsAvailability(new Commandline(Agent.gitPath), jobLogger);
-		} finally {
-			jobThreads.remove(jobData.getJobToken());
-			client.close();
-			
-			if (authInfoDir != null)
-				FileUtils.deleteDir(authInfoDir);
-			
-			if (workspaceDir != null)
-				FileUtils.deleteDir(workspaceDir);
-			if (cacheDir != null)
-				FileUtils.deleteDir(cacheDir);
-		}		
+				}).checkReturnCode();
+
+				if (!SystemUtils.IS_OS_WINDOWS) {
+					jobLogger.log("Checking busybox availability...");
+					docker.clearArgs();
+					docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
+					docker.execute(new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							jobLogger.log(line);
+						}
+
+					}, new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							jobLogger.log(line);
+						}
+
+					}).checkReturnCode();
+				}
+
+				KubernetesHelper.testGitLfsAvailability(new Commandline(Agent.gitPath), jobLogger);
+			} finally {
+				jobThreads.remove(jobData.getJobToken());
+				client.close();
+
+				if (authInfoDir != null)
+					FileUtils.deleteDir(authInfoDir);
+
+				if (workspaceDir != null)
+					FileUtils.deleteDir(workspaceDir);
+				if (cacheDir != null)
+					FileUtils.deleteDir(cacheDir);
+			}
+			return null;
+		});
 	}
 	
 	private Serializable service(Serializable request) {
