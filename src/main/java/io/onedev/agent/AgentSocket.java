@@ -154,24 +154,26 @@ public class AgentSocket implements Runnable {
 	    		} else {
 					var needToRestart = false;
 					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
-					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
-					var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
-					if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
-						needToRestart = true;
-						lines = new ArrayList<>(lines);
-						lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
+					if (wrapperConfFile.exists()) {
+						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
+						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
+						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
+							needToRestart = true;
+							lines = new ArrayList<>(lines);
+							lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
 
-						int appendIndex = lines.size();
-						for (int i = 0; i < lines.size(); i++) {
-							if (lines.get(i).contains("wrapper.java.additional.50")) {
-								appendIndex = i + 1;
-								break;
+							int appendIndex = lines.size();
+							for (int i = 0; i < lines.size(); i++) {
+								if (lines.get(i).contains("wrapper.java.additional.50")) {
+									appendIndex = i + 1;
+									break;
+								}
 							}
+							lines.add(appendIndex, "set.default.max_memory_percent=50");
+							lines.add(appendIndex, "");
+							lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
+							FileUtils.writeLines(wrapperConfFile, UTF_8.name(), lines);
 						}
-						lines.add(appendIndex, "set.default.max_memory_percent=50");
-						lines.add(appendIndex, "");
-						lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
-						FileUtils.writeLines(wrapperConfFile, UTF_8.name(), lines);
 					}
 					if (needToRestart) {
 						Agent.restart();
@@ -339,8 +341,10 @@ public class AgentSocket implements Runnable {
 			throw new ExplicitException("Remote shell executor can only execute jobs on agents running "
 					+ "directly on bare metal/virtual machine");
 		}
-		
-		File buildHome = FileUtils.createTempDir("onedev-build");
+
+		File buildHome = new File(Agent.getTempDir(),
+				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber());
+		FileUtils.createDir(buildHome);
 		File workspaceDir = new File(buildHome, "workspace");
 		
 		File attributesDir = new File(buildHome, KubernetesHelper.ATTRIBUTES);
@@ -529,7 +533,9 @@ public class AgentSocket implements Runnable {
 	}
 
 	private void executeDockerJob(Session session, DockerJobData jobData) {
-		File hostBuildHome = FileUtils.createTempDir("onedev-build");
+		File hostBuildHome = new File(Agent.getTempDir(),
+				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber());
+		FileUtils.createDir(hostBuildHome);
 		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
