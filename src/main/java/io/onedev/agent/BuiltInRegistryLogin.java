@@ -23,11 +23,11 @@ public class BuiltInRegistryLogin implements Serializable {
         return url;
     }
 
-    public String getCredential() {
+    public String getAuth() {
         var builder = new StringBuilder();
-        builder.append(jobToken);
+        builder.append(jobToken).append(":");
         if (accessToken != null)
-            builder.append(" ").append(accessToken);
+            builder.append(accessToken);
         return builder.toString();
     }
 

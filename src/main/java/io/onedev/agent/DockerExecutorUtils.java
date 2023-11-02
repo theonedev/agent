@@ -203,7 +203,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 		if (builtInRegistryLogin != null) {
 			Map<Object, Object> authMap = new HashMap<>();
-			authMap.put("auth", getEncoder().encodeToString(("onedev:" + builtInRegistryLogin.getCredential()).getBytes(UTF_8)));
+			authMap.put("auth", getEncoder().encodeToString((builtInRegistryLogin.getAuth()).getBytes(UTF_8)));
 			authsMap.put(builtInRegistryLogin.getUrl(), authMap);
 		}
 		configMap.put("auths", authsMap);
