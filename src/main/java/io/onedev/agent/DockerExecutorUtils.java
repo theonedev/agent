@@ -192,10 +192,8 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static String buildDockerConfig(@Nullable String jobToken,
-										   Collection<RegistryLoginFacade> registryLogins,
-										   String builtInRegistryUrl,
-										   @Nullable String builtInRegistryAccessToken) {
+	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins,
+										   @Nullable BuiltInRegistryLogin builtInRegistryLogin) {
 		Map<Object, Object> configMap = new HashMap<>();
 		Map<Object, Object> authsMap = new HashMap<>();
 		for (var login: registryLogins) {
@@ -203,19 +201,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			authMap.put("auth", getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
 			authsMap.put(login.getRegistryUrl(), authMap);
 		}
-		String builtInRegistryAuth;
-		if (jobToken != null && builtInRegistryAccessToken != null)
-			builtInRegistryAuth = jobToken + " " + builtInRegistryAccessToken;
-		else if (jobToken != null)
-			builtInRegistryAuth = jobToken;
-		else if (builtInRegistryAccessToken != null)
-			builtInRegistryAuth = builtInRegistryAccessToken;
-		else
-			builtInRegistryAuth = null;
-		if (builtInRegistryAuth != null) {
+		if (builtInRegistryLogin != null) {
 			Map<Object, Object> authMap = new HashMap<>();
-			authMap.put("auth", getEncoder().encodeToString(("onedev:" + builtInRegistryAuth).getBytes(UTF_8)));
-			authsMap.put(builtInRegistryUrl, authMap);
+			authMap.put("auth", getEncoder().encodeToString(("onedev:" + builtInRegistryLogin.getCredential()).getBytes(UTF_8)));
+			authsMap.put(builtInRegistryLogin.getUrl(), authMap);
 		}
 		configMap.put("auths", authsMap);
 		try {
@@ -225,16 +214,13 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static <T> T callWithDockerAuth(Commandline docker, @Nullable String jobToken,
-										   Collection<RegistryLoginFacade> registryLogins,
-										   String builtInRegistryUrl,
-										   @Nullable String builtInRegistryAccessToken,
+	public static <T> T callWithDockerAuth(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
+										   @Nullable BuiltInRegistryLogin builtInRegistryLogin,
 										   Callable<T> callable) {
 		var dockerHome = FileUtils.createTempDir("docker");
 		var prevHome = docker.environments().put("HOME", dockerHome.getAbsolutePath());
 		try {
-			var config = buildDockerConfig(jobToken, registryLogins,
-					builtInRegistryUrl, builtInRegistryAccessToken);
+			var config = buildDockerConfig(registryLogins, builtInRegistryLogin);
 			FileUtils.writeStringToFile(new File(dockerHome, ".docker/config.json"), config, UTF_8);
 			return callable.call();
 		} catch (Exception e) {

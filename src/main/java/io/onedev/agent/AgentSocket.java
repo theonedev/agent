@@ -587,13 +587,15 @@ public class AgentSocket implements Runnable {
 			createNetwork(newDocker(dockerSock), network, jobData.getNetworkOptions(), jobLogger);
 			try {
 				var docker = newDocker(dockerSock);
-				callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
-					for (var jobService: jobData.getServices()) {
+				for (var jobService: jobData.getServices()) {
+					var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
+							jobData.getJobToken(), jobService.getBuiltInRegistryAccessToken());
+					callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 						startService(docker, network, jobService, Agent.osInfo, jobData.getImageMappings(),
 								jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
-					}
-					return null;
-				});
+						return null;
+					});
+				}
 
 				File hostWorkspace = new File(hostBuildHome, "workspace");
 				FileUtils.createDir(hostWorkspace);
@@ -741,7 +743,9 @@ public class AgentSocket implements Runnable {
 											Agent.osInfo, hostAuthInfoDir.get() != null);
 
 									var docker = newDocker(dockerSock);
-									int exitCode = callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
+											jobData.getJobToken(), commandFacade.getBuiltInRegistryAccessToken());
+									int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 										return runStepContainer(docker, execution.getImage(), entrypoint.executable(),
 												new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null,
 												new HashMap<>(), position, commandFacade.isUseTTY());
@@ -753,8 +757,11 @@ public class AgentSocket implements Runnable {
 										return false;
 									}
 								} else if (facade instanceof BuildImageFacade) {
+									var buildImageFacade = (BuildImageFacade) facade;
 									var docker = newDocker(dockerSock);
-									callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
+											jobData.getJobToken(), buildImageFacade.getBuiltInRegistryAccessToken());
+									callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 										buildImage(docker, (BuildImageFacade) facade, hostBuildHome, jobLogger);
 										return null;
 									});
@@ -772,7 +779,9 @@ public class AgentSocket implements Runnable {
 									if (container.getArgs() != null)
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
 									var docker = newDocker(dockerSock);
-									int exitCode = callWithDockerAuth(docker, jobData.getJobToken(), jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
+											jobData.getJobToken(), runContainerFacade.getBuiltInRegistryAccessToken());
+									int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 										return runStepContainer(docker, container.getImage(), null, options, arguments,
 												container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
 												position, runContainerFacade.isUseTTY());
@@ -914,7 +923,7 @@ public class AgentSocket implements Runnable {
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		callWithDockerAuth(docker, null, jobData.getRegistryLogins(), jobData.getBuiltInRegistryUrl(), jobData.getBuiltInRegistryAccessToken(), () -> {
+		callWithDockerAuth(docker, jobData.getRegistryLogins(), null, () -> {
 			File workspaceDir = null;
 			File cacheDir = null;
 			File authInfoDir = null;

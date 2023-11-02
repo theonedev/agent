@@ -13,7 +13,7 @@ import java.util.List;
 public class ShellExecutorUtils {
 
 	public static void testCommands(Commandline git, List<String> commands, TaskLogger jobLogger) {
-		CommandFacade executable = new CommandFacade(null, commands, true);
+		CommandFacade executable = new CommandFacade(null, null, commands, true);
 		Commandline interpreter = executable.getScriptInterpreter();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {

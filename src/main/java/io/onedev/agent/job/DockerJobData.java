@@ -16,8 +16,6 @@ public class DockerJobData extends ShellJobData {
 
 	private final String builtInRegistryUrl;
 
-	private final String builtInRegistryAccessToken;
-
 	private final List<ImageMappingFacade> imageMappings;
 
 	private final boolean mountDockerSock;
@@ -37,15 +35,13 @@ public class DockerJobData extends ShellJobData {
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<ServiceFacade> services, List<RegistryLoginFacade> registryLogins,
-						 String builtInRegistryUrl, @Nullable String builtInRegistryAccessToken,
-						 List<ImageMappingFacade> imageMappings, boolean mountDockerSock, String dockerSock,
-						 @Nullable String cpuLimit, @Nullable String memoryLimit, String dockerOptions,
-						 @Nullable String networkOptions) {
+						 String builtInRegistryUrl, List<ImageMappingFacade> imageMappings,
+						 boolean mountDockerSock, String dockerSock, @Nullable String cpuLimit,
+						 @Nullable String memoryLimit, String dockerOptions, @Nullable String networkOptions) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
 		this.builtInRegistryUrl = builtInRegistryUrl;
-		this.builtInRegistryAccessToken = builtInRegistryAccessToken;
 		this.imageMappings = imageMappings;
 		this.mountDockerSock = mountDockerSock;
 		this.dockerSock = dockerSock;
@@ -66,11 +62,6 @@ public class DockerJobData extends ShellJobData {
 
 	public String getBuiltInRegistryUrl() {
 		return builtInRegistryUrl;
-	}
-
-	@Nullable
-	public String getBuiltInRegistryAccessToken() {
-		return builtInRegistryAccessToken;
 	}
 
 	public List<ImageMappingFacade> getImageMappings() {

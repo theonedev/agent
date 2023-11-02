@@ -20,21 +20,17 @@ public class TestDockerJobData implements Serializable {
 
 	private final String builtInRegistryUrl;
 
-	private final String builtInRegistryAccessToken;
-
 	private final String dockerOptions;
 	
 	public TestDockerJobData(String executorName, String jobToken, String dockerImage,
 							 @Nullable String dockerSock, Collection<RegistryLoginFacade> registryLogins,
-							 String builtInRegistryUrl, @Nullable String builtInRegistryAccessToken,
-							 String dockerOptions) {
+							 String builtInRegistryUrl, String dockerOptions) {
 		this.executorName = executorName;
 		this.jobToken = jobToken;
 		this.dockerImage = dockerImage;
 		this.dockerSock = dockerSock;
 		this.registryLogins = registryLogins;
 		this.builtInRegistryUrl = builtInRegistryUrl;
-		this.builtInRegistryAccessToken = builtInRegistryAccessToken;
 		this.dockerOptions = dockerOptions;
 	}
 
@@ -61,11 +57,6 @@ public class TestDockerJobData implements Serializable {
 
 	public String getBuiltInRegistryUrl() {
 		return builtInRegistryUrl;
-	}
-
-	@Nullable
-	public String getBuiltInRegistryAccessToken() {
-		return builtInRegistryAccessToken;
 	}
 
 	public String getDockerOptions() {
