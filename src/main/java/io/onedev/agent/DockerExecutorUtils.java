@@ -527,7 +527,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		String hostInstallPath = null;
 
 		if (possibleHostInstallPaths.isEmpty()) {
-			throw new IllegalStateException("No any mounting container found");
+			throw new IllegalStateException("No container mounting host path found: please make sure to use bind mount to launch OneDev server/agent");
 		} else if (possibleHostInstallPaths.size() > 1) {
 			File testFile = new File(mountPath, UUID.randomUUID().toString());
 			FileUtils.touchFile(testFile);
