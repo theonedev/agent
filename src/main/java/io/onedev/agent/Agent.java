@@ -207,7 +207,7 @@ public class Agent {
 			}
 
 			System.setProperty("java.io.tmpdir", tempDir.getAbsolutePath());
-			
+
 			try (InputStream is = Agent.class.getClassLoader().getResourceAsStream("META-INF/onedev-agent.properties")) {
 				Properties props = new Properties();
 				props.load(is);

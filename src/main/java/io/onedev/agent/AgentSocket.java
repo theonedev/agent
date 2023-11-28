@@ -940,7 +940,7 @@ public class AgentSocket implements Runnable {
 
 				};
 
-				workspaceDir = Bootstrap.createTempDir("workspace");
+				workspaceDir = FileUtils.createTempDir("workspace");
 				cacheDir = new File(Agent.getCacheHome(jobData.getExecutorName()), UUID.randomUUID().toString());
 				FileUtils.createDir(cacheDir);
 				authInfoDir = FileUtils.createTempDir();
