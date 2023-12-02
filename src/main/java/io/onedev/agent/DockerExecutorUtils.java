@@ -50,6 +50,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		docker.clearArgs();
 		docker.addArgs("build");
 
+		if (buildImageFacade.isPublish())
+			docker.addArgs("--push");
+
 		for (String tag : parsedTags)
 			docker.addArgs("-t", tag);
 
@@ -77,13 +80,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 
-		if (buildImageFacade.isPublish()) {
-			for (String tag : parsedTags) {
-				docker.clearArgs();
-				docker.addArgs("push", tag);
-				docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
-			}
-		}
 		if (buildImageFacade.isRemoveDanglingImages()) {
 			docker.clearArgs();
 			docker.addArgs("image", "prune", "-f");
@@ -217,20 +213,35 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	public static <T> T callWithDockerAuth(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
 										   @Nullable BuiltInRegistryLogin builtInRegistryLogin,
 										   Callable<T> callable) {
-		var dockerHome = FileUtils.createTempDir("docker");
-		var prevHome = docker.environments().put("HOME", dockerHome.getAbsolutePath());
+		var tempConfigDir = FileUtils.createTempDir("docker");
+		docker.environments().put("DOCKER_CONFIG", tempConfigDir.getAbsolutePath());
 		try {
+			var configHome = System.getenv("DOCKER_CONFIG");
+			if (configHome == null)
+				configHome = System.getProperty("user.home") + "/.docker";
+			var configDir = new File(configHome);
+			try {
+				if (new File(configDir, "buildx").exists()) {
+					FileUtils.copyDirectory(
+							new File(configDir, "buildx"),
+							new File(tempConfigDir, "buildx"));
+				}
+				if (new File(configDir, "contexts").exists()) {
+					FileUtils.copyDirectory(
+							new File(configDir, "contexts"),
+							new File(tempConfigDir, "contexts"));
+				}
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
 			var config = buildDockerConfig(registryLogins, builtInRegistryLogin);
-			FileUtils.writeStringToFile(new File(dockerHome, ".docker/config.json"), config, UTF_8);
+			FileUtils.writeStringToFile(new File(tempConfigDir, "config.json"), config, UTF_8);
 			return callable.call();
 		} catch (Exception e) {
 			throw ExceptionUtils.unchecked(e);
 		} finally {
-			if (prevHome != null)
-				docker.environments().put("HOME", prevHome);
-			else
-				docker.environments().remove("HOME");
-			FileUtils.deleteDir(dockerHome);
+			docker.environments().remove("DOCKER_CONFIG");
+			FileUtils.deleteDir(tempConfigDir);
 		}
 	}
 
