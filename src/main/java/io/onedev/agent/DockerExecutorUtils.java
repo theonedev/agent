@@ -48,7 +48,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		String[] parsedTags = parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
 
 		docker.clearArgs();
-		docker.addArgs("build");
+		docker.addArgs("buildx", "build");
 
 		if (buildImageFacade.isPublish())
 			docker.addArgs("--push");
@@ -57,7 +57,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("-t", tag);
 
 		if (buildImageFacade.getMoreOptions() != null) {
-			for (var option : splitAndTrim(buildImageFacade.getMoreOptions(), " "))
+			for (var option : splitAndTrim(replacePlaceholders(buildImageFacade.getMoreOptions(), hostBuildHome), " "))
 				docker.addArgs(option);
 		}
 
@@ -85,6 +85,15 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("image", "prune", "-f");
 			docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 		}
+	}
+
+	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
+									 File hostBuildHome, TaskLogger jobLogger) {
+		docker.clearArgs();
+		docker.addArgs("buildx", "imagetools");
+		docker.addArgs(parseQuoteTokens(replacePlaceholders(runImagetoolsFacade.getArguments(), hostBuildHome)));
+		docker.workingDir(new File(hostBuildHome, "workspace"));
+		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 	}
 
 	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {

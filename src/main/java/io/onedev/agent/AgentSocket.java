@@ -444,9 +444,10 @@ public class AgentSocket implements Runnable {
 								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): Command exited with code " + result.getReturnCode());
 								return false;
 							} 
-						} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade) {
+						} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade
+								|| facade instanceof RunImagetoolsFacade) {
 							throw new ExplicitException("This step can only be executed by server docker executor, "
-									+ "remote docker executor, or kubernetes executor");
+									+ "remote docker executor");
 						} else if (facade instanceof CheckoutFacade) {
 							try {
 								CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
@@ -762,7 +763,16 @@ public class AgentSocket implements Runnable {
 									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 											jobData.getJobToken(), buildImageFacade.getBuiltInRegistryAccessToken());
 									callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-										buildImage(docker, (BuildImageFacade) facade, hostBuildHome, jobLogger);
+										buildImage(docker, buildImageFacade, hostBuildHome, jobLogger);
+										return null;
+									});
+								} else if (facade instanceof RunImagetoolsFacade) {
+									var runImagetoolsFacade = (RunImagetoolsFacade) facade;
+									var docker = newDocker(dockerSock);
+									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
+											jobData.getJobToken(), runImagetoolsFacade.getBuiltInRegistryAccessToken());
+									callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+										runImagetools(docker, runImagetoolsFacade, hostBuildHome, jobLogger);
 										return null;
 									});
 								} else if (facade instanceof RunContainerFacade) {
