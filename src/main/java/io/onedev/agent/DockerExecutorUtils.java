@@ -3,6 +3,7 @@ package io.onedev.agent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 import io.onedev.agent.job.ImageMappingFacade;
 import io.onedev.agent.job.RegistryLoginFacade;
@@ -44,6 +45,19 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			return explicitException.getMessage();
 	}
 
+	private static List<String> parseDockerOptions(File hostBuildHome, String optionString) {
+		var options = new ArrayList<String>();
+		for (var option: parseQuoteTokens(replacePlaceholders(optionString, hostBuildHome))) {
+			if (option.startsWith("-") && option.contains("=")) {
+				options.add(StringUtils.substringBefore(option, "="));
+				options.add(StringUtils.substringAfter(option, "="));
+			} else {
+				options.add(option);
+			}
+		}
+		return options;
+	}
+
 	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome, TaskLogger jobLogger) {
 		String[] parsedTags = parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
 
@@ -57,14 +71,99 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			docker.addArgs("-t", tag);
 
 		if (buildImageFacade.getMoreOptions() != null) {
-			for (var option : splitAndTrim(replacePlaceholders(buildImageFacade.getMoreOptions(), hostBuildHome), " "))
-				docker.addArgs(option);
+			var options = parseDockerOptions(hostBuildHome, buildImageFacade.getMoreOptions());
+			var it = options.iterator();
+			while (it.hasNext()) {
+				var option = it.next();
+				switch (option) {
+					case "--add-host":
+					case "--allow":
+					case "--build-arg":
+					case "--builder":
+					case "--label":
+					case "--network":
+					case "--no-cache-filter":
+					case "--platform":
+					case "--progress":
+					case "--target":
+						docker.addArgs(option);
+						if (it.hasNext())
+							docker.addArgs(it.next());
+						break;
+					case "--cache-from":
+					case "--cache-to":
+					case "--output":
+					case "-o":
+						docker.addArgs(option);
+						if (it.hasNext()) {
+							var arg = it.next();
+							if (arg.startsWith("type=local")) {
+								var path = StringUtils.substringAfter(arg.substring("type=local".length()), "=");
+								if (!PathUtils.isSubPath(path)) {
+									if (option.equals("--output"))
+										throw new ExplicitException("Output path of build image step should be a relative path not containing '..'");
+									else
+										throw new ExplicitException("Local cache path of build image step should be a relative path not containing '..'");
+								}
+							}
+							docker.addArgs(arg);
+						}
+						break;
+					case "--secret":
+						docker.addArgs(option);
+						if (it.hasNext()) {
+							var arg = it.next();
+							for (var splitted: Splitter.on(',').split(arg)) {
+								if (splitted.startsWith("src=")) {
+									var path = splitted.substring("src=".length());
+									if (!PathUtils.isSubPath(path))
+										throw new ExplicitException("Secret source path of build image step should be a relative path not containing '..'");
+								}
+							}
+							docker.addArgs(arg);
+						}
+						break;
+					case "--build-context":
+						docker.addArgs(option);
+						if (it.hasNext()) {
+							var arg = it.next();
+							var path = StringUtils.substringAfter(arg, "=");
+							if (!PathUtils.isSubPath(path))
+								throw new ExplicitException("Build context path of build image step should be a relative path not containing '..'");
+							docker.addArgs(arg);
+						}
+						break;
+					case "--iidfile":
+					case "--metadata-file":
+						docker.addArgs(option);
+						if (it.hasNext()) {
+							var path = it.next();
+							if (!PathUtils.isSubPath(path)) {
+								if (option.equals("--iidfile"))
+									throw new ExplicitException("Image id file path of build image step should be a relative path not containing '..'");
+								else
+									throw new ExplicitException("Metadata file path of build image step should be a relative path not containing '..'");
+							}
+							docker.addArgs(path);
+						}
+						break;
+					case "--no-cache":
+					case "--pull":
+					case "-q":
+					case "--quiet":
+						docker.addArgs(option);
+						break;
+					default:
+						throw new ExplicitException("Option '" + option + "' is not supported for build image step");
+				}
+			}
 		}
 
+		var workspaceDir = new File(hostBuildHome, "workspace");
 		if (buildImageFacade.getBuildPath() != null) {
 			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome);
-			if (buildPath.contains(".."))
-				throw new ExplicitException("Build path should not contain '..'");
+			if (!PathUtils.isSubPath(buildPath))
+				throw new ExplicitException("Build path of build image step should be a relative path not containing '..'");
 			docker.addArgs(buildPath);
 		} else {
 			docker.addArgs(".");
@@ -72,12 +171,12 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		if (buildImageFacade.getDockerfile() != null) {
 			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildHome);
-			if (dockerFile.contains(".."))
-				throw new ExplicitException("Dockerfile path should not contain '..'");
+			if (!PathUtils.isSubPath(dockerFile))
+				throw new ExplicitException("Dockerfile of build image step should be a relative path not containing '..'");
 			docker.addArgs("-f", dockerFile);
 		}
 
-		docker.workingDir(new File(hostBuildHome, "workspace"));
+		docker.workingDir(workspaceDir);
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 
 		if (buildImageFacade.isRemoveDanglingImages()) {
@@ -91,7 +190,19 @@ public class DockerExecutorUtils extends ExecutorUtils {
 									 File hostBuildHome, TaskLogger jobLogger) {
 		docker.clearArgs();
 		docker.addArgs("buildx", "imagetools");
-		docker.addArgs(parseQuoteTokens(replacePlaceholders(runImagetoolsFacade.getArguments(), hostBuildHome)));
+		var options = parseDockerOptions(hostBuildHome, runImagetoolsFacade.getArguments());
+		var it = options.iterator();
+		while (it.hasNext()) {
+			var option = it.next();
+			docker.addArgs(option);
+			if ((option.startsWith("--file") || option.startsWith("-f")) && it.hasNext()) {
+				var path = it.next();
+				if (!PathUtils.isSubPath(path))
+					throw new ExplicitException("Source descriptor path of imagetools step should be a relative path not containing '..'");
+				docker.addArgs(path);
+			}
+		}
+
 		docker.workingDir(new File(hostBuildHome, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 	}

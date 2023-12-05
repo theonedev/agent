@@ -658,13 +658,10 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 
-								if (entrypoint != null) {
+								if (entrypoint != null)
 									docker.addArgs("-w", containerWorkspace);
-								} else if (workingDir != null) {
-									if (workingDir.contains(".."))
-										throw new ExplicitException("Container working dir should not contain '..'");
+								else if (workingDir != null)
 									docker.addArgs("-w", workingDir);
-								}
 
 								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
 									String hostCachePath = new File(hostCacheHome, entry.getKey().toString()).getAbsolutePath();
