@@ -640,6 +640,9 @@ public class AgentSocket implements Runnable {
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
+								var useProcessIsolation = isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger);
+								docker.clearArgs();
+
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
 
 								if (jobData.getCpuLimit() != null)
@@ -704,7 +707,7 @@ public class AgentSocket implements Runnable {
 								if (entrypoint != null)
 									docker.addArgs("--entrypoint=" + entrypoint);
 
-								if (isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger))
+								if (useProcessIsolation)
 									docker.addArgs("--isolation=process");
 
 								docker.addArgs(options.toArray(new String[options.size()]));
