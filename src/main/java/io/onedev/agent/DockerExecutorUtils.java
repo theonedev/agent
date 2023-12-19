@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -350,6 +351,11 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					FileUtils.copyDirectory(
 							new File(configDir, "contexts"),
 							new File(tempConfigDir, "contexts"));
+				}
+				if (new File(configDir, "cli-plugins").exists()) {
+					Files.createSymbolicLink(
+							new File(tempConfigDir, "cli-plugins").toPath(),
+							new File(configDir, "cli-plugins").toPath());
 				}
 			} catch (IOException e) {
 				throw new RuntimeException(e);
