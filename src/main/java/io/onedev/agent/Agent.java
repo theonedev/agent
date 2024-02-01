@@ -106,9 +106,7 @@ public class Agent {
 	public static ObjectMapper objectMapper = new ObjectMapper();
 
 	public static SSLFactory sslFactory;
-	
-	private static Object cacheHomeCreationLock = new Object();
-	
+
 	private static volatile WebSocketClient client;
 	
 	public static void main(String[] args) throws Exception {
@@ -538,12 +536,4 @@ public class Agent {
 		new Message(MessageTypes.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
 	}
 	
-	public static File getCacheHome(String executorName) {
-		File file = new File(getWorkDir(), "cache/" + executorName);
-		if (!file.exists()) synchronized (cacheHomeCreationLock) {
-			FileUtils.createDir(file);
-		}
-		return file;
-	}
-		
 }

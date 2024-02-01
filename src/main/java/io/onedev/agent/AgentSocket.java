@@ -63,7 +63,7 @@ public class AgentSocket implements Runnable {
 	
 	static final ExecutorService executorService = Executors.newCachedThreadPool();
 	
-	private static transient volatile String hostWorkPath;
+	private static volatile String hostWorkPath;
 	
 	@OnWebSocketConnect
 	public void onConnect(Session session) throws IOException {
@@ -107,7 +107,7 @@ public class AgentSocket implements Runnable {
 	    					File newLibDir = new File(Agent.installDir, "lib/" + versionAtServer);
 	    					FileUtils.cleanDir(newLibDir);
 	    					try (InputStream is = response.readEntity(InputStream.class)) {
-	    						FileUtils.untar(is, newLibDir, false);
+	    						TarUtils.untar(is, newLibDir, false);
 	    					} 
 	    					
 	    					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
@@ -363,35 +363,15 @@ public class AgentSocket implements Runnable {
 				}
 				
 			};
-			
-			File cacheHomeDir = Agent.getCacheHome(jobData.getExecutorName());
-			
-			jobLogger.log("Setting up job cache...") ;
-			
-			JobCache cache = new JobCache(cacheHomeDir) {
 
-				@Override
-				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					return KubernetesHelper.allocateCaches(Agent.sslFactory, Agent.serverUrl,
-							jobData.getJobToken(), request);
-				}
-
-				@Override
-				protected void delete(File cacheDir) {
-					FileUtils.cleanDir(cacheDir);					
-				}
-				
-			};
-			
-			cache.init(true);
-			
 			FileUtils.createDir(workspaceDir);
-			cache.installSymbolinks(workspaceDir);
-			
+
+			var cacheHelper = new AgentCacheHelper(jobData.getJobToken(), buildHome, jobLogger);
+
 			jobLogger.log("Downloading job dependencies...");
 			
-			KubernetesHelper.downloadDependencies(Agent.sslFactory, jobData.getJobToken(),
-					Agent.serverUrl, workspaceDir);
+			downloadDependencies(Agent.serverUrl,  jobData.getJobToken(),
+					workspaceDir, Agent.sslFactory);
 			
 			File userHome = new File(buildHome, "user");
 			FileUtils.createDir(userHome);
@@ -474,15 +454,21 @@ public class AgentSocket implements Runnable {
 
 								int cloneDepth = checkoutFacade.getCloneDepth();
 								cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
-										jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(), 
-										checkoutFacade.isWithSubmodules(), cloneDepth, 
+										jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(),
+										checkoutFacade.isWithSubmodules(), cloneDepth,
 										ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 							} catch (Exception e) {
 								long duration = System.currentTimeMillis() - time;
 								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 								return false;
 							}
-						} else {
+						} else if (facade instanceof SetupCacheFacade) {
+							SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
+							var cachePath = setupCacheFacade.getPath();
+							if (new File(cachePath).isAbsolute())
+								throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath);
+							cacheHelper.setupCache(setupCacheFacade);
+						} else if (facade instanceof ServerSideFacade) {
 							ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 							
 							try {
@@ -495,6 +481,8 @@ public class AgentSocket implements Runnable {
 								jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 								return false;
 							}
+						} else {
+							throw new ExplicitException("Unexpected step type: " + facade.getClass());
 						}
 						long duration = System.currentTimeMillis() - time;
 						jobLogger.success("Step \"" + stepNames + "\" is successful (" + formatDuration(duration) + ")");
@@ -511,7 +499,9 @@ public class AgentSocket implements Runnable {
 				
 			}, new ArrayList<>());
 
-			if (!successful)
+			if (successful)
+				cacheHelper.uploadCaches();
+			else
 				throw new FailedException();
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
@@ -558,29 +548,7 @@ public class AgentSocket implements Runnable {
 				}
 				
 			};
-			
-			File hostCacheHome = Agent.getCacheHome(jobData.getExecutorName());
-			
-			jobLogger.log("Allocating job cache...") ;
 
-			JobCache cache = new JobCache(hostCacheHome) {
-
-				@Override
-				protected Map<CacheInstance, String> allocate(CacheAllocationRequest request) {
-					return KubernetesHelper.allocateCaches(Agent.sslFactory, Agent.serverUrl,
-							jobData.getJobToken(), request);
-				}
-
-				@Override
-				protected void delete(File cacheDir) {
-					DockerExecutorUtils.deleteDir(
-							cacheDir, 
-							newDocker(dockerSock), Agent.isInDocker());
-				}
-				
-			};
-			cache.init(false);
-			
 			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
 					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
 			jobLogger.log("Creating docker network '" + network + "'...");
@@ -600,14 +568,15 @@ public class AgentSocket implements Runnable {
 
 				File hostWorkspace = new File(hostBuildHome, "workspace");
 				FileUtils.createDir(hostWorkspace);
-				cache.installSymbolinks(hostWorkspace);
-				
+
+				var cacheHelper = new AgentCacheHelper(jobData.getJobToken(), hostBuildHome, jobLogger);
+
 				AtomicReference<File> hostAuthInfoDir = new AtomicReference<>(null);
 				try {						
 					jobLogger.log("Downloading job dependencies...");
 
-					KubernetesHelper.downloadDependencies(Agent.sslFactory, jobData.getJobToken(),
-							Agent.serverUrl, hostWorkspace);
+					downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
+							hostWorkspace, Agent.sslFactory);
 					
 					String containerBuildHome;
 					String containerWorkspace;
@@ -634,8 +603,6 @@ public class AgentSocket implements Runnable {
 								@Nullable String workingDir, Map<String, String> volumeMounts,
 								List<Integer> position, boolean useTTY) {
 							image = map(jobData.getImageMappings(), image);
-							// Docker can not process symbol links well
-							cache.uninstallSymbolinks(hostWorkspace);
 
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
@@ -661,16 +628,12 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 
+								cacheHelper.mountVolumes(docker, it -> getHostPath(it, dockerSock));
+
 								if (entrypoint != null)
 									docker.addArgs("-w", containerWorkspace);
 								else if (workingDir != null)
 									docker.addArgs("-w", workingDir);
-
-								for (Map.Entry<CacheInstance, String> entry: cache.getAllocations().entrySet()) {
-									String hostCachePath = new File(hostCacheHome, entry.getKey().toString()).getAbsolutePath();
-									String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
-									docker.addArgs("-v", getHostPath(hostCachePath, dockerSock) + ":" + containerCachePath);
-								}
 
 								if (jobData.isMountDockerSock()) {
 									if (dockerSock != null) {
@@ -720,7 +683,6 @@ public class AgentSocket implements Runnable {
 								return result.getReturnCode();
 							} finally {
 								containerNames.remove(jobData.getJobToken());
-								cache.installSymbolinks(hostWorkspace);
 							}
 						}
 						
@@ -846,7 +808,10 @@ public class AgentSocket implements Runnable {
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 										return false;
 									}
-								} else {
+								} else if (facade instanceof SetupCacheFacade) {
+									SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
+									cacheHelper.setupCache(setupCacheFacade);
+								} else if (facade instanceof ServerSideFacade) {
 									ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 									
 									try {
@@ -859,6 +824,8 @@ public class AgentSocket implements Runnable {
 										jobLogger.error("Step \"" + stepNames + "\" is failed (" + formatDuration(duration) + "): " + getErrorMessage(e));
 										return false;
 									}
+								} else {
+									throw new ExplicitException("Unexpected step type: " + facade.getClass());
 								}
 								long duration = System.currentTimeMillis() - time;
 								jobLogger.success("Step \"" + stepNames + "\" is successful (" + formatDuration(duration) + ")");
@@ -874,12 +841,12 @@ public class AgentSocket implements Runnable {
 						}
 						
 					}, new ArrayList<>());
-					
-					if (!successful)
+
+					if (successful)
+						cacheHelper.uploadCaches();
+					else
 						throw new FailedException();
 				} finally {
-					cache.uninstallSymbolinks(hostWorkspace);
-					
 					// Fix https://code.onedev.io/onedev/server/~issues/597
 					if (SystemUtils.IS_OS_WINDOWS)
 						FileUtils.deleteDir(hostWorkspace);
@@ -916,9 +883,10 @@ public class AgentSocket implements Runnable {
 			};
 			
 			jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-			WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
+			WebTarget target = client.target(Agent.serverUrl)
+					.path("~api/k8s/test")
+					.queryParam("jobToken", jobData.getJobToken());
 			Invocation.Builder builder =  target.request();
-			builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 			try (Response response = builder.get()) {
 				checkStatus(response);
 			} 
@@ -935,7 +903,6 @@ public class AgentSocket implements Runnable {
 		Commandline docker = newDocker(dockerSock);
 		callWithDockerAuth(docker, jobData.getRegistryLogins(), null, () -> {
 			File workspaceDir = null;
-			File cacheDir = null;
 			File authInfoDir = null;
 
 			Client client = ClientBuilder.newClient();
@@ -951,14 +918,13 @@ public class AgentSocket implements Runnable {
 				};
 
 				workspaceDir = FileUtils.createTempDir("workspace");
-				cacheDir = new File(Agent.getCacheHome(jobData.getExecutorName()), UUID.randomUUID().toString());
-				FileUtils.createDir(cacheDir);
 				authInfoDir = FileUtils.createTempDir();
 
 				jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-				WebTarget target = client.target(Agent.serverUrl).path("~api/k8s/test");
+				WebTarget target = client.target(Agent.serverUrl)
+						.path("~api/k8s/test")
+						.queryParam("jobToken", jobData.getJobToken());
 				Invocation.Builder builder =  target.request();
-				builder.header(HttpHeaders.AUTHORIZATION, BEARER + " " + jobData.getJobToken());
 				try (Response response = builder.get()) {
 					checkStatus(response);
 				}
@@ -969,16 +935,11 @@ public class AgentSocket implements Runnable {
 					docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 
 				String containerWorkspacePath;
-				String containerCachePath;
-				if (SystemUtils.IS_OS_WINDOWS) {
+				if (SystemUtils.IS_OS_WINDOWS)
 					containerWorkspacePath = "C:\\onedev-build\\workspace";
-					containerCachePath = "C:\\onedev-build\\cache";
-				} else {
+				else
 					containerWorkspacePath = "/onedev-build/workspace";
-					containerCachePath = "/onedev-build/cache";
-				}
 				docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + containerWorkspacePath);
-				docker.addArgs("-v", getHostPath(cacheDir.getAbsolutePath(), dockerSock) + ":" + containerCachePath);
 
 				docker.addArgs("-w", containerWorkspacePath);
 				docker.addArgs(jobData.getDockerImage());
@@ -1029,14 +990,10 @@ public class AgentSocket implements Runnable {
 			} finally {
 				jobThreads.remove(jobData.getJobToken());
 				client.close();
-
 				if (authInfoDir != null)
 					FileUtils.deleteDir(authInfoDir);
-
 				if (workspaceDir != null)
 					FileUtils.deleteDir(workspaceDir);
-				if (cacheDir != null)
-					FileUtils.deleteDir(cacheDir);
 			}
 			return null;
 		});
