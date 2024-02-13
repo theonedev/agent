@@ -1,4 +1,4 @@
-version: 25
+version: 27
 jobs:
 - name: Release
   steps:
@@ -7,6 +7,10 @@ jobs:
     cloneCredential: !DefaultCredential {}
     withLfs: false
     withSubmodules: true
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !UseTemplateStep
+    name: set up cache
+    templateName: set up cache
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   - !CommandStep
     name: detect build version
@@ -43,9 +47,6 @@ jobs:
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
-  caches:
-  - key: maven-cache
-    path: /root/.m2/repository
   timeout: 3600
 - name: Sync with GitHub
   steps:
@@ -73,3 +74,7 @@ jobs:
   maxRetries: 3
   retryDelay: 30
   timeout: 3600
+imports:
+- projectPath: onedev
+  revision: main
+  accessTokenSecret: onedev-token
