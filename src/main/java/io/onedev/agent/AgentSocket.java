@@ -402,10 +402,10 @@ public class AgentSocket implements Runnable {
 							
 							File jobScriptFile = new File(buildHome, "job-commands" + commandFacade.getScriptExtension());
 							try {
-								FileUtils.writeLines(
+								FileUtils.writeStringToFile(
 										jobScriptFile, 
-										new ArrayList<>(replacePlaceholders(execution.getCommands(), buildHome)),
-										commandFacade.getEndOfLine());
+										commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), buildHome)),
+										UTF_8);
 							} catch (IOException e) {
 								throw new RuntimeException(e);
 							}

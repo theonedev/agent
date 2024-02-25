@@ -9,9 +9,9 @@ public class TestShellJobData implements Serializable {
 	
 	private final String jobToken;
 	
-	private final List<String> commands;
+	private final String commands;
 	
-	public TestShellJobData(String jobToken, List<String> commands) {
+	public TestShellJobData(String jobToken, String commands) {
 		this.jobToken = jobToken;
 		this.commands = commands;
 	}
@@ -20,7 +20,7 @@ public class TestShellJobData implements Serializable {
 		return jobToken;
 	}
 
-	public List<String> getCommands() {
+	public String getCommands() {
 		return commands;
 	}
 

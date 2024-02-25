@@ -247,9 +247,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		File scriptFile = new File(hostBuildHome, "job-commands" + commandFacade.getScriptExtension());
 		try {
 			OsExecution execution = commandFacade.getExecution(osInfo);
-			FileUtils.writeLines(scriptFile,
-					new ArrayList<>(replacePlaceholders(execution.getCommands(), hostBuildHome)),
-					commandFacade.getEndOfLine());
+			FileUtils.writeStringToFile(scriptFile,
+					commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)),
+					UTF_8);
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
