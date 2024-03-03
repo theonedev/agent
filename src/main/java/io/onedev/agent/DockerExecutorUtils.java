@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.onedev.agent.job.ImageMappingFacade.map;
@@ -236,8 +237,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		};
 	}
 
-	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, OsInfo osInfo,
-			boolean withHostAuthInfo) {
+	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, OsInfo osInfo) {
 		Commandline interpreter = commandFacade.getScriptInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
@@ -245,41 +245,110 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		commandFacade.generatePauseCommand(hostBuildHome);
 		
 		File scriptFile = new File(hostBuildHome, "job-commands" + commandFacade.getScriptExtension());
-		try {
-			OsExecution execution = commandFacade.getExecution(osInfo);
-			FileUtils.writeStringToFile(scriptFile,
-					commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)),
-					UTF_8);
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-		
+		OsExecution execution = commandFacade.getExecution(osInfo);
+		FileUtils.writeFile(scriptFile,
+				commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)));
+
 		if (SystemUtils.IS_OS_WINDOWS) {
-			if (withHostAuthInfo) {
-				entrypointExecutable = "cmd";
-				entrypointArgs = new String[] { "/c",
-						"xcopy /Y /S /K /Q /H /R C:\\Users\\%USERNAME%\\auth-info\\* C:\\Users\\%USERNAME% > nul && "
-								+ interpreter + " C:\\onedev-build\\" + scriptFile.getName() };
-			} else {
-				entrypointExecutable = interpreter.executable();
-				List<String> interpreterArgs = new ArrayList<>(interpreter.arguments());
-				interpreterArgs.add("C:\\onedev-build\\" + scriptFile.getName());
-				entrypointArgs = interpreterArgs.toArray(new String[0]);
-			}
+			entrypointExecutable = "cmd";
+			entrypointArgs = new String[] { "/c",
+					"xcopy /Y /S /K /Q /H /R C:\\onedev-build\\user\\* C:\\Users\\%USERNAME% > nul && "
+							+ interpreter + " C:\\onedev-build\\" + scriptFile.getName() };
 		} else {
-			if (withHostAuthInfo) {
-				entrypointExecutable = "sh";
-				entrypointArgs = new String[] { "-c", "cp -r -f -p /root/auth-info/. /root && " + interpreter
-						+ " /onedev-build/" + scriptFile.getName() };
-			} else {
-				entrypointExecutable = interpreter.executable();
-				List<String> interpreterArgs = new ArrayList<>(interpreter.arguments());
-				interpreterArgs.add("/onedev-build/" + scriptFile.getName());
-				entrypointArgs = interpreterArgs.toArray(new String[0]);
-			}
+			entrypointExecutable = "sh";
+			entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + interpreter
+					+ " /onedev-build/" + scriptFile.getName() };
 		}
 
 		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
+	}
+
+	public static void writeFile(File file, String content, Commandline docker, boolean runInDocker) {
+		if (runInDocker) {
+			FileUtils.writeFile(file, content, UTF_8);
+		} else {
+			var tempFile = FileUtils.createTempFile();
+			try {
+				FileUtils.writeFile(tempFile, content, UTF_8);
+				docker.clearArgs();
+				docker.addArgs("run", "-v", tempFile.getAbsolutePath() + ":/copy-from", "-v", file.getParentFile().getAbsolutePath() + ":/parent-of-copy-to", "--rm", "busybox",
+						"sh", "-c", "cp /copy-from /parent-of-copy-to/" + file.getName());
+				docker.execute(new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						logger.info(line);
+					}
+
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						if (line.contains("Error response from daemon"))
+							logger.error(line);
+						else
+							logger.info(line);
+					}
+
+				}).checkReturnCode();
+			} finally {
+				FileUtils.deleteFile(tempFile);
+			}
+		}
+	}
+
+	public static String getOwner() {
+		return getId("-u") + ":" + getId("-g");
+	}
+
+	private static int getId(String flag) {
+		var cmd = new Commandline("id");
+		cmd.addArgs(flag);
+		AtomicInteger id = new AtomicInteger(0);
+		cmd.execute(new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				id.set(Integer.parseInt(line));
+			}
+		}, new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				logger.error(line);
+			}
+		}).checkReturnCode();
+		return id.get();
+	}
+
+	public static boolean changeOwner(File dir, @Nullable String owner, Commandline docker, boolean runInDocker) {
+		if (owner != null) {
+			if (runInDocker) {
+				KubernetesHelper.changeOwner(dir, owner);
+			} else {
+				docker.addArgs("run", "-v", dir.getAbsolutePath() + ":/dir-to-change-owner", "--rm", "busybox", "sh", "-c",
+						"chown -R " + owner + " /dir-to-change-owner");
+				docker.execute(new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						logger.info(line);
+					}
+
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						if (line.contains("Error response from daemon"))
+							logger.error(line);
+						else
+							logger.info(line);
+					}
+
+				}).checkReturnCode();
+			}
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	public static void deleteDir(File dir, Commandline docker, boolean runInDocker) {
@@ -731,6 +800,11 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		docker.clearArgs();
 		docker.addArgs("run", "-d", "--name=" + containerName, "--network=" + network,
 				"--network-alias=" + jobService.getName());
+
+		if (jobService.getRunAs() != null)
+			docker.addArgs("--user", jobService.getRunAs());
+		else if (!SystemUtils.IS_OS_WINDOWS)
+			docker.addArgs("--user", "0:0");
 
 		if (cpuLimit != null)
 			docker.addArgs("--cpus", cpuLimit);

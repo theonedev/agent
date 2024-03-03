@@ -25,16 +25,17 @@ import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.onedev.agent.DockerExecutorUtils.changeOwner;
 import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.agent.job.ImageMappingFacade.map;
+import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
 import static io.onedev.k8shelper.KubernetesHelper.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -92,7 +93,7 @@ public class AgentSocket implements Runnable {
 		try {
 	    	switch (message.getType()) {
 	    	case UPDATE:
-	    		String versionAtServer = new String(messageData, StandardCharsets.UTF_8);
+	    		String versionAtServer = new String(messageData, UTF_8);
 	    		if (!versionAtServer.equals(Agent.version)) {
 	    			logger.info("Updating agent to version " + versionAtServer + "...");
 	    			Client client = ClientBuilder.newClient();
@@ -111,7 +112,7 @@ public class AgentSocket implements Runnable {
 	    					} 
 	    					
 	    					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
-	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
+	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
 	    					wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
 	    					wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
 	    					
@@ -129,10 +130,10 @@ public class AgentSocket implements Runnable {
 	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
 
-	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, StandardCharsets.UTF_8);
+	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 
 	    					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
-	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, StandardCharsets.UTF_8);
+	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
 	    					if (!logbackConfig.contains("MaskingPatternLayout")) {
 	    						logbackConfig = StringUtils.replace(logbackConfig, 
 	    								"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
@@ -143,7 +144,7 @@ public class AgentSocket implements Runnable {
 	    						logbackConfig = StringUtils.replace(logbackConfig, 
 	    								"</pattern>", 
 	    								"</pattern>\n			</layout>");
-	    						FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, StandardCharsets.UTF_8);
+	    						FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
 	    					}
 	    					
 	    				} 
@@ -155,7 +156,7 @@ public class AgentSocket implements Runnable {
 					var needToRestart = false;
 					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
 					if (wrapperConfFile.exists()) {
-						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, StandardCharsets.UTF_8);
+						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
 						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
 						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
 							needToRestart = true;
@@ -202,7 +203,7 @@ public class AgentSocket implements Runnable {
 	    		Agent.stop();
 	    		break;
 	    	case ERROR:
-	    		throw new RuntimeException(new String(messageData, StandardCharsets.UTF_8));
+	    		throw new RuntimeException(new String(messageData, UTF_8));
 	    	case REQUEST:
 	    		executorService.execute(() -> {
 					try {
@@ -218,15 +219,15 @@ public class AgentSocket implements Runnable {
 	    		WebsocketUtils.onResponse(SerializationUtils.deserialize(messageData));
 	    		break;
 	    	case CANCEL_JOB:
-	    		String jobToken = new String(messageData, StandardCharsets.UTF_8);
+	    		String jobToken = new String(messageData, UTF_8);
 	    		cancelJob(jobToken);
 	    		break;
 	    	case RESUME_JOB: 
-	    		jobToken = new String(messageData, StandardCharsets.UTF_8);
+	    		jobToken = new String(messageData, UTF_8);
 	    		resumeJob(jobToken);
 	    		break;
 	    	case SHELL_OPEN:
-	    		String openData = new String(messageData, StandardCharsets.UTF_8);
+	    		String openData = new String(messageData, UTF_8);
 	    		String sessionId = StringUtils.substringBefore(openData, ":");
 	    		jobToken = StringUtils.substringAfter(openData, ":");
 
@@ -263,13 +264,13 @@ public class AgentSocket implements Runnable {
 	    		}
 	    		break;
 	    	case SHELL_EXIT:
-	    		sessionId = new String(messageData, StandardCharsets.UTF_8);
+	    		sessionId = new String(messageData, UTF_8);
 	    		ShellSession shellSession = shellSessions.remove(sessionId);
 	    		if (shellSession != null)
 	    			shellSession.exit();
 	    		break;
 	    	case SHELL_INPUT:
-	    		String inputData = new String(messageData, StandardCharsets.UTF_8);
+	    		String inputData = new String(messageData, UTF_8);
 	    		sessionId = StringUtils.substringBefore(inputData, ":");
 	    		String input = StringUtils.substringAfter(inputData, ":");
 	    		shellSession = shellSessions.get(sessionId);
@@ -277,7 +278,7 @@ public class AgentSocket implements Runnable {
 	    			shellSession.sendInput(input);
 	    		break;
 	    	case SHELL_RESIZE:
-	    		String resizeData = new String(messageData, StandardCharsets.UTF_8);
+	    		String resizeData = new String(messageData, UTF_8);
 	    		sessionId = StringUtils.substringBefore(resizeData, ":");
 	    		String rowsAndCols = StringUtils.substringAfter(resizeData, ":");
 	    		int rows = Integer.parseInt(StringUtils.substringBefore(rowsAndCols, ":"));
@@ -350,7 +351,7 @@ public class AgentSocket implements Runnable {
 		File attributesDir = new File(buildHome, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
-					entry.getValue(), StandardCharsets.UTF_8.name());
+					entry.getValue(), UTF_8);
 		}
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildHomes.put(jobData.getJobToken(), buildHome);
@@ -528,10 +529,8 @@ public class AgentSocket implements Runnable {
 				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber());
 		FileUtils.createDir(hostBuildHome);
 		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
-		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
-			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
-					entry.getValue(), StandardCharsets.UTF_8.name());
-		}
+		for (Map.Entry<String, String> entry: Agent.attributes.entrySet())
+			FileUtils.writeFile(new File(attributesDir, entry.getKey()), entry.getValue(), UTF_8);
 		var dockerSock = jobData.getDockerSock();
 
 		Client client = ClientBuilder.newClient();
@@ -567,12 +566,13 @@ public class AgentSocket implements Runnable {
 				}
 
 				File hostWorkspace = new File(hostBuildHome, "workspace");
+				File hostUserHome = new File(hostBuildHome, "user");
 				FileUtils.createDir(hostWorkspace);
+				FileUtils.createDir(hostUserHome);
 
 				var cacheHelper = new AgentCacheHelper(jobData.getJobToken(), hostBuildHome, jobLogger);
 
-				AtomicReference<File> hostAuthInfoDir = new AtomicReference<>(null);
-				try {						
+				try {
 					jobLogger.log("Downloading job dependencies...");
 
 					downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
@@ -595,13 +595,14 @@ public class AgentSocket implements Runnable {
 					new Message(MessageTypes.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
 
 					CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
-
+					var ownerChanged = new AtomicBoolean(false);
 					boolean successful = entryFacade.execute(new LeafHandler() {
 
-						private int runStepContainer(Commandline docker, String image, @Nullable String entrypoint,
-								List<String> options, List<String> arguments, Map<String, String> environments,
-								@Nullable String workingDir, Map<String, String> volumeMounts,
-								List<Integer> position, boolean useTTY) {
+						private int runStepContainer(Commandline docker, String image, @Nullable String runAs,
+													 @Nullable String entrypoint, List<String> arguments,
+													 Map<String, String> environments, @Nullable String workingDir,
+													 Map<String, String> volumeMounts, List<Integer> position,
+													 boolean useTTY) {
 							image = map(jobData.getImageMappings(), image);
 
 							String containerName = network + "-step-" + stringifyStepPosition(position);
@@ -611,6 +612,10 @@ public class AgentSocket implements Runnable {
 								docker.clearArgs();
 
 								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
+								if (runAs != null)
+									docker.addArgs("--user", runAs);
+								else if (!SystemUtils.IS_OS_WINDOWS)
+									docker.addArgs("--user", "0:0");
 
 								if (jobData.getCpuLimit() != null)
 									docker.addArgs("--cpus", jobData.getCpuLimit());
@@ -649,16 +654,6 @@ public class AgentSocket implements Runnable {
 									}
 								}
 
-								if (hostAuthInfoDir.get() != null) {
-									String hostPath = getHostPath(hostAuthInfoDir.get().getAbsolutePath(), dockerSock);
-									if (SystemUtils.IS_OS_WINDOWS) {
-										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerAdministrator\\auth-info");
-										docker.addArgs("-v",  hostPath + ":C:\\Users\\ContainerUser\\auth-info");
-									} else {
-										docker.addArgs("-v", hostPath + ":/root/auth-info");
-									}
-								}
-
 								for (Map.Entry<String, String> entry: environments.entrySet())
 									docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
 
@@ -672,8 +667,6 @@ public class AgentSocket implements Runnable {
 
 								if (useProcessIsolation)
 									docker.addArgs("--isolation=process");
-
-								docker.addArgs(options.toArray(new String[options.size()]));
 
 								docker.addArgs(image);
 								docker.addArgs(arguments.toArray(new String[arguments.size()]));
@@ -694,6 +687,11 @@ public class AgentSocket implements Runnable {
 								jobLogger.notice("Running step \"" + stepNames + "\"...");
 
 								long time = System.currentTimeMillis();
+								if (ownerChanged.get() && !isInDocker()) {
+									changeOwner(hostBuildHome, getOwner(), newDocker(dockerSock), false);
+									ownerChanged.set(false);
+								}
+
 								if (facade instanceof CommandFacade) {
 									CommandFacade commandFacade = (CommandFacade) facade;
 									OsExecution execution = commandFacade.getExecution(Agent.osInfo);
@@ -701,17 +699,19 @@ public class AgentSocket implements Runnable {
 										throw new ExplicitException("This step can only be executed by server shell "
 												+ "executor or remote shell executor");
 									}
-									
-									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, 
-											Agent.osInfo, hostAuthInfoDir.get() != null);
-
-									var docker = newDocker(dockerSock);
+									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, Agent.osInfo);
 									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 											jobData.getJobToken(), commandFacade.getBuiltInRegistryAccessToken());
+
+									var docker = newDocker(dockerSock);
+									if (changeOwner(hostBuildHome, execution.getRunAs(), docker, isInDocker()))
+										ownerChanged.set(true);
+
+									docker.clearArgs();
 									int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-										return runStepContainer(docker, execution.getImage(), entrypoint.executable(),
-												new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null,
-												new HashMap<>(), position, commandFacade.isUseTTY());
+										return runStepContainer(docker, execution.getImage(), execution.getRunAs(),
+												entrypoint.executable(), entrypoint.arguments(), new HashMap<>(),
+												null, new HashMap<>(), position, commandFacade.isUseTTY());
 									});
 
 									if (exitCode != 0) {
@@ -741,20 +741,19 @@ public class AgentSocket implements Runnable {
 									RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 	
 									OsContainer container = runContainerFacade.getContainer(Agent.osInfo);
-									List<String> options;
-									if (container.getOpts() != null)
-										options = Splitter.on(" ").trimResults().omitEmptyStrings().splitToList(container.getOpts());
-									else
-										options = new ArrayList<>();
-
 									List<String> arguments = new ArrayList<>();
 									if (container.getArgs() != null)
 										arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
-									var docker = newDocker(dockerSock);
 									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 											jobData.getJobToken(), runContainerFacade.getBuiltInRegistryAccessToken());
+
+									var docker = newDocker(dockerSock);
+									if (changeOwner(hostBuildHome, container.getRunAs(), docker, Bootstrap.isInDocker()))
+										ownerChanged.set(true);
+
+									docker.clearArgs();
 									int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-										return runStepContainer(docker, container.getImage(), null, options, arguments,
+										return runStepContainer(docker, container.getImage(), container.getRunAs(),null, arguments,
 												container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
 												position, runContainerFacade.isUseTTY());
 									});
@@ -770,13 +769,11 @@ public class AgentSocket implements Runnable {
 										
 										Commandline git = new Commandline(Agent.gitPath);
 
-										if (hostAuthInfoDir.get() == null)
-											hostAuthInfoDir.set(FileUtils.createTempDir());
-										git.environments().put("HOME", hostAuthInfoDir.get().getAbsolutePath());
+										git.environments().put("HOME", hostUserHome.getAbsolutePath());
 
 										checkoutFacade.setupWorkingDir(git, hostWorkspace);
 
-										if (!Bootstrap.isInDocker()) {
+										if (!isInDocker()) {
 											checkoutFacade.setupSafeDirectory(git, containerWorkspace,
 													newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 										}
@@ -788,7 +785,7 @@ public class AgentSocket implements Runnable {
 												ExecutorUtils.newWarningLogger(jobLogger));
 
 										CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-										cloneInfo.writeAuthData(hostAuthInfoDir.get(), git, true,
+										cloneInfo.writeAuthData(hostUserHome, git, true,
 												ExecutorUtils.newInfoLogger(jobLogger),
 												ExecutorUtils.newWarningLogger(jobLogger));
 
@@ -850,8 +847,6 @@ public class AgentSocket implements Runnable {
 					// Fix https://code.onedev.io/onedev/server/~issues/597
 					if (SystemUtils.IS_OS_WINDOWS)
 						FileUtils.deleteDir(hostWorkspace);
-					if (hostAuthInfoDir.get() != null)
-						FileUtils.deleteDir(hostAuthInfoDir.get());
 				}
 			} finally {
 				deleteNetwork(newDocker(dockerSock), network, jobLogger);
