@@ -6,6 +6,7 @@ import ch.qos.logback.core.joran.spi.JoranException;
 import ch.qos.logback.core.util.StatusPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.net.HttpHeaders;
+import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.command.Commandline;
@@ -41,6 +42,8 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
+
+import static io.onedev.commons.bootstrap.Bootstrap.setupProxies;
 
 public class Agent {
 
@@ -166,7 +169,8 @@ public class Agent {
 						installDir.getAbsolutePath()));
 				System.exit(1);
 			}
-			
+
+			setupProxies();
 			configureLogging();
 			
 			Properties agentProps = new Properties();
