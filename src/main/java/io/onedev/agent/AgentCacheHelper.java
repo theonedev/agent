@@ -6,6 +6,7 @@ import io.onedev.k8shelper.KubernetesHelper;
 
 import javax.annotation.Nullable;
 import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 public class AgentCacheHelper extends CacheHelper {
@@ -18,22 +19,22 @@ public class AgentCacheHelper extends CacheHelper {
     }
 
     @Override
-    protected boolean downloadCache(String cacheKey, String cachePath, File cacheDir) {
+    protected boolean downloadCache(String cacheKey, LinkedHashMap<String, File> cacheDirs) {
         return KubernetesHelper.downloadCache(Agent.serverUrl, jobToken,
-                cacheKey, cachePath, cacheDir, Agent.sslFactory);
+                cacheKey, cacheDirs, Agent.sslFactory);
     }
 
     @Override
-    protected boolean downloadCache(List<String> cacheLoadKeys, String cachePath, File cacheDir) {
+    protected boolean downloadCache(List<String> cacheLoadKeys, LinkedHashMap<String, File> cacheDirs) {
         return KubernetesHelper.downloadCache(Agent.serverUrl, jobToken,
-                cacheLoadKeys, cachePath, cacheDir, Agent.sslFactory);
+                cacheLoadKeys, cacheDirs, Agent.sslFactory);
     }
 
     @Override
-    protected boolean uploadCache(String cacheKey, String cachePath,
-                                  @Nullable String accessToken, File cacheDir) {
+    protected boolean uploadCache(String cacheKey, LinkedHashMap<String, File> cacheDirs,
+                                  @Nullable String accessToken) {
         return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken,
-                cacheKey, cachePath, accessToken, cacheDir, Agent.sslFactory);
+                cacheKey, cacheDirs, accessToken, Agent.sslFactory);
     }
 
 }

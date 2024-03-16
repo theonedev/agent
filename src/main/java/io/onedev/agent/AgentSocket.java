@@ -465,9 +465,10 @@ public class AgentSocket implements Runnable {
 							}
 						} else if (facade instanceof SetupCacheFacade) {
 							SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-							var cachePath = setupCacheFacade.getPath();
-							if (new File(cachePath).isAbsolute())
-								throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath);
+							for (var cachePath: setupCacheFacade.getPaths()) {
+								if (new File(cachePath).isAbsolute())
+									throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath);
+							}
 							cacheHelper.setupCache(setupCacheFacade);
 						} else if (facade instanceof ServerSideFacade) {
 							ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
