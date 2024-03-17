@@ -400,12 +400,13 @@ public class AgentSocket implements Runnable {
 							}
 							
 							commandFacade.generatePauseCommand(buildHome);
-							
-							File jobScriptFile = new File(buildHome, "job-commands" + commandFacade.getScriptExtension());
+							var commandDir = new File(buildHome, "command");
+							FileUtils.createDir(commandDir);
+							File stepScriptFile = new File(commandDir, "step-" + stringifyStepPosition(position) + commandFacade.getScriptExtension());
 							try {
 								FileUtils.writeStringToFile(
-										jobScriptFile, 
-										commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), buildHome)),
+										stepScriptFile,
+										commandFacade.normalizeCommands(replacePlaceholders(execution.getCommands(), buildHome)),
 										UTF_8);
 							} catch (IOException e) {
 								throw new RuntimeException(e);
@@ -416,7 +417,7 @@ public class AgentSocket implements Runnable {
 							environments.put("GIT_HOME", userHome.getAbsolutePath());
 							environments.put("ONEDEV_WORKSPACE", workspaceDir.getAbsolutePath());
 							interpreter.workingDir(workspaceDir).environments(environments);
-							interpreter.addArgs(jobScriptFile.getAbsolutePath());
+							interpreter.addArgs(stepScriptFile.getAbsolutePath());
 							
 							ExecutionResult result = interpreter.execute(
 									ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
@@ -700,7 +701,7 @@ public class AgentSocket implements Runnable {
 										throw new ExplicitException("This step can only be executed by server shell "
 												+ "executor or remote shell executor");
 									}
-									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, Agent.osInfo);
+									Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, Agent.osInfo, position);
 									var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 											jobData.getJobToken(), commandFacade.getBuiltInRegistryAccessToken());
 

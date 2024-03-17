@@ -20,11 +20,11 @@ public class ShellExecutorUtils {
 		try {
 			jobLogger.log("Running specified commands...");
 			
-			File jobScriptFile = new File(buildDir, "job-commands" + executable.getScriptExtension());
-			FileUtils.writeStringToFile(jobScriptFile, executable.convertCommands(commands), UTF_8);
+			File testScriptFile = new File(buildDir, "test" + executable.getScriptExtension());
+			FileUtils.writeStringToFile(testScriptFile, executable.normalizeCommands(commands), UTF_8);
 			File workspaceDir = new File(buildDir, "workspace");
 			FileUtils.createDir(workspaceDir);
-			interpreter.workingDir(workspaceDir).addArgs(jobScriptFile.getAbsolutePath());
+			interpreter.workingDir(workspaceDir).addArgs(testScriptFile.getAbsolutePath());
 			interpreter.execute(ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger)).checkReturnCode();
 
 			KubernetesHelper.testGitLfsAvailability(git, jobLogger);

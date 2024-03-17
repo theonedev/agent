@@ -32,6 +32,7 @@ import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
 import static io.onedev.commons.utils.StringUtils.splitAndTrim;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Base64.getEncoder;
 
@@ -237,27 +238,35 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		};
 	}
 
-	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, OsInfo osInfo) {
+	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade,
+											OsInfo osInfo, List<Integer> stepPosition) {
 		Commandline interpreter = commandFacade.getScriptInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		
 		commandFacade.generatePauseCommand(hostBuildHome);
-		
-		File scriptFile = new File(hostBuildHome, "job-commands" + commandFacade.getScriptExtension());
+
+		/*
+		 * Use different file for different step although steps are executed sequentially, as otherwise
+		 * we will encounter odd issues on Mac running successive command steps
+		 */
+		var commandDir = new File(hostBuildHome, "command");
+		FileUtils.createDir(commandDir);
+		File stepScriptFile = new File(commandDir, "step-" + stringifyStepPosition(stepPosition)
+				+ commandFacade.getScriptExtension());
 		OsExecution execution = commandFacade.getExecution(osInfo);
-		FileUtils.writeFile(scriptFile,
-				commandFacade.convertCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)));
+		FileUtils.writeFile(stepScriptFile,
+				commandFacade.normalizeCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)));
 
 		if (SystemUtils.IS_OS_WINDOWS) {
 			entrypointExecutable = "cmd";
 			entrypointArgs = new String[] { "/c",
 					"xcopy /Y /S /K /Q /H /R C:\\onedev-build\\user\\* C:\\Users\\%USERNAME% > nul && "
-							+ interpreter + " C:\\onedev-build\\" + scriptFile.getName() };
+							+ interpreter + " C:\\onedev-build\\command\\" + stepScriptFile.getName() };
 		} else {
 			entrypointExecutable = "sh";
 			entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + interpreter
-					+ " /onedev-build/" + scriptFile.getName() };
+					+ " /onedev-build/command/" + stepScriptFile.getName() };
 		}
 
 		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
