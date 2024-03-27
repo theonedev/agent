@@ -1,19 +1,24 @@
 package io.onedev.agent;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
-
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.lang3.time.DurationFormatUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.CompositeFacade;
 import io.onedev.k8shelper.OsInfo;
+import org.apache.commons.lang3.SystemUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+
+import static io.onedev.agent.DockerExecutorUtils.getErrorMessage;
+import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
 
 public class ExecutorUtils {
 
@@ -86,10 +91,26 @@ public class ExecutorUtils {
 		return new OsInfo(osName, osVersion, System.getProperty("os.arch"));
 	}
 
-	public static String formatDuration(long durationMillis) {
-		if (durationMillis < 0)
-			durationMillis = 0;
-		return DurationFormatUtils.formatDurationWords(durationMillis, true, true);
+	public static boolean runStep(CompositeFacade entry, List<Integer> position,
+								  TaskLogger logger, Callable<Boolean> task) {
+		String stepPath = entry.getPathAsString(position);
+		logger.notice("Running step \"" + stepPath + "\"...");
+		try {
+			long time = System.currentTimeMillis();
+			var successful = task.call();
+			var duration = formatDuration(System.currentTimeMillis() - time);
+			if (successful)
+				logger.success("Step \"" + stepPath + "\" is successful (" + duration + ")");
+			else
+				logger.error("Step \"" + stepPath + "\" is failed (" + duration + ")");
+			return successful;
+		} catch (Exception e) {
+			if (ExceptionUtils.find(e, InterruptedException.class) == null) {
+				logger.error(getErrorMessage(e));
+				return false;
+			} else {
+				throw ExceptionUtils.unchecked(e);
+			}
+		}
 	}
-
 }
