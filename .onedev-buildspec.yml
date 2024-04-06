@@ -60,7 +60,6 @@ jobs:
     failThreshold: HIGH
     condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
   triggers:
-  - !BranchUpdateTrigger {}
   - !ScheduleTrigger
     cronExpression: 0 0 1 * * ?
   retryCondition: never
