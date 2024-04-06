@@ -37,6 +37,32 @@ jobs:
   triggers:
   - !BranchUpdateTrigger
     branches: main
+  jobDependencies:
+  - jobName: Scan Vulnerabilities
+    requireSuccessful: true
+  retryCondition: never
+  maxRetries: 3
+  retryDelay: 30
+  timeout: 3600
+- name: Scan Vulnerabilities
+  steps:
+  - !CheckoutStep
+    name: checkout
+    cloneCredential: !DefaultCredential {}
+    withLfs: false
+    withSubmodules: false
+    cloneDepth: 1
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  - !ScanDepVulnersStep
+    name: scan
+    recursive: true
+    reportName: Dependency Vulnerabilities
+    failThreshold: HIGH
+    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+  triggers:
+  - !BranchUpdateTrigger {}
+  - !ScheduleTrigger
+    cronExpression: 0 0 1 * * ?
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
@@ -63,29 +89,6 @@ jobs:
   - !BranchUpdateTrigger
     branches: main
     projects: onedev/agent
-  retryCondition: never
-  maxRetries: 3
-  retryDelay: 30
-  timeout: 3600
-- name: Scan Vulnerabilities
-  steps:
-  - !CheckoutStep
-    name: checkout
-    cloneCredential: !DefaultCredential {}
-    withLfs: false
-    withSubmodules: false
-    cloneDepth: 1
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !ScanDepVulnersStep
-    name: scan
-    recursive: true
-    reportName: Dependency Vulnerabilities
-    failThreshold: HIGH
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  triggers:
-  - !BranchUpdateTrigger {}
-  - !ScheduleTrigger
-    cronExpression: 0 0 1 * * ?
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
