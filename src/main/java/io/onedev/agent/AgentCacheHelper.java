@@ -19,22 +19,23 @@ public class AgentCacheHelper extends CacheHelper {
     }
 
     @Override
-    protected boolean downloadCache(String cacheKey, LinkedHashMap<String, File> cacheDirs) {
+    protected boolean downloadCache(String cacheKey, List<String> cachePaths, List<File> cacheDirs) {
         return KubernetesHelper.downloadCache(Agent.serverUrl, jobToken,
-                cacheKey, cacheDirs, Agent.sslFactory);
+                cacheKey, cachePaths, cacheDirs, Agent.sslFactory);
     }
 
     @Override
-    protected boolean downloadCache(List<String> cacheLoadKeys, LinkedHashMap<String, File> cacheDirs) {
+    protected boolean downloadCache(List<String> loadKeys, List<String> cachePaths, List<File> cacheDirs) {
         return KubernetesHelper.downloadCache(Agent.serverUrl, jobToken,
-                cacheLoadKeys, cacheDirs, Agent.sslFactory);
+                loadKeys, cachePaths, cacheDirs, Agent.sslFactory);
     }
 
     @Override
-    protected boolean uploadCache(String cacheKey, LinkedHashMap<String, File> cacheDirs,
-                                  @Nullable String accessToken) {
+    protected boolean uploadCache(String cacheKey, List<String> cachePaths, List<File> cacheDirs,
+                                  @Nullable String projectPath, @Nullable String accessToken) {
         return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken,
-                cacheKey, cacheDirs, accessToken, Agent.sslFactory);
+                cacheKey, cachePaths, cacheDirs, projectPath, accessToken,
+                Agent.sslFactory);
     }
 
 }
