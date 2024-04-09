@@ -470,10 +470,9 @@ public class AgentSocket implements Runnable {
 						cacheHelper.setupCache(setupCacheFacade);
 					} else if (facade instanceof ServerSideFacade) {
 						ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
-						return KubernetesHelper.runServerStep(Agent.sslFactory, Agent.serverUrl,
-								jobData.getJobToken(), position, serverSideFacade.getSourcePath(),
-								serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
-								serverSideFacade.getPlaceholders(), buildHome, jobLogger);
+						return KubernetesHelper.runServerStep(Agent.sslFactory,
+								Agent.serverUrl, jobData.getJobToken(), position,
+								serverSideFacade, buildHome, jobLogger);
 					} else {
 						throw new ExplicitException("Unexpected step type: " + facade.getClass());
 					}
@@ -792,10 +791,9 @@ public class AgentSocket implements Runnable {
 								cacheHelper.setupCache(setupCacheFacade);
 							} else if (facade instanceof ServerSideFacade) {
 								ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
-								return KubernetesHelper.runServerStep(Agent.sslFactory, Agent.serverUrl,
-										jobData.getJobToken(), position, serverSideFacade.getSourcePath(),
-										serverSideFacade.getIncludeFiles(), serverSideFacade.getExcludeFiles(),
-										serverSideFacade.getPlaceholders(), hostBuildHome, jobLogger);
+								return KubernetesHelper.runServerStep(Agent.sslFactory,
+										Agent.serverUrl, jobData.getJobToken(), position,
+										serverSideFacade, hostBuildHome, jobLogger);
 							} else {
 								throw new ExplicitException("Unexpected step type: " + facade.getClass());
 							}
