@@ -486,8 +486,8 @@ public class AgentSocket implements Runnable {
 				
 			}, new ArrayList<>());
 
-			if (successful)
-				cacheHelper.buildSuccessful();
+			cacheHelper.buildFinished();
+
 			return successful;
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
@@ -807,8 +807,8 @@ public class AgentSocket implements Runnable {
 						
 					}, new ArrayList<>());
 
-					if (successful)
-						cacheHelper.buildSuccessful();
+					cacheHelper.buildFinished();
+
 					return successful;
 				} finally {
 					// Fix https://code.onedev.io/onedev/server/~issues/597
