@@ -3,6 +3,7 @@ package io.onedev.agent;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.k8shelper.CacheHelper;
 import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.SetupCacheFacade;
 
 import javax.annotation.Nullable;
 import java.io.File;
@@ -31,11 +32,9 @@ public class AgentCacheHelper extends CacheHelper {
     }
 
     @Override
-    protected boolean uploadCache(String cacheKey, List<String> cachePaths, List<File> cacheDirs,
-                                  @Nullable String projectPath, @Nullable String accessToken) {
-        return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken,
-                cacheKey, cachePaths, cacheDirs, projectPath, accessToken,
-                Agent.sslFactory);
+    protected boolean uploadCache(SetupCacheFacade cacheConfig, List<File> cacheDirs) {
+        return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken, cacheConfig,
+                cacheDirs, Agent.sslFactory);
     }
 
 }
