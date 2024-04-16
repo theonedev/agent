@@ -596,7 +596,7 @@ public class AgentSocket implements Runnable {
 								var useProcessIsolation = isUseProcessIsolation(newDocker(dockerSock), image, Agent.osInfo, jobLogger);
 								docker.clearArgs();
 
-								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
+								docker.addArgs("run", "--pull=always", "--name=" + containerName, "--network=" + network);
 								if (runAs != null)
 									docker.addArgs("--user", runAs);
 								else if (!SystemUtils.IS_OS_WINDOWS)
@@ -713,7 +713,7 @@ public class AgentSocket implements Runnable {
 								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 										jobData.getJobToken(), buildImageFacade.getBuiltInRegistryAccessToken());
 								callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-									buildImage(docker, buildImageFacade, hostBuildHome, jobLogger);
+									buildImage(docker, jobData.getDockerBuilder(), buildImageFacade, hostBuildHome, jobLogger);
 									return null;
 								});
 							} else if (facade instanceof RunImagetoolsFacade) {

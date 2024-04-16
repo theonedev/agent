@@ -22,6 +22,8 @@ public class DockerJobData extends ShellJobData {
 	
 	private final String dockerSock;
 
+	private final String dockerBuilder;
+
 	private final String cpuLimit;
 
 	private final String memoryLimit;
@@ -36,15 +38,17 @@ public class DockerJobData extends ShellJobData {
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<ServiceFacade> services, List<RegistryLoginFacade> registryLogins,
 						 String builtInRegistryUrl, List<ImageMappingFacade> imageMappings,
-						 boolean mountDockerSock, String dockerSock, @Nullable String cpuLimit,
-						 @Nullable String memoryLimit, String dockerOptions, @Nullable String networkOptions) {
-		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
+						 boolean mountDockerSock, String dockerSock, String dockerBuilder,
+						 @Nullable String cpuLimit, @Nullable String memoryLimit, String dockerOptions,
+						 @Nullable String networkOptions) {super(jobToken, executorName, projectPath,
+			projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
 		this.builtInRegistryUrl = builtInRegistryUrl;
 		this.imageMappings = imageMappings;
 		this.mountDockerSock = mountDockerSock;
 		this.dockerSock = dockerSock;
+		this.dockerBuilder = dockerBuilder;
 		this.cpuLimit = cpuLimit;
 		this.memoryLimit = memoryLimit;
 		this.dockerOptions = dockerOptions;
@@ -74,6 +78,10 @@ public class DockerJobData extends ShellJobData {
 
 	public String getDockerSock() {
 		return dockerSock;
+	}
+
+	public String getDockerBuilder() {
+		return dockerBuilder;
 	}
 
 	@Nullable

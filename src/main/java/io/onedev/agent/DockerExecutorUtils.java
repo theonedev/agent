@@ -61,17 +61,35 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		return options;
 	}
 
-	public static void buildImage(Commandline docker, BuildImageFacade buildImageFacade, File hostBuildHome, TaskLogger jobLogger) {
-		String[] parsedTags = parseQuoteTokens(replacePlaceholders(buildImageFacade.getTags(), hostBuildHome));
+	private static void checkBuildImageCachePath(String path) {
+		if (!PathUtils.isSubPath(path))
+			throw new ExplicitException("Cache path of build image step should be a relative path not containing '..'");
+	}
+
+	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
+								  File hostBuildHome, TaskLogger jobLogger) {
+		docker.clearArgs();
+		docker.addArgs("buildx", "create", "--name", builder);
+		var builderExists = new AtomicBoolean(false);
+		var result = docker.execute(new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				jobLogger.log(line);
+			}
+		}, new LineConsumer() {
+			@Override
+			public void consume(String line) {
+				if (line.startsWith("ERROR: existing instance"))
+					builderExists.set(true);
+				else
+					jobLogger.error(line);
+			}
+		});
+		if (!builderExists.get())
+			result.checkReturnCode();
 
 		docker.clearArgs();
-		docker.addArgs("buildx", "build");
-
-		if (buildImageFacade.isPublish())
-			docker.addArgs("--push");
-
-		for (String tag : parsedTags)
-			docker.addArgs("-t", tag);
+		docker.addArgs("buildx", "build", "--builder", builder, "--pull");
 
 		if (buildImageFacade.getMoreOptions() != null) {
 			var options = parseDockerOptions(hostBuildHome, buildImageFacade.getMoreOptions());
@@ -82,11 +100,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--add-host":
 					case "--allow":
 					case "--build-arg":
-					case "--builder":
 					case "--label":
 					case "--network":
 					case "--no-cache-filter":
-					case "--platform":
 					case "--progress":
 					case "--target":
 						docker.addArgs(option);
@@ -95,19 +111,15 @@ public class DockerExecutorUtils extends ExecutorUtils {
 						break;
 					case "--cache-from":
 					case "--cache-to":
-					case "--output":
-					case "-o":
 						docker.addArgs(option);
 						if (it.hasNext()) {
 							var arg = it.next();
-							if (arg.startsWith("type=local")) {
-								var path = StringUtils.substringAfter(arg.substring("type=local".length()), "=");
-								if (!PathUtils.isSubPath(path)) {
-									if (option.equals("--output"))
-										throw new ExplicitException("Output path of build image step should be a relative path not containing '..'");
-									else
-										throw new ExplicitException("Local cache path of build image step should be a relative path not containing '..'");
-								}
+							for (var splitted: Splitter.on(',').split(arg)) {
+								var index = splitted.indexOf('=');
+								if (index == -1)
+									checkBuildImageCachePath(splitted);
+								else if (splitted.substring(0, index).equals("dest"))
+									checkBuildImageCachePath(splitted.substring(index+1));
 							}
 							docker.addArgs(arg);
 						}
@@ -180,7 +192,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 
 		docker.workingDir(workspaceDir);
-		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+		buildImageFacade.getOutput().execute(docker, hostBuildHome, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
 
 		if (buildImageFacade.isRemoveDanglingImages()) {
 			docker.clearArgs();
@@ -211,30 +223,25 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {
-		return new ProcessKiller() {
+		return (process, executionId) -> {
+			jobLogger.log("Stopping container '" + containerName + "'...");
+			docker.clearArgs();
+			docker.addArgs("stop", containerName);
+			docker.execute(new LineConsumer() {
 
-			@Override
-			public void kill(Process process, String executionId) {
-				jobLogger.log("Stopping container '" + containerName + "'...");
-				docker.clearArgs();
-				docker.addArgs("stop", containerName);
-				docker.execute(new LineConsumer() {
+				@Override
+				public void consume(String line) {
+					logger.debug(line);
+				}
 
-					@Override
-					public void consume(String line) {
-						logger.debug(line);
-					}
+			}, new LineConsumer() {
 
-				}, new LineConsumer() {
+				@Override
+				public void consume(String line) {
+					jobLogger.log(line);
+				}
 
-					@Override
-					public void consume(String line) {
-						jobLogger.log(line);
-					}
-
-				}).checkReturnCode();
-			}
-
+			}).checkReturnCode();
 		};
 	}
 
