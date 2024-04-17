@@ -168,6 +168,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--quiet":
 						docker.addArgs(option);
 						break;
+					case "--builder":
+						jobLogger.warning("--builder option is ignored. Builder can only be configured via job executor now");
+						break;
 					default:
 						throw new ExplicitException("Option '" + option + "' is not supported for build image step");
 				}
