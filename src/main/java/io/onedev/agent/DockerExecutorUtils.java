@@ -103,6 +103,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--label":
 					case "--network":
 					case "--no-cache-filter":
+					case "--platform":
 					case "--progress":
 					case "--target":
 						docker.addArgs(option);
