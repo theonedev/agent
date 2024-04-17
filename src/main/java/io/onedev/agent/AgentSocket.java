@@ -26,8 +26,6 @@ import javax.ws.rs.core.Response;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.onedev.agent.DockerExecutorUtils.changeOwner;
@@ -60,9 +58,7 @@ public class AgentSocket implements Runnable {
 	private volatile Thread thread;
 	
 	private volatile boolean stopped;
-	
-	static final ExecutorService executorService = Executors.newCachedThreadPool();
-	
+
 	private static volatile String hostWorkPath;
 	
 	@OnWebSocketConnect
@@ -204,7 +200,7 @@ public class AgentSocket implements Runnable {
 	    	case ERROR:
 	    		throw new RuntimeException(new String(messageData, UTF_8));
 	    	case REQUEST:
-	    		executorService.execute(() -> {
+	    		Bootstrap.executorService.execute(() -> {
 					try {
 						CallData request = SerializationUtils.deserialize(messageData);
 						CallData response = new CallData(request.getUuid(), service(request.getPayload()));

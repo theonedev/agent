@@ -1,5 +1,6 @@
 package io.onedev.agent;
 
+import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.ImmediateFuture;
@@ -41,7 +42,7 @@ public class ShellSession {
         cmdline.ptyMode(ptyMode);
 
 
-        execution = AgentSocket.executorService.submit(new Runnable() {
+        execution = Bootstrap.executorService.submit(new Runnable() {
 
 			@Override
 			public void run() {
