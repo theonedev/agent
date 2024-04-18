@@ -74,7 +74,8 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		var result = docker.execute(new LineConsumer() {
 			@Override
 			public void consume(String line) {
-				jobLogger.log(line);
+				if (!line.equals(builder))
+					jobLogger.log(line);
 			}
 		}, new LineConsumer() {
 			@Override
