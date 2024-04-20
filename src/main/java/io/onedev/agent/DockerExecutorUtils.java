@@ -91,6 +91,8 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		docker.clearArgs();
 		docker.addArgs("buildx", "build", "--builder", builder, "--pull");
+		if (buildImageFacade.getPlatforms() != null)
+			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildHome));
 
 		if (buildImageFacade.getMoreOptions() != null) {
 			var options = parseDockerOptions(hostBuildHome, buildImageFacade.getMoreOptions());
@@ -104,7 +106,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--label":
 					case "--network":
 					case "--no-cache-filter":
-					case "--platform":
 					case "--progress":
 					case "--target":
 						docker.addArgs(option);
@@ -165,16 +166,14 @@ public class DockerExecutorUtils extends ExecutorUtils {
 						}
 						break;
 					case "--no-cache":
-					case "--pull":
 					case "-q":
 					case "--quiet":
 						docker.addArgs(option);
 						break;
 					case "--builder":
-						jobLogger.warning("--builder option is ignored. Builder can only be configured via job executor now");
-						if (it.hasNext())
-							it.next();
-						break;
+						throw new ExplicitException("--builder in more options is no longer supported. Builder can only be configured via job executor now");
+					case "--platform":
+						throw new ExplicitException("--platform in more options is no longer supported. Please specify platforms property directly");
 					default:
 						throw new ExplicitException("Option '" + option + "' is not supported for build image step");
 				}
@@ -200,12 +199,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		docker.workingDir(workspaceDir);
 		buildImageFacade.getOutput().execute(docker, hostBuildHome, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
-
-		if (buildImageFacade.isRemoveDanglingImages()) {
-			docker.clearArgs();
-			docker.addArgs("image", "prune", "-f");
-			docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
-		}
 	}
 
 	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
