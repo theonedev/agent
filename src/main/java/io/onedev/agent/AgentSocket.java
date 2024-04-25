@@ -970,7 +970,7 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestDockerJobData) {
 				try {
 					testDockerExecutor(session, (TestDockerJobData) request);
-					return null;
+					return true;
 				} catch (Exception e) {
 					return e;
 				}
@@ -983,7 +983,7 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestShellJobData) {
 				try {
 					testShellExecutor(session, (TestShellJobData) request);
-					return null;
+					return true;
 				} catch (Exception e) {
 					return e;
 				}
