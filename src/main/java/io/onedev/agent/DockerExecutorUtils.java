@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -66,8 +67,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			throw new ExplicitException("Cache path of build image step should be a relative path not containing '..'");
 	}
 
-	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
-								  File hostBuildHome, TaskLogger jobLogger) {
+	private static void createBuilder(Commandline docker, String builder, TaskLogger jobLogger) {
 		docker.clearArgs();
 		docker.addArgs("buildx", "create", "--name", builder);
 		var builderExists = new AtomicBoolean(false);
@@ -88,6 +88,11 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		});
 		if (!builderExists.get())
 			result.checkReturnCode();
+	}
+
+	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
+								  File hostBuildHome, TaskLogger jobLogger) {
+		createBuilder(docker, builder, jobLogger);
 
 		docker.clearArgs();
 		docker.addArgs("buildx", "build", "--builder", builder, "--pull");
@@ -199,6 +204,35 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		docker.workingDir(workspaceDir);
 		buildImageFacade.getOutput().execute(docker, hostBuildHome, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
+	}
+
+	public static void pruneBuilderCache(Commandline docker, String builder,
+										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
+										 File hostBuildHome, TaskLogger jobLogger) {
+		createBuilder(docker, builder, jobLogger);
+
+		docker.clearArgs();
+		docker.addArgs("buildx", "prune", "--builder", builder, "-f");
+		if (pruneBuilderCacheFacade.getOptions() != null) {
+			var options = parseDockerOptions(hostBuildHome, pruneBuilderCacheFacade.getOptions());
+			docker.addArgs(options.toArray(new String[0]));
+		}
+		docker.workingDir(new File(hostBuildHome, "workspace"));
+
+		var containerNotFound = new AtomicBoolean(false);
+		var result = docker.execute(newInfoLogger(jobLogger), new LineConsumer(StandardCharsets.UTF_8.name()) {
+
+			@Override
+			public void consume(String line) {
+				if (line.contains("No such container:"))
+					containerNotFound.set(true);
+				else
+					jobLogger.warning(line);
+			}
+
+		});
+		if (!containerNotFound.get())
+			result.checkReturnCode();
 	}
 
 	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
@@ -416,9 +450,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static <T> T callWithDockerAuth(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
-										   @Nullable BuiltInRegistryLogin builtInRegistryLogin,
-										   Callable<T> callable) {
+	public static <T> T callWithDockerConfig(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
+											 @Nullable BuiltInRegistryLogin builtInRegistryLogin,
+											 Callable<T> callable) {
 		var tempConfigDir = FileUtils.createTempDir("docker");
 		docker.environments().put("DOCKER_CONFIG", tempConfigDir.getAbsolutePath());
 		try {

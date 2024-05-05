@@ -426,7 +426,7 @@ public class AgentSocket implements Runnable {
 							return false;
 						}
 					} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade
-							|| facade instanceof RunImagetoolsFacade) {
+							|| facade instanceof RunImagetoolsFacade || facade instanceof PruneBuilderCacheFacade) {
 						throw new ExplicitException("This step can only be executed by server docker executor, "
 								+ "remote docker executor");
 					} else if (facade instanceof CheckoutFacade) {
@@ -539,7 +539,7 @@ public class AgentSocket implements Runnable {
 				for (var jobService: jobData.getServices()) {
 					var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 							jobData.getJobToken(), jobService.getBuiltInRegistryAccessToken());
-					callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+					callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 						startService(docker, network, jobService, Agent.osInfo, jobData.getImageMappings(),
 								jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
 						return null;
@@ -694,7 +694,7 @@ public class AgentSocket implements Runnable {
 									ownerChanged.set(true);
 
 								docker.clearArgs();
-								int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 									return runStepContainer(docker, execution.getImage(), execution.getRunAs(),
 											entrypoint.executable(), entrypoint.arguments(), new HashMap<>(),
 											null, new HashMap<>(), position, commandFacade.isUseTTY());
@@ -708,7 +708,7 @@ public class AgentSocket implements Runnable {
 								var docker = newDocker(dockerSock);
 								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 										jobData.getJobToken(), buildImageFacade.getBuiltInRegistryAccessToken());
-								callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 									buildImage(docker, jobData.getDockerBuilder(), buildImageFacade, hostBuildHome, jobLogger);
 									return null;
 								});
@@ -717,8 +717,16 @@ public class AgentSocket implements Runnable {
 								var docker = newDocker(dockerSock);
 								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 										jobData.getJobToken(), runImagetoolsFacade.getBuiltInRegistryAccessToken());
-								callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 									runImagetools(docker, runImagetoolsFacade, hostBuildHome, jobLogger);
+									return null;
+								});
+							} else if (facade instanceof PruneBuilderCacheFacade) {
+								var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
+								var docker = newDocker(dockerSock);
+								callWithDockerConfig(docker, new ArrayList<>(), null, () -> {
+									pruneBuilderCache(docker, jobData.getDockerBuilder(), pruneBuilderCacheFacade,
+											hostBuildHome, jobLogger);
 									return null;
 								});
 							} else if (facade instanceof RunContainerFacade) {
@@ -736,7 +744,7 @@ public class AgentSocket implements Runnable {
 									ownerChanged.set(true);
 
 								docker.clearArgs();
-								int exitCode = callWithDockerAuth(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 									return runStepContainer(docker, container.getImage(), container.getRunAs(),null, arguments,
 											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
 											position, runContainerFacade.isUseTTY());
@@ -859,7 +867,7 @@ public class AgentSocket implements Runnable {
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		callWithDockerAuth(docker, jobData.getRegistryLogins(), null, () -> {
+		callWithDockerConfig(docker, jobData.getRegistryLogins(), null, () -> {
 			File workspaceDir = null;
 			File authInfoDir = null;
 
