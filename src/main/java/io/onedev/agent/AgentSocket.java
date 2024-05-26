@@ -175,7 +175,7 @@ public class AgentSocket implements Runnable {
 						Agent.restart();
 					} else {
 						AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
-								Agent.name, Agent.ipAddress, Agent.cpus, Agent.attributes);
+								Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
 						new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
 					}
 	    		}

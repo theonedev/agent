@@ -6,7 +6,6 @@ import ch.qos.logback.core.joran.spi.JoranException;
 import ch.qos.logback.core.util.StatusPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.net.HttpHeaders;
-import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.command.Commandline;
@@ -86,7 +85,7 @@ public class Agent {
 	
 	public static String token;
 	
-	public static int cpus;
+	public static int cpuCount;
 	
 	public static String gitPath;
 	
@@ -311,10 +310,10 @@ public class Agent {
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
 			try {
-				cpus = new SystemInfo().getHardware().getProcessor().getLogicalProcessorCount();
+				cpuCount = new SystemInfo().getHardware().getProcessor().getLogicalProcessorCount();
 			} catch (Exception e) {
 				logger.debug("Error calling oshi", e);
-				cpus = 2;
+				cpuCount = 2;
 			}
 
 			gitPath = System.getenv(GIT_PATH_KEY);
