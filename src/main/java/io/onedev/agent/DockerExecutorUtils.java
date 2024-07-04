@@ -91,11 +91,13 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
-								  File hostBuildHome, TaskLogger jobLogger) {
+								  File hostBuildHome, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
 		docker.clearArgs();
-		docker.addArgs("buildx", "build", "--builder", builder, "--pull");
+		docker.addArgs("buildx", "build", "--builder", builder);
+		if (pullAlways)
+			docker.addArgs("--pull");
 		if (buildImageFacade.getPlatforms() != null)
 			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildHome));
 

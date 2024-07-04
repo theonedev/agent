@@ -31,6 +31,8 @@ public class DockerJobData extends ShellJobData {
 	private final String dockerOptions;
 
 	private final String networkOptions;
+
+	private final boolean alwaysPullImage;
 	
 	private final int retried;
 	
@@ -40,7 +42,7 @@ public class DockerJobData extends ShellJobData {
 						 String builtInRegistryUrl, List<ImageMappingFacade> imageMappings,
 						 boolean mountDockerSock, String dockerSock, String dockerBuilder,
 						 @Nullable String cpuLimit, @Nullable String memoryLimit, String dockerOptions,
-						 @Nullable String networkOptions) {super(jobToken, executorName, projectPath,
+						 @Nullable String networkOptions, boolean alwaysPullImage) {super(jobToken, executorName, projectPath,
 			projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
@@ -53,6 +55,7 @@ public class DockerJobData extends ShellJobData {
 		this.memoryLimit = memoryLimit;
 		this.dockerOptions = dockerOptions;
 		this.networkOptions = networkOptions;
+		this.alwaysPullImage = alwaysPullImage;
 		this.retried = retried;
 	}
 
@@ -101,6 +104,10 @@ public class DockerJobData extends ShellJobData {
 	@Nullable
 	public String getNetworkOptions() {
 		return networkOptions;
+	}
+
+	public boolean isAlwaysPullImage() {
+		return alwaysPullImage;
 	}
 
 	public int getRetried() {
