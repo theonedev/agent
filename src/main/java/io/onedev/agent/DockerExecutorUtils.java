@@ -51,7 +51,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	private static List<String> parseDockerOptions(File hostBuildHome, String optionString) {
 		var options = new ArrayList<String>();
-		for (var option: parseQuoteTokens(replacePlaceholders(optionString, hostBuildHome))) {
+		for (var option: StringUtils.splitAndTrim(replacePlaceholders(optionString, hostBuildHome), " ")) {
 			if (option.startsWith("-") && option.contains("=")) {
 				options.add(StringUtils.substringBefore(option, "="));
 				options.add(StringUtils.substringAfter(option, "="));
