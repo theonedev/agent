@@ -281,8 +281,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		};
 	}
 
-	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade,
-											OsInfo osInfo, List<Integer> stepPosition) {
+	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, List<Integer> stepPosition) {
 		Commandline interpreter = commandFacade.getScriptInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
@@ -297,9 +296,8 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		FileUtils.createDir(commandDir);
 		File stepScriptFile = new File(commandDir, "step-" + stringifyStepPosition(stepPosition)
 				+ commandFacade.getScriptExtension());
-		OsExecution execution = commandFacade.getExecution(osInfo);
 		FileUtils.writeFile(stepScriptFile,
-				commandFacade.normalizeCommands(replacePlaceholders(execution.getCommands(), hostBuildHome)));
+				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildHome)));
 
 		if (SystemUtils.IS_OS_WINDOWS) {
 			entrypointExecutable = "cmd";
@@ -703,9 +701,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			jobLogger.log("Checking image OS info...");
 			OsInfo imageOsInfo = getOsInfo(docker, image, jobLogger, true);
-			String imageWinVersion = OsInfo.WINDOWS_VERSIONS.get(imageOsInfo.getWindowsBuild());
-			String osWinVersion = OsInfo.WINDOWS_VERSIONS.get(nodeOsInfo.getWindowsBuild());
-			if (imageWinVersion != null && osWinVersion != null && imageWinVersion.equals(osWinVersion))
+			if (imageOsInfo.getWindowsBuild() == nodeOsInfo.getWindowsBuild())
 				return true;
 		}
 		return false;

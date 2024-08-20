@@ -393,8 +393,7 @@ public class AgentSocket implements Runnable {
 				private boolean doExecute(LeafFacade facade, List<Integer> position) {
 					if (facade instanceof CommandFacade) {
 						CommandFacade commandFacade = (CommandFacade) facade;
-						OsExecution execution = commandFacade.getExecution(Agent.osInfo);
-						if (execution.getImage() != null) {
+						if (commandFacade.getImage() != null) {
 							throw new ExplicitException("This step can only be executed by server docker executor, "
 									+ "remote docker executor, or kubernetes executor");
 						}
@@ -406,7 +405,7 @@ public class AgentSocket implements Runnable {
 						try {
 							FileUtils.writeStringToFile(
 									stepScriptFile,
-									commandFacade.normalizeCommands(replacePlaceholders(execution.getCommands(), buildHome)),
+									commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), buildHome)),
 									UTF_8);
 						} catch (IOException e) {
 							throw new RuntimeException(e);
@@ -682,22 +681,21 @@ public class AgentSocket implements Runnable {
 
 							if (facade instanceof CommandFacade) {
 								CommandFacade commandFacade = (CommandFacade) facade;
-								OsExecution execution = commandFacade.getExecution(Agent.osInfo);
-								if (execution.getImage() == null) {
+								if (commandFacade.getImage() == null) {
 									throw new ExplicitException("This step can only be executed by server shell "
 											+ "executor or remote shell executor");
 								}
-								Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, Agent.osInfo, position);
+								Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, position);
 								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 										jobData.getJobToken(), commandFacade.getBuiltInRegistryAccessToken());
 
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildHome, execution.getRunAs(), docker, isInDocker()))
+								if (changeOwner(hostBuildHome, commandFacade.getRunAs(), docker, isInDocker()))
 									ownerChanged.set(true);
 
 								docker.clearArgs();
 								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-									return runStepContainer(docker, execution.getImage(), execution.getRunAs(),
+									return runStepContainer(docker, commandFacade.getImage(), commandFacade.getRunAs(),
 											entrypoint.executable(), entrypoint.arguments(), new HashMap<>(),
 											null, new HashMap<>(), position, commandFacade.isUseTTY());
 								});
@@ -735,21 +733,20 @@ public class AgentSocket implements Runnable {
 							} else if (facade instanceof RunContainerFacade) {
 								RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
 
-								OsContainer container = runContainerFacade.getContainer(Agent.osInfo);
 								List<String> arguments = new ArrayList<>();
-								if (container.getArgs() != null)
-									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
+								if (runContainerFacade.getArgs() != null)
+									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
 								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
 										jobData.getJobToken(), runContainerFacade.getBuiltInRegistryAccessToken());
 
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildHome, container.getRunAs(), docker, Bootstrap.isInDocker()))
+								if (changeOwner(hostBuildHome, runContainerFacade.getRunAs(), docker, Bootstrap.isInDocker()))
 									ownerChanged.set(true);
 
 								docker.clearArgs();
 								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
-									return runStepContainer(docker, container.getImage(), container.getRunAs(),null, arguments,
-											container.getEnvMap(), container.getWorkingDir(), container.getVolumeMounts(),
+									return runStepContainer(docker, runContainerFacade.getImage(), runContainerFacade.getRunAs(),null, arguments,
+											runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
 											position, runContainerFacade.isUseTTY());
 								});
 								if (exitCode != 0) {
