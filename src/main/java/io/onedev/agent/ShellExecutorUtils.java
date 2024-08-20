@@ -8,13 +8,14 @@ import io.onedev.k8shelper.KubernetesHelper;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ShellExecutorUtils {
 
 	public static void testCommands(Commandline git, String commands, TaskLogger jobLogger) {
-		CommandFacade executable = new CommandFacade(null, null, null, commands, true);
+		CommandFacade executable = new CommandFacade(null, null, null, commands, new HashMap<>(), true);
 		Commandline interpreter = executable.getScriptInterpreter();
 		File buildDir = FileUtils.createTempDir("onedev-build");
 		try {

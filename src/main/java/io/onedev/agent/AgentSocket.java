@@ -415,6 +415,7 @@ public class AgentSocket implements Runnable {
 						Map<String, String> environments = new HashMap<>();
 						environments.put("GIT_HOME", userHome.getAbsolutePath());
 						environments.put("ONEDEV_WORKSPACE", workspaceDir.getAbsolutePath());
+						environments.putAll(commandFacade.getEnvMap());
 						interpreter.workingDir(workspaceDir).environments(environments);
 						interpreter.addArgs(stepScriptFile.getAbsolutePath());
 
@@ -696,7 +697,7 @@ public class AgentSocket implements Runnable {
 								docker.clearArgs();
 								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
 									return runStepContainer(docker, commandFacade.getImage(), commandFacade.getRunAs(),
-											entrypoint.executable(), entrypoint.arguments(), new HashMap<>(),
+											entrypoint.executable(), entrypoint.arguments(), commandFacade.getEnvMap(),
 											null, new HashMap<>(), position, commandFacade.isUseTTY());
 								});
 								if (exitCode != 0) {
