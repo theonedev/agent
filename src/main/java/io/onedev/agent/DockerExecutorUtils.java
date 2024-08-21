@@ -80,7 +80,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}, new LineConsumer() {
 			@Override
 			public void consume(String line) {
-				if (line.startsWith("ERROR: existing instance"))
+				if (line.toLowerCase().startsWith("error: existing instance"))
 					builderExists.set(true);
 				else
 					jobLogger.error(line);
