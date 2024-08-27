@@ -113,7 +113,7 @@ public class AgentSocket implements Runnable {
 	    					
 	    					if (!wrapperConf.contains("java.base/jdk.internal.ref=ALL-UNNAMED")) {
 	    						wrapperConf += ""
-	    								+ "\r\nwrapperConfwrapper.java.additional.30=--add-modules=java.se" 
+	    								+ "\r\nwrapper.java.additional.30=--add-modules=java.se"
 	    								+ "\r\nwrapper.java.additional.31=--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED" 
 	    								+ "\r\nwrapper.java.additional.32=--add-opens=java.management/sun.management=ALL-UNNAMED"
 	    								+ "\r\nwrapper.java.additional.33=--add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED";
@@ -124,6 +124,12 @@ public class AgentSocket implements Runnable {
 
 	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
+
+							wrapperConf = wrapperConf.replaceAll("\r\n(\r\n)+\r\n", "\r\n\r\n");
+							wrapperConf = wrapperConf.replaceAll("\n(\n)+\n", "\n\n");
+							wrapperConf = wrapperConf.replace(
+									"wrapperConfwrapper.java.additional.30=--add-modules=java.se",
+									"wrapper.java.additional.30=--add-modules=java.se");
 
 	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 
