@@ -488,7 +488,7 @@ public class AgentSocket implements Runnable {
 				
 			}, new ArrayList<>());
 
-			cacheHelper.buildFinished();
+			cacheHelper.buildFinished(successful);
 
 			return successful;
 		} finally {
@@ -818,7 +818,7 @@ public class AgentSocket implements Runnable {
 						
 					}, new ArrayList<>());
 
-					cacheHelper.buildFinished();
+					cacheHelper.buildFinished(successful);
 
 					return successful;
 				} finally {
