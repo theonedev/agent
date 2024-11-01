@@ -1,6 +1,7 @@
 package io.onedev.agent.job;
 
 import io.onedev.k8shelper.Action;
+import io.onedev.k8shelper.RegistryLoginFacade;
 import io.onedev.k8shelper.ServiceFacade;
 
 import javax.annotation.Nullable;
@@ -13,8 +14,6 @@ public class DockerJobData extends ShellJobData {
 	private final List<ServiceFacade> services;
 	
 	private final List<RegistryLoginFacade> registryLogins;
-
-	private final String builtInRegistryUrl;
 
 	private final List<ImageMappingFacade> imageMappings;
 
@@ -39,14 +38,12 @@ public class DockerJobData extends ShellJobData {
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<ServiceFacade> services, List<RegistryLoginFacade> registryLogins,
-						 String builtInRegistryUrl, List<ImageMappingFacade> imageMappings,
-						 boolean mountDockerSock, String dockerSock, String dockerBuilder,
-						 @Nullable String cpuLimit, @Nullable String memoryLimit, String dockerOptions,
-						 @Nullable String networkOptions, boolean alwaysPullImage) {super(jobToken, executorName, projectPath,
-			projectId, refName, commitHash, buildNumber, actions);
+						 List<ImageMappingFacade> imageMappings, boolean mountDockerSock, String dockerSock,
+						 String dockerBuilder, @Nullable String cpuLimit, @Nullable String memoryLimit,
+						 String dockerOptions, @Nullable String networkOptions, boolean alwaysPullImage) {
+		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
-		this.builtInRegistryUrl = builtInRegistryUrl;
 		this.imageMappings = imageMappings;
 		this.mountDockerSock = mountDockerSock;
 		this.dockerSock = dockerSock;
@@ -65,10 +62,6 @@ public class DockerJobData extends ShellJobData {
 
 	public List<RegistryLoginFacade> getRegistryLogins() {
 		return registryLogins;
-	}
-
-	public String getBuiltInRegistryUrl() {
-		return builtInRegistryUrl;
 	}
 
 	public List<ImageMappingFacade> getImageMappings() {

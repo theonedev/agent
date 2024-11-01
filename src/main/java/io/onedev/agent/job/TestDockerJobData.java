@@ -1,5 +1,7 @@
 package io.onedev.agent.job;
 
+import io.onedev.k8shelper.RegistryLoginFacade;
+
 import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.util.Collection;

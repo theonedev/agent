@@ -34,6 +34,7 @@ import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
 import static io.onedev.k8shelper.KubernetesHelper.*;
+import static io.onedev.k8shelper.RegistryLoginFacade.merge;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @WebSocket
@@ -543,9 +544,8 @@ public class AgentSocket implements Runnable {
 			try {
 				var docker = newDocker(dockerSock);
 				for (var jobService: jobData.getServices()) {
-					var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
-							jobData.getJobToken(), jobService.getBuiltInRegistryAccessToken());
-					callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+					var registryLogins = merge(jobService.getRegistryLogins(), jobData.getRegistryLogins());
+					callWithDockerConfig(docker, jobData.getRegistryLogins(), () -> {
 						startService(docker, network, jobService, Agent.osInfo, jobData.getImageMappings(),
 								jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
 						return null;
@@ -693,15 +693,13 @@ public class AgentSocket implements Runnable {
 											+ "executor or remote shell executor");
 								}
 								Commandline entrypoint = getEntrypoint(hostBuildHome, commandFacade, position);
-								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
-										jobData.getJobToken(), commandFacade.getBuiltInRegistryAccessToken());
-
 								var docker = newDocker(dockerSock);
 								if (changeOwner(hostBuildHome, commandFacade.getRunAs(), docker, isInDocker()))
 									ownerChanged.set(true);
 
+								var registryLogins = merge(commandFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								docker.clearArgs();
-								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								int exitCode = callWithDockerConfig(docker, registryLogins, () -> {
 									return runStepContainer(docker, commandFacade.getImage(), commandFacade.getRunAs(),
 											entrypoint.executable(), entrypoint.arguments(), commandFacade.getEnvMap(),
 											null, new HashMap<>(), position, commandFacade.isUseTTY());
@@ -712,27 +710,25 @@ public class AgentSocket implements Runnable {
 								}
 							} else if (facade instanceof BuildImageFacade) {
 								var buildImageFacade = (BuildImageFacade) facade;
+								var registryLogins = merge(buildImageFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								var docker = newDocker(dockerSock);
-								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
-										jobData.getJobToken(), buildImageFacade.getBuiltInRegistryAccessToken());
-								callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								callWithDockerConfig(docker, registryLogins, () -> {
 									buildImage(docker, jobData.getDockerBuilder(), buildImageFacade, hostBuildHome,
 											jobData.isAlwaysPullImage(), jobLogger);
 									return null;
 								});
 							} else if (facade instanceof RunImagetoolsFacade) {
 								var runImagetoolsFacade = (RunImagetoolsFacade) facade;
+								var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								var docker = newDocker(dockerSock);
-								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
-										jobData.getJobToken(), runImagetoolsFacade.getBuiltInRegistryAccessToken());
-								callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								callWithDockerConfig(docker, registryLogins, () -> {
 									runImagetools(docker, runImagetoolsFacade, hostBuildHome, jobLogger);
 									return null;
 								});
 							} else if (facade instanceof PruneBuilderCacheFacade) {
 								var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
 								var docker = newDocker(dockerSock);
-								callWithDockerConfig(docker, new ArrayList<>(), null, () -> {
+								callWithDockerConfig(docker, new ArrayList<>(), () -> {
 									pruneBuilderCache(docker, jobData.getDockerBuilder(), pruneBuilderCacheFacade,
 											hostBuildHome, jobLogger);
 									return null;
@@ -743,15 +739,14 @@ public class AgentSocket implements Runnable {
 								List<String> arguments = new ArrayList<>();
 								if (runContainerFacade.getArgs() != null)
 									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
-								var builtInRegistryLogin = new BuiltInRegistryLogin(jobData.getBuiltInRegistryUrl(),
-										jobData.getJobToken(), runContainerFacade.getBuiltInRegistryAccessToken());
 
 								var docker = newDocker(dockerSock);
 								if (changeOwner(hostBuildHome, runContainerFacade.getRunAs(), docker, Bootstrap.isInDocker()))
 									ownerChanged.set(true);
 
+								var registryLogins = merge(runContainerFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								docker.clearArgs();
-								int exitCode = callWithDockerConfig(docker, jobData.getRegistryLogins(), builtInRegistryLogin, () -> {
+								int exitCode = callWithDockerConfig(docker, registryLogins, () -> {
 									return runStepContainer(docker, runContainerFacade.getImage(), runContainerFacade.getRunAs(),null, arguments,
 											runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
 											position, runContainerFacade.isUseTTY());
@@ -874,7 +869,7 @@ public class AgentSocket implements Runnable {
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		callWithDockerConfig(docker, jobData.getRegistryLogins(), null, () -> {
+		callWithDockerConfig(docker, jobData.getRegistryLogins(), () -> {
 			File workspaceDir = null;
 			File authInfoDir = null;
 

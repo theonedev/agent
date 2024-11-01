@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 import io.onedev.agent.job.ImageMappingFacade;
-import io.onedev.agent.job.RegistryLoginFacade;
+import io.onedev.k8shelper.RegistryLoginFacade;
 import io.onedev.commons.utils.*;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
@@ -428,19 +428,13 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 	}
 
-	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins,
-										   @Nullable BuiltInRegistryLogin builtInRegistryLogin) {
+	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins) {
 		Map<Object, Object> configMap = new HashMap<>();
 		Map<Object, Object> authsMap = new HashMap<>();
 		for (var login: registryLogins) {
 			Map<Object, Object> authMap = new HashMap<>();
 			authMap.put("auth", getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
 			authsMap.put(login.getRegistryUrl(), authMap);
-		}
-		if (builtInRegistryLogin != null) {
-			Map<Object, Object> authMap = new HashMap<>();
-			authMap.put("auth", getEncoder().encodeToString((builtInRegistryLogin.getAuth()).getBytes(UTF_8)));
-			authsMap.put(builtInRegistryLogin.getUrl(), authMap);
 		}
 		configMap.put("auths", authsMap);
 		try {
@@ -451,7 +445,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static <T> T callWithDockerConfig(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
-											 @Nullable BuiltInRegistryLogin builtInRegistryLogin,
 											 Callable<T> callable) {
 		var tempConfigDir = FileUtils.createTempDir("docker");
 		docker.environments().put("DOCKER_CONFIG", tempConfigDir.getAbsolutePath());
@@ -479,7 +472,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			} catch (IOException e) {
 				throw new RuntimeException(e);
 			}
-			var config = buildDockerConfig(registryLogins, builtInRegistryLogin);
+			var config = buildDockerConfig(registryLogins);
 			FileUtils.writeStringToFile(new File(tempConfigDir, "config.json"), config, UTF_8);
 			return callable.call();
 		} catch (Exception e) {
