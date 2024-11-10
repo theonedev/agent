@@ -31,7 +31,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.onedev.agent.DockerExecutorUtils.changeOwner;
 import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
-import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
 import static io.onedev.k8shelper.KubernetesHelper.*;
 import static io.onedev.k8shelper.RegistryLoginFacade.merge;
@@ -545,9 +544,9 @@ public class AgentSocket implements Runnable {
 				var docker = newDocker(dockerSock);
 				for (var jobService: jobData.getServices()) {
 					var registryLogins = merge(jobService.getRegistryLogins(), jobData.getRegistryLogins());
-					callWithDockerConfig(docker, jobData.getRegistryLogins(), () -> {
-						startService(docker, network, jobService, Agent.osInfo, jobData.getImageMappings(),
-								jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
+					callWithDockerConfig(docker, registryLogins, () -> {
+						startService(docker, network, jobService, Agent.osInfo, jobData.getCpuLimit(),
+								jobData.getMemoryLimit(), jobLogger);
 						return null;
 					});
 				}
@@ -590,8 +589,6 @@ public class AgentSocket implements Runnable {
 													 Map<String, String> environments, @Nullable String workingDir,
 													 Map<String, String> volumeMounts, List<Integer> position,
 													 boolean useTTY) {
-							image = map(jobData.getImageMappings(), image);
-
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {

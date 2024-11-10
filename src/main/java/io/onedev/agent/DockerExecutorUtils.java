@@ -5,8 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
-import io.onedev.agent.job.ImageMappingFacade;
-import io.onedev.k8shelper.RegistryLoginFacade;
 import io.onedev.commons.utils.*;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
@@ -29,7 +27,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.onedev.agent.job.ImageMappingFacade.map;
 import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
 import static io.onedev.commons.utils.StringUtils.splitAndTrim;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
@@ -825,10 +822,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	@SuppressWarnings({ "resource", "unchecked" })
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,
-									OsInfo nodeOsInfo, List<ImageMappingFacade> imageMappings,
-									@Nullable String cpuLimit, @Nullable String memoryLimit,
+									OsInfo nodeOsInfo, @Nullable String cpuLimit, @Nullable String memoryLimit,
 									TaskLogger jobLogger) {
-		String image = map(imageMappings, jobService.getImage());
+		String image = jobService.getImage();
 		jobLogger.log("Starting service (name: " + jobService.getName() + ", image: " + image + ")...");
 
 		docker.clearArgs();

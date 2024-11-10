@@ -15,8 +15,6 @@ public class DockerJobData extends ShellJobData {
 	
 	private final List<RegistryLoginFacade> registryLogins;
 
-	private final List<ImageMappingFacade> imageMappings;
-
 	private final boolean mountDockerSock;
 	
 	private final String dockerSock;
@@ -38,13 +36,12 @@ public class DockerJobData extends ShellJobData {
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, List<Action> actions,
 						 int retried, List<ServiceFacade> services, List<RegistryLoginFacade> registryLogins,
-						 List<ImageMappingFacade> imageMappings, boolean mountDockerSock, String dockerSock,
-						 String dockerBuilder, @Nullable String cpuLimit, @Nullable String memoryLimit,
-						 String dockerOptions, @Nullable String networkOptions, boolean alwaysPullImage) {
+						 boolean mountDockerSock, String dockerSock, String dockerBuilder,
+						 @Nullable String cpuLimit, @Nullable String memoryLimit, String dockerOptions,
+						 @Nullable String networkOptions, boolean alwaysPullImage) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, actions);
 		this.services = services;
 		this.registryLogins = registryLogins;
-		this.imageMappings = imageMappings;
 		this.mountDockerSock = mountDockerSock;
 		this.dockerSock = dockerSock;
 		this.dockerBuilder = dockerBuilder;
@@ -62,10 +59,6 @@ public class DockerJobData extends ShellJobData {
 
 	public List<RegistryLoginFacade> getRegistryLogins() {
 		return registryLogins;
-	}
-
-	public List<ImageMappingFacade> getImageMappings() {
-		return imageMappings;
 	}
 
 	public boolean isMountDockerSock() {
