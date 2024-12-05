@@ -191,7 +191,7 @@ public class AgentSocket implements Runnable {
 	    		Agent.attributes = attributes;
 	    		Properties props = new Properties();
 	    		props.putAll(attributes);
-	    		try (OutputStream os = new FileOutputStream(new File(Agent.installDir, "conf/attributes.properties"))) {
+	    		try (var os = new BufferedOutputStream(new FileOutputStream(new File(Agent.installDir, "conf/attributes.properties")))) {
 		    		props.store(os, null);
 	    		}
 	    		break;

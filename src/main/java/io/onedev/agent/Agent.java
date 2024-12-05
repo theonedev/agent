@@ -161,7 +161,7 @@ public class Agent {
 			installDir = installDir.getCanonicalFile();
 
 			File testFile = new File(installDir, "test");
-			try (OutputStream os = new FileOutputStream(testFile)){
+			try (var os = new FileOutputStream(testFile)) {
 				os.write(UUID.randomUUID().toString().getBytes());
 			} catch (Exception e) {
 				System.err.println(String.format("Unable to write test file. Make sure current user owns everything under '%s'",
