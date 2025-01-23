@@ -341,7 +341,7 @@ public class AgentSocket implements Runnable {
 	private boolean executeShellJob(Session session, ShellJobData jobData) {
 		checkShellApplicable();
 		File buildHome = new File(Agent.getTempDir(),
-				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber());
+				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber() + "-" + jobData.getSubmitSequence());
 		FileUtils.createDir(buildHome);
 		File workspaceDir = new File(buildHome, "workspace");
 		
@@ -509,7 +509,7 @@ public class AgentSocket implements Runnable {
 
 	private boolean executeDockerJob(Session session, DockerJobData jobData) {
 		File hostBuildHome = new File(Agent.getTempDir(),
-				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber());
+				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber() + "-" + jobData.getSubmitSequence());
 		FileUtils.createDir(hostBuildHome);
 		File attributesDir = new File(hostBuildHome, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet())
@@ -532,7 +532,7 @@ public class AgentSocket implements Runnable {
 			};
 
 			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
-					+ jobData.getBuildNumber() + "-" + jobData.getRetried();
+					+ jobData.getBuildNumber() + "-" + jobData.getSubmitSequence();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
 			createNetwork(newDocker(dockerSock), network, jobData.getNetworkOptions(), jobLogger);

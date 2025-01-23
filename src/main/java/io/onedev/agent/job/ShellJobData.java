@@ -22,11 +22,13 @@ public class ShellJobData implements Serializable {
 	private final String commitHash;
 	
 	private final Long buildNumber;
+
+	private final Long submitSequence;
 	
 	private final List<Action> actions;
 	
 	public ShellJobData(String jobToken, String executorName, String projectPath, Long projectId,
-			String refName, String commitHash, Long buildNumber, List<Action> actions) {
+						String refName, String commitHash, Long buildNumber, Long submitSequence, List<Action> actions) {
 		this.jobToken = jobToken;
 		this.executorName = executorName;
 		this.projectPath = projectPath;
@@ -34,6 +36,7 @@ public class ShellJobData implements Serializable {
 		this.refName = refName;
 		this.commitHash = commitHash;
 		this.buildNumber = buildNumber;
+		this.submitSequence = submitSequence;
 		this.actions = actions;
 	}
 
@@ -63,6 +66,10 @@ public class ShellJobData implements Serializable {
 
 	public Long getBuildNumber() {
 		return buildNumber;
+	}
+
+	public Long getSubmitSequence() {
+		return submitSequence;
 	}
 
 	public List<Action> getActions() {
