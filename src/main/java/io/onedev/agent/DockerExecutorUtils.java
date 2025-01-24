@@ -491,59 +491,14 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 	public static void createNetwork(Commandline docker, String network, @Nullable String options, TaskLogger jobLogger) {
 		docker.clearArgs();
-		AtomicBoolean networkExists = new AtomicBoolean(false);
-		docker.addArgs("network", "ls", "-q", "--filter", "name=" + network);
-		docker.execute(new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				networkExists.set(true);
-			}
-
-		}, new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				jobLogger.log(line);
-			}
-
-		}).checkReturnCode();
-
-		if (networkExists.get()) {
-			clearNetwork(docker, network, jobLogger);
-		} else {
-			docker.clearArgs();
-			docker.addArgs("network", "create");
-			if (SystemUtils.IS_OS_WINDOWS)
-				docker.addArgs("-d", "nat");
-			if (options != null) {
-				for (var option: StringUtils.parseQuoteTokens(options))
-					docker.addArgs(option);
-			}
-			docker.addArgs(network);
-			docker.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					logger.debug(line);
-				}
-
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-
-			}).checkReturnCode();
+		docker.addArgs("network", "create");
+		if (SystemUtils.IS_OS_WINDOWS)
+			docker.addArgs("-d", "nat");
+		if (options != null) {
+			for (var option: StringUtils.parseQuoteTokens(options))
+				docker.addArgs(option);
 		}
-	}
-
-	public static void deleteNetwork(Commandline docker, String network, TaskLogger jobLogger) {
-		clearNetwork(docker, network, jobLogger);
-
-		docker.clearArgs();
-		docker.addArgs("network", "rm", network);
+		docker.addArgs(network);
 		docker.execute(new LineConsumer() {
 
 			@Override
@@ -561,62 +516,120 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}).checkReturnCode();
 	}
 
-	public static void clearNetwork(Commandline docker, String network, TaskLogger jobLogger) {
-		List<String> containerIds = new ArrayList<>();
-		docker.clearArgs();
-		docker.addArgs("ps", "-a", "-q", "--filter", "network=" + network);
-		docker.execute(new LineConsumer() {
+	public static void deleteNetwork(Commandline docker, String network, TaskLogger jobLogger) {
+		int retried = 0;
+		while (true) {
+			try {
+				docker.clearArgs();
+				AtomicBoolean networkExists = new AtomicBoolean(false);
+				docker.addArgs("network", "ls", "-q", "--filter", "name=" + network);
+				docker.execute(new LineConsumer() {
 
-			@Override
-			public void consume(String line) {
-				containerIds.add(line);
+					@Override
+					public void consume(String line) {
+						networkExists.set(true);
+					}
+
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						jobLogger.log(line);
+					}
+
+				}).checkReturnCode();
+
+				if (networkExists.get()) {
+					List<String> containerIds = new ArrayList<>();
+					docker.clearArgs();
+					docker.addArgs("ps", "-a", "-q", "--filter", "network=" + network);
+					docker.execute(new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							containerIds.add(line);
+						}
+
+					}, new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							jobLogger.log(line);
+						}
+
+					}).checkReturnCode();
+
+					for (String container : containerIds) {
+						docker.clearArgs();
+						docker.addArgs("container", "stop", container);
+						docker.execute(new LineConsumer() {
+
+							@Override
+							public void consume(String line) {
+								logger.debug(line);
+							}
+
+						}, new LineConsumer() {
+
+							@Override
+							public void consume(String line) {
+								jobLogger.log(line);
+							}
+
+						}).checkReturnCode();
+
+						docker.clearArgs();
+						docker.addArgs("container", "rm", "-v", container);
+						docker.execute(new LineConsumer() {
+
+							@Override
+							public void consume(String line) {
+								logger.debug(line);
+							}
+
+						}, new LineConsumer() {
+
+							@Override
+							public void consume(String line) {
+								jobLogger.log(line);
+							}
+
+						}).checkReturnCode();
+					}
+
+					docker.clearArgs();
+					docker.addArgs("network", "rm", network);
+					docker.execute(new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							logger.debug(line);
+						}
+
+					}, new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							jobLogger.log(line);
+						}
+
+					}).checkReturnCode();
+				}
+				break;
+			} catch (Exception e) {
+				var errorMessage = "Error deleting network '" + network + "'";
+				if (retried < 3) {
+					jobLogger.error(errorMessage + ", will retry later");
+					try {
+						Thread.sleep(5 * (long) (Math.pow(2, retried)) * 1000L);
+					} catch (InterruptedException e2) {
+						throw new RuntimeException(e2);
+					}
+					retried++;
+				} else {
+					throw new RuntimeException(errorMessage, e);
+				}
 			}
-
-		}, new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				jobLogger.log(line);
-			}
-
-		}).checkReturnCode();
-
-		for (String container : containerIds) {
-			docker.clearArgs();
-			docker.addArgs("container", "stop", container);
-			docker.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					logger.debug(line);
-				}
-
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-
-			}).checkReturnCode();
-
-			docker.clearArgs();
-			docker.addArgs("container", "rm", "-v", container);
-			docker.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					logger.debug(line);
-				}
-
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					jobLogger.log(line);
-				}
-
-			}).checkReturnCode();
 		}
 	}
 
