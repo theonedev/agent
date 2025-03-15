@@ -1,20 +1,46 @@
 package io.onedev.agent;
 
-import com.google.common.base.Preconditions;
-import com.google.common.base.Splitter;
-import com.google.common.base.Throwables;
-import io.onedev.agent.job.*;
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.utils.*;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.k8shelper.*;
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.commons.lang3.SystemUtils;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.api.annotations.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static io.onedev.agent.DockerExecutorUtils.buildImage;
+import static io.onedev.agent.DockerExecutorUtils.callWithDockerConfig;
+import static io.onedev.agent.DockerExecutorUtils.changeOwner;
+import static io.onedev.agent.DockerExecutorUtils.createNetwork;
+import static io.onedev.agent.DockerExecutorUtils.deleteDir;
+import static io.onedev.agent.DockerExecutorUtils.deleteNetwork;
+import static io.onedev.agent.DockerExecutorUtils.getEntrypoint;
+import static io.onedev.agent.DockerExecutorUtils.getOwner;
+import static io.onedev.agent.DockerExecutorUtils.isUseProcessIsolation;
+import static io.onedev.agent.DockerExecutorUtils.newDockerKiller;
+import static io.onedev.agent.DockerExecutorUtils.pruneBuilderCache;
+import static io.onedev.agent.DockerExecutorUtils.runImagetools;
+import static io.onedev.agent.DockerExecutorUtils.startService;
+import static io.onedev.agent.ExecutorUtils.newErrorLogger;
+import static io.onedev.agent.ExecutorUtils.newInfoLogger;
+import static io.onedev.agent.ExecutorUtils.newWarningLogger;
+import static io.onedev.agent.ShellExecutorUtils.testCommands;
+import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
+import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
+import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
+import static io.onedev.k8shelper.KubernetesHelper.downloadDependencies;
+import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
+import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
+import static io.onedev.k8shelper.RegistryLoginFacade.merge;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
@@ -23,18 +49,47 @@ import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.onedev.agent.DockerExecutorUtils.changeOwner;
-import static io.onedev.agent.DockerExecutorUtils.*;
-import static io.onedev.agent.ShellExecutorUtils.testCommands;
-import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
-import static io.onedev.k8shelper.KubernetesHelper.*;
-import static io.onedev.k8shelper.RegistryLoginFacade.merge;
-import static java.nio.charset.StandardCharsets.UTF_8;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.SystemUtils;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
+import org.eclipse.jetty.websocket.api.annotations.WebSocket;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
+
+import io.onedev.agent.job.DockerJobData;
+import io.onedev.agent.job.LogRequest;
+import io.onedev.agent.job.ShellJobData;
+import io.onedev.agent.job.TestDockerJobData;
+import io.onedev.agent.job.TestShellJobData;
+import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.commons.utils.TarUtils;
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.BuildImageFacade;
+import io.onedev.k8shelper.CheckoutFacade;
+import io.onedev.k8shelper.CloneInfo;
+import io.onedev.k8shelper.CommandFacade;
+import io.onedev.k8shelper.CompositeFacade;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.LeafFacade;
+import io.onedev.k8shelper.LeafHandler;
+import io.onedev.k8shelper.PruneBuilderCacheFacade;
+import io.onedev.k8shelper.RunContainerFacade;
+import io.onedev.k8shelper.RunImagetoolsFacade;
+import io.onedev.k8shelper.ServerSideFacade;
+import io.onedev.k8shelper.SetupCacheFacade;
 
 @WebSocket
 public class AgentSocket implements Runnable {
@@ -330,14 +385,6 @@ public class AgentSocket implements Runnable {
 		}
 	}
 	
-	private String getErrorMessage(Exception exception) {
-		ExplicitException explicitException = ExceptionUtils.find(exception, ExplicitException.class);
-		if (explicitException == null) 
-			return Throwables.getStackTraceAsString(exception);
-		else
-			return explicitException.getMessage();
-	}
-
 	private boolean executeShellJob(Session session, ShellJobData jobData) {
 		checkShellApplicable();
 		File buildHome = new File(Agent.getTempDir(),

@@ -1,7 +1,6 @@
 package io.onedev.agent.job;
 
 import java.io.Serializable;
-import java.util.List;
 
 public class TestShellJobData implements Serializable {
 

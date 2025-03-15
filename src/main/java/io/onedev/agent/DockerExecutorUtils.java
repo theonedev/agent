@@ -833,7 +833,6 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		return hostInstallPath;
 	}
 
-	@SuppressWarnings({ "resource", "unchecked" })
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,
 									OsInfo nodeOsInfo, @Nullable String cpuLimit, @Nullable String memoryLimit,
 									TaskLogger jobLogger) {
