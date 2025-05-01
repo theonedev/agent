@@ -70,6 +70,7 @@ import io.onedev.agent.job.ShellJobData;
 import io.onedev.agent.job.TestDockerJobData;
 import io.onedev.agent.job.TestShellJobData;
 import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.StringUtils;
@@ -399,6 +400,7 @@ public class AgentSocket implements Runnable {
 		}
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildHomes.put(jobData.getJobToken(), buildHome);
+		SecretMasker.push(jobData.getSecretMasker());
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -535,6 +537,7 @@ public class AgentSocket implements Runnable {
 
 			return successful;
 		} finally {
+			SecretMasker.pop();
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
 			
@@ -568,6 +571,7 @@ public class AgentSocket implements Runnable {
 		buildHomes.put(jobData.getJobToken(), hostBuildHome);
 		if (dockerSock != null)
 			dockerSocks.put(jobData.getJobToken(), dockerSock);
+		SecretMasker.push(jobData.getSecretMasker());
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
 
@@ -865,6 +869,7 @@ public class AgentSocket implements Runnable {
 				deleteNetwork(newDocker(dockerSock), network, jobLogger);
 			}
 		} finally {
+			SecretMasker.pop();
 			jobThreads.remove(jobData.getJobToken());
 			buildHomes.remove(jobData.getJobToken());
 			if (dockerSock != null)
