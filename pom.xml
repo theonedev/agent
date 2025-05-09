@@ -10,7 +10,7 @@
 		<version>1.2.3</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>2.2.11</version>
+	<version>2.2.12</version>
 	<build>
 		<plugins>
 			<plugin>
@@ -89,7 +89,7 @@
 		<dependency>
 			<groupId>org.eclipse.jetty.websocket</groupId>
 			<artifactId>websocket-client</artifactId>
-			<version>9.4.54.v20240208</version>
+			<version>${jetty.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>javax.websocket</groupId>
@@ -157,7 +157,8 @@
 			<version>${k8shelper.version}</version>
 		</dependency>
 	</dependencies>
-	<properties>	
+	<properties>
+		<jetty.version>9.4.57.v20241219</jetty.version>
 		<k8shelper.version>3.1.9</k8shelper.version>
 		<jackson.version>2.14.0-rc1</jackson.version>
 		<jersey.version>2.38</jersey.version>
