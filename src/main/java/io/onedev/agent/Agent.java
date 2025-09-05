@@ -1,34 +1,11 @@
 package io.onedev.agent;
 
-import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.joran.JoranConfigurator;
-import ch.qos.logback.core.joran.spi.JoranException;
-import ch.qos.logback.core.util.StatusPrinter;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.net.HttpHeaders;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.OsInfo;
-import nl.altindag.ssl.SSLFactory;
-import nl.altindag.ssl.util.JettySslUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
-import org.eclipse.jetty.websocket.client.WebSocketClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.bridge.SLF4JBridgeHandler;
-import oshi.SystemInfo;
+import static io.onedev.commons.bootstrap.Bootstrap.setupProxies;
 
-import javax.annotation.Nullable;
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -42,7 +19,35 @@ import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
 
-import static io.onedev.commons.bootstrap.Bootstrap.setupProxies;
+import javax.annotation.Nullable;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
+import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.bridge.SLF4JBridgeHandler;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.net.HttpHeaders;
+
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import ch.qos.logback.core.joran.spi.JoranException;
+import ch.qos.logback.core.util.StatusPrinter;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.OsInfo;
+import nl.altindag.ssl.SSLFactory;
+import oshi.SystemInfo;
 
 public class Agent {
 
@@ -345,7 +350,13 @@ public class Agent {
 			}
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
-			SslContextFactory.Client sslContextFactory = JettySslUtils.forClient(sslFactory);
+
+			var sslContextFactory = new SslContextFactory.Client();
+			sslContextFactory.setSslContext(sslFactory.getSslContext());
+			var sslParameters = sslFactory.getSslParameters();
+			sslContextFactory.setIncludeProtocols(sslParameters.getProtocols());
+			sslContextFactory.setIncludeCipherSuites(sslParameters.getCipherSuites());	
+			sslContextFactory.setHostnameVerifier(sslFactory.getHostnameVerifier());
 
 			HttpClient httpClient = new HttpClient(sslContextFactory);
 			client = new WebSocketClient(httpClient);
