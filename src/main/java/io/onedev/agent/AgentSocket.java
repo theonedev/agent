@@ -25,6 +25,7 @@ import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.RegistryLoginFacade.merge;
+import static java.lang.System.lineSeparator;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.BufferedOutputStream;
@@ -42,7 +43,7 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Invocation;
@@ -145,6 +146,7 @@ public class AgentSocket implements Runnable {
 	    	switch (message.getType()) {
 	    	case UPDATE:
 	    		String versionAtServer = new String(messageData, UTF_8);
+				File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
 	    		if (!versionAtServer.equals(Agent.version)) {
 	    			logger.info("Updating agent to version " + versionAtServer + "...");
 	    			Client client = ClientBuilder.newClient();
@@ -162,7 +164,6 @@ public class AgentSocket implements Runnable {
 	    						TarUtils.untar(is, newLibDir, false);
 	    					} 
 	    					
-	    					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
 	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
 	    					wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
 	    					wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
@@ -176,8 +177,7 @@ public class AgentSocket implements Runnable {
 	    					}
 							if (!wrapperConf.contains("java.base/sun.nio.fs=ALL-UNNAMED")) {
 								wrapperConf += "\r\nwrapper.java.additional.50=--add-opens=java.base/sun.nio.fs=ALL-UNNAMED";
-							}
-
+							}										
 	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
 	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
 
@@ -209,31 +209,33 @@ public class AgentSocket implements Runnable {
 	    				client.close();
 	    			}
 	        		Agent.restart();
-	    		} else {
-					var needToRestart = false;
-					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
-					if (wrapperConfFile.exists()) {
-						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
-						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
-						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
-							needToRestart = true;
-							lines = new ArrayList<>(lines);
-							lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
+	    		} else if (wrapperConfFile.exists()) {
+					var confChanged = false;
+					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
+					var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
+					if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
+						confChanged = true;
+						lines = new ArrayList<>(lines);
+						lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
 
-							int appendIndex = lines.size();
-							for (int i = 0; i < lines.size(); i++) {
-								if (lines.get(i).contains("wrapper.java.additional.50")) {
-									appendIndex = i + 1;
-									break;
-								}
+						int appendIndex = lines.size();
+						for (int i = 0; i < lines.size(); i++) {
+							if (lines.get(i).contains("wrapper.java.additional.50")) {
+								appendIndex = i + 1;
+								break;
 							}
-							lines.add(appendIndex, "set.default.max_memory_percent=50");
-							lines.add(appendIndex, "");
-							lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
-							FileUtils.writeLines(wrapperConfFile, UTF_8.name(), lines);
 						}
+						lines.add(appendIndex, "set.default.max_memory_percent=50");
+						lines.add(appendIndex, "");
+						lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
+						wrapperConf = StringUtils.join(lineSeparator(), lines);
 					}
-					if (needToRestart) {
+					if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
+						confChanged = true;
+						wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
+					}
+					if (confChanged) {
+						FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 						Agent.restart();
 					} else {
 						AgentData agentData = new AgentData(Agent.token, Agent.osInfo,

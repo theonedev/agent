@@ -2,7 +2,7 @@ package io.onedev.agent.job;
 
 import java.util.List;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.k8shelper.Action;

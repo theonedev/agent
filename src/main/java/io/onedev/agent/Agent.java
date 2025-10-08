@@ -19,7 +19,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
