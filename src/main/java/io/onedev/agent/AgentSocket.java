@@ -209,39 +209,41 @@ public class AgentSocket implements Runnable {
 	    				client.close();
 	    			}
 	        		Agent.restart();
-	    		} else if (wrapperConfFile.exists()) {
-					var confChanged = false;
-					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
-					var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
-					if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
-						confChanged = true;
-						lines = new ArrayList<>(lines);
-						lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
+	    		} else {
+					if (wrapperConfFile.exists()) {
+						var confChanged = false;
+						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
+						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
+						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
+							confChanged = true;
+							lines = new ArrayList<>(lines);
+							lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
 
-						int appendIndex = lines.size();
-						for (int i = 0; i < lines.size(); i++) {
-							if (lines.get(i).contains("wrapper.java.additional.50")) {
-								appendIndex = i + 1;
-								break;
+							int appendIndex = lines.size();
+							for (int i = 0; i < lines.size(); i++) {
+								if (lines.get(i).contains("wrapper.java.additional.50")) {
+									appendIndex = i + 1;
+									break;
+								}
 							}
+							lines.add(appendIndex, "set.default.max_memory_percent=50");
+							lines.add(appendIndex, "");
+							lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
+							wrapperConf = StringUtils.join(lineSeparator(), lines);
 						}
-						lines.add(appendIndex, "set.default.max_memory_percent=50");
-						lines.add(appendIndex, "");
-						lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
-						wrapperConf = StringUtils.join(lineSeparator(), lines);
+						if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
+							confChanged = true;
+							wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
+						}
+						if (confChanged) {
+							FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
+							Agent.restart();
+							break;
+						}
 					}
-					if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
-						confChanged = true;
-						wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
-					}
-					if (confChanged) {
-						FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
-						Agent.restart();
-					} else {
-						AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
-								Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
-						new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
-					}
+					AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
+							Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
+					new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
 	    		}
 	    		break;
 	    	case UPDATE_ATTRIBUTES:
