@@ -235,6 +235,13 @@ public class AgentSocket implements Runnable {
 							confChanged = true;
 							wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
 						}
+						if (wrapperConf.contains("wrapper.java.version.min=11")) {
+							confChanged = true;
+							wrapperConf = wrapperConf.replace( "wrapper.java.version.min=11", "wrapper.java.version.min=17");
+							wrapperConf = wrapperConf.replace("Java version 11", "Java version 17");
+							wrapperConf = wrapperConf.replace("Java 11 or higher", "Java 17 or higher");
+						}
+
 						if (confChanged) {
 							FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 							Agent.restart();
