@@ -489,8 +489,7 @@ public class AgentSocket implements Runnable {
 						}
 					} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade
 							|| facade instanceof RunImagetoolsFacade || facade instanceof PruneBuilderCacheFacade) {
-						throw new ExplicitException("This step can only be executed by server docker executor, "
-								+ "remote docker executor");
+						throw new ExplicitException("This step can only be executed by server docker executor and remote docker executor");
 					} else if (facade instanceof CheckoutFacade) {
 						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 						jobLogger.log("Checking out code...");
@@ -789,7 +788,7 @@ public class AgentSocket implements Runnable {
 									return null;
 								});
 							} else if (facade instanceof RunContainerFacade) {
-								RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
+								RunContainerFacade runContainerFacade = ((RunContainerFacade) facade).replacePlaceholders(hostBuildHome);
 
 								List<String> arguments = new ArrayList<>();
 								if (runContainerFacade.getArgs() != null)
