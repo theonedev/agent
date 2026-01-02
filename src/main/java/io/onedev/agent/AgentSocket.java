@@ -741,7 +741,7 @@ public class AgentSocket implements Runnable {
 							}
 
 							if (facade instanceof CommandFacade) {
-								CommandFacade commandFacade = (CommandFacade) facade;
+								CommandFacade commandFacade = ((CommandFacade) facade).replacePlaceholders(hostBuildHome);
 								if (commandFacade.getImage() == null) {
 									throw new ExplicitException("This step can only be executed by server shell "
 											+ "executor or remote shell executor");
