@@ -147,23 +147,7 @@ public class Agent {
 		}
 		
 		try {
-			sandboxMode = new File("target/sandbox").exists();
-	
-			String path = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
-			File loadedFrom = new File(path);
-			
-			if (loadedFrom.getParentFile() != null 
-					&& loadedFrom.getParentFile().getParentFile() != null
-					&& loadedFrom.getParentFile().getParentFile().getParentFile() != null
-					&& new File(loadedFrom.getParentFile().getParentFile().getParentFile(), "conf/agent.properties").exists()) {
-				installDir = loadedFrom.getParentFile().getParentFile().getParentFile();
-			} else if (new File("target/sandbox").exists()) {
-				installDir = new File("target/sandbox");
-			} else {
-				throw new RuntimeException("Unable to find agent directory");
-			}
-	
-			installDir = installDir.getCanonicalFile();
+			installDir = getInstallDir();
 
 			File testFile = new File(installDir, "test");
 			try (var os = new FileOutputStream(testFile)) {
@@ -551,7 +535,36 @@ public class Agent {
 	public static File getWorkDir() {
 		return new File(installDir, "work");
 	}
-	
+
+	public static File getInstallDir() {
+		try {
+			String agentPropsPath = "conf/agent.properties";
+
+			File file = new File(agentPropsPath);
+			if (file.exists()) {
+				return new File(".").getCanonicalFile();
+			}
+
+			String loadPath = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+			file = new File(loadPath);
+			if (file.getParentFile() != null
+					&& file.getParentFile().getParentFile() != null
+					&& file.getParentFile().getParentFile().getParentFile() != null
+					&& new File(file.getParentFile().getParentFile().getParentFile(), agentPropsPath).exists()) {
+				return file.getParentFile().getParentFile().getParentFile().getCanonicalFile();
+			}
+
+			file = new File("target/sandbox");
+			if (file.exists()) {
+				return file.getCanonicalFile();
+			}
+		} catch (Exception e) {
+			logger.error("Error getting install directory", e);
+		}
+
+		throw new RuntimeException("Unable to find agent directory");
+	}
+
 	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
 		if (sessionId == null)
 			sessionId = "";
