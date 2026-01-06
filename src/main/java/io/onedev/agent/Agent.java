@@ -223,11 +223,19 @@ public class Agent {
 			File libDir = new File(installDir, "lib");
 			if (libDir.exists()) {
 				for (File dir: libDir.listFiles()) {
+					if (!dir.isDirectory())
+						continue;
+
+					if (!dir.getName().matches("\\d+(\\.\\d+)*"))
+						// Not a versioned lib folder
+						continue;
+
 					if (!dir.getName().equals(version))
+						// Doesn't match the current version, delete it
 						FileUtils.deleteDir(dir);
 				}
 			}
-			
+
 			Properties attributeProps = new Properties();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/attributes.properties"))) {
