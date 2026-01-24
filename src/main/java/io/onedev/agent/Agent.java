@@ -18,8 +18,7 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
-
-import org.jspecify.annotations.Nullable;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
@@ -29,6 +28,7 @@ import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.bridge.SLF4JBridgeHandler;
@@ -76,7 +76,7 @@ public class Agent {
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
 
-	public static boolean sandboxMode;
+	private static final Pattern LIB_VERSION_PATTERN = Pattern.compile("\\d+(\\.\\d+)*");
 	
 	public static File installDir;
 	
@@ -207,10 +207,7 @@ public class Agent {
 			File libDir = new File(installDir, "lib");
 			if (libDir.exists()) {
 				for (File dir: libDir.listFiles()) {
-					if (!dir.isDirectory())
-						continue;
-
-					if (!dir.getName().matches("\\d+(\\.\\d+)*"))
+					if (!dir.isDirectory() || !LIB_VERSION_PATTERN.matcher(dir.getName()).matches())
 						// Not a versioned lib folder
 						continue;
 
@@ -536,7 +533,7 @@ public class Agent {
 		return new File(installDir, "work");
 	}
 
-	public static File getInstallDir() {
+	private static File getInstallDir() {
 		try {
 			String agentPropsPath = "conf/agent.properties";
 
