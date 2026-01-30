@@ -112,6 +112,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--no-cache-filter":
 					case "--progress":
 					case "--target":
+					case "--provenance":
 						docker.addArgs(option);
 						if (it.hasNext())
 							docker.addArgs(it.next());
