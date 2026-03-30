@@ -1,24 +1,35 @@
-package io.onedev.agent;
+package io.onedev.agent.shell;
 
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.utils.ExceptionUtils;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.ImmediateFuture;
-import io.onedev.commons.utils.command.*;
-import io.onedev.commons.utils.command.PtyMode.ResizeSupport;
-import org.eclipse.jetty.websocket.api.Session;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static org.apache.commons.io.IOUtils.closeQuietly;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
-import static org.apache.commons.io.IOUtils.closeQuietly;
+import org.eclipse.jetty.websocket.api.Session;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import io.onedev.agent.AgentSocket;
+import io.onedev.agent.AgentUtils;
+import io.onedev.agent.Message;
+import io.onedev.agent.MessageTypes;
+import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.utils.ExceptionUtils;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.ExecutionResult;
+import io.onedev.commons.utils.command.ProcessTreeKiller;
+import io.onedev.commons.utils.command.PtyMode;
+import io.onedev.commons.utils.command.PtyMode.ResizeSupport;
+import io.onedev.commons.utils.command.StreamPumper;
 
 public class ShellSession {
 
@@ -54,7 +65,7 @@ public class ShellSession {
 
 							@Override
 							public void write(byte[] b, int off, int len) {
-								sendOutput(new String(b, off, len, StandardCharsets.UTF_8));
+								onOutput(Base64.getEncoder().encodeToString(Arrays.copyOfRange(b, off, off + len)));
 							}
 
 							@Override
@@ -72,7 +83,7 @@ public class ShellSession {
 
 							@Override
 							public void write(byte[] b, int off, int len) {
-								sendError(new String(b, off, len, StandardCharsets.UTF_8));
+								onOutput(Base64.getEncoder().encodeToString(Arrays.copyOfRange(b, off, off + len)));
 							}
 
 							@Override
@@ -95,23 +106,19 @@ public class ShellSession {
 
                     ExecutionResult result = cmdline.execute(stdoutHandler, stderrHandler, os -> {
 						shellStdin = os;
-						return new ImmediateFuture<Void>(null);
+						return CompletableFuture.completedFuture(null);
 					});
                     if (result.getReturnCode() != 0)
-                    	sendError("Shell exited");
+                    	onOutput(AgentUtils.encodeBase64Error("Shell exited with return code: " + result.getReturnCode()));
                     else
-                    	new Message(MessageTypes.SHELL_CLOSED, sessionId).sendBy(agentSession);
-	            } catch (ExplicitException e) {
-	            	sendError(e.getMessage());
+                    	new Message(MessageTypes.SHELL_EXIT, sessionId).sendBy(agentSession);
 	            } catch (Throwable e) {
 	            	ExplicitException explicitException = ExceptionUtils.find(e, ExplicitException.class);
 	            	if (explicitException != null) {
-		            	sendError(explicitException.getMessage());
-	            	} else if (ExceptionUtils.find(e, InterruptedException.class) != null) {
-	                    sendError("Shell exited");
-	                } else {
+		            	onOutput(AgentUtils.encodeBase64Error("Shell exited with error: " + explicitException.getMessage()));
+	            	} else if (ExceptionUtils.find(e, InterruptedException.class) == null) {
 	                	logger.error("Error running shell", e);
-	                    sendError("Error running shell, check agent log for details");
+	                    onOutput(AgentUtils.encodeBase64Error("Error running shell, check agent log for details"));
 	                }
 	            } finally {
 					closeQuietly(shellStdin);
@@ -123,19 +130,15 @@ public class ShellSession {
         
 	}
 	
-	private void sendOutput(String output) {
-		AgentSocket.sendOutput(sessionId, agentSession, output);
+	private void onOutput(String base64Data) {
+		AgentSocket.sendOutput(sessionId, agentSession, base64Data);
 	}
 
-	private void sendError(String error) {
-		AgentSocket.sendError(sessionId, agentSession, error);
-	}
-
-	public void sendInput(String input) {
+	public void writeToStdin(String data) {
 		var shellStdinCopy = shellStdin;
 		if (shellStdinCopy != null) {
 			try {
-				shellStdinCopy.write(input.getBytes(StandardCharsets.UTF_8));
+				shellStdinCopy.write(data.getBytes(StandardCharsets.UTF_8));
 			} catch (IOException e) {
 				throw new RuntimeException(e);
 			}
@@ -149,7 +152,6 @@ public class ShellSession {
 	}
 
 	public void exit() {
-		sendInput("exit\n");
 		execution.cancel(true);
 	}
 

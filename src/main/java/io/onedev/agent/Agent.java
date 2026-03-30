@@ -1,34 +1,11 @@
 package io.onedev.agent;
 
-import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.joran.JoranConfigurator;
-import ch.qos.logback.core.joran.spi.JoranException;
-import ch.qos.logback.core.util.StatusPrinter;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.net.HttpHeaders;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.OsInfo;
-import nl.altindag.ssl.SSLFactory;
-import nl.altindag.ssl.util.JettySslUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
-import org.eclipse.jetty.websocket.client.WebSocketClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.bridge.SLF4JBridgeHandler;
-import oshi.SystemInfo;
+import static io.onedev.commons.bootstrap.Bootstrap.setupProxies;
 
-import javax.annotation.Nullable;
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -41,8 +18,36 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
+import java.util.regex.Pattern;
 
-import static io.onedev.commons.bootstrap.Bootstrap.setupProxies;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.SystemUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
+import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.bridge.SLF4JBridgeHandler;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.net.HttpHeaders;
+
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import ch.qos.logback.core.joran.spi.JoranException;
+import ch.qos.logback.core.util.StatusPrinter;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.OsInfo;
+import nl.altindag.ssl.SSLFactory;
+import oshi.SystemInfo;
 
 public class Agent {
 
@@ -71,7 +76,7 @@ public class Agent {
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
 
-	public static boolean sandboxMode;
+	private static final Pattern LIB_VERSION_PATTERN = Pattern.compile("\\d+(\\.\\d+)*");
 	
 	public static File installDir;
 	
@@ -142,23 +147,7 @@ public class Agent {
 		}
 		
 		try {
-			sandboxMode = new File("target/sandbox").exists();
-	
-			String path = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
-			File loadedFrom = new File(path);
-			
-			if (loadedFrom.getParentFile() != null 
-					&& loadedFrom.getParentFile().getParentFile() != null
-					&& loadedFrom.getParentFile().getParentFile().getParentFile() != null
-					&& new File(loadedFrom.getParentFile().getParentFile().getParentFile(), "conf/agent.properties").exists()) {
-				installDir = loadedFrom.getParentFile().getParentFile().getParentFile();
-			} else if (new File("target/sandbox").exists()) {
-				installDir = new File("target/sandbox");
-			} else {
-				throw new RuntimeException("Unable to find agent directory");
-			}
-	
-			installDir = installDir.getCanonicalFile();
+			installDir = getInstallDir();
 
 			File testFile = new File(installDir, "test");
 			try (var os = new FileOutputStream(testFile)) {
@@ -218,11 +207,16 @@ public class Agent {
 			File libDir = new File(installDir, "lib");
 			if (libDir.exists()) {
 				for (File dir: libDir.listFiles()) {
+					if (!dir.isDirectory() || !LIB_VERSION_PATTERN.matcher(dir.getName()).matches())
+						// Not a versioned lib folder
+						continue;
+
 					if (!dir.getName().equals(version))
+						// Doesn't match the current version, delete it
 						FileUtils.deleteDir(dir);
 				}
 			}
-			
+
 			Properties attributeProps = new Properties();
 			
 			try (InputStream is = new FileInputStream(new File(installDir, "conf/attributes.properties"))) {
@@ -233,7 +227,7 @@ public class Agent {
 				Agent.attributes = attributes;
 			}
 
-			osInfo = ExecutorUtils.getOsInfo();
+			osInfo = AgentUtils.getOsInfo();
 			
 			serverUrl = System.getenv(SERVER_URL_KEY);
 			if (StringUtils.isBlank(serverUrl))
@@ -345,7 +339,13 @@ public class Agent {
 			}
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
-			SslContextFactory.Client sslContextFactory = JettySslUtils.forClient(sslFactory);
+
+			var sslContextFactory = new SslContextFactory.Client();
+			sslContextFactory.setSslContext(sslFactory.getSslContext());
+			var sslParameters = sslFactory.getSslParameters();
+			sslContextFactory.setIncludeProtocols(sslParameters.getProtocols());
+			sslContextFactory.setIncludeCipherSuites(sslParameters.getCipherSuites());	
+			sslContextFactory.setHostnameVerifier(sslFactory.getHostnameVerifier());
 
 			HttpClient httpClient = new HttpClient(sslContextFactory);
 			client = new WebSocketClient(httpClient);
@@ -532,7 +532,36 @@ public class Agent {
 	public static File getWorkDir() {
 		return new File(installDir, "work");
 	}
-	
+
+	private static File getInstallDir() {
+		try {
+			String agentPropsPath = "conf/agent.properties";
+
+			File file = new File(agentPropsPath);
+			if (file.exists()) {
+				return new File(".").getCanonicalFile();
+			}
+
+			String loadPath = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+			file = new File(loadPath);
+			if (file.getParentFile() != null
+					&& file.getParentFile().getParentFile() != null
+					&& file.getParentFile().getParentFile().getParentFile() != null
+					&& new File(file.getParentFile().getParentFile().getParentFile(), agentPropsPath).exists()) {
+				return file.getParentFile().getParentFile().getParentFile().getCanonicalFile();
+			}
+
+			file = new File("target/sandbox");
+			if (file.exists()) {
+				return file.getCanonicalFile();
+			}
+		} catch (Exception e) {
+			logger.error("Error getting install directory", e);
+		}
+
+		throw new RuntimeException("Unable to find agent directory");
+	}
+
 	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
 		if (sessionId == null)
 			sessionId = "";

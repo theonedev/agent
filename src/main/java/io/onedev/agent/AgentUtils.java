@@ -1,42 +1,173 @@
 package io.onedev.agent;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Splitter;
-import com.google.common.base.Throwables;
-import io.onedev.commons.utils.*;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.ExecutionResult;
-import io.onedev.commons.utils.command.LineConsumer;
-import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.*;
-import org.apache.commons.lang3.SystemUtils;
-import org.apache.commons.text.WordUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
+import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
-import javax.annotation.Nullable;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.onedev.commons.utils.StringUtils.parseQuoteTokens;
-import static io.onedev.commons.utils.StringUtils.splitAndTrim;
-import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
-import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Base64.getEncoder;
+import org.apache.commons.lang3.SystemUtils;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class DockerExecutorUtils extends ExecutorUtils {
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Splitter;
+import com.google.common.base.Throwables;
 
-	private static final Logger logger = LoggerFactory.getLogger(DockerExecutorUtils.class);
+import io.onedev.commons.utils.ExceptionUtils;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.PathUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.commons.utils.WordUtils;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.ExecutionResult;
+import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.commons.utils.command.ProcessKiller;
+import io.onedev.k8shelper.BuildImageFacade;
+import io.onedev.k8shelper.CommandFacade;
+import io.onedev.k8shelper.CompositeFacade;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.k8shelper.OsInfo;
+import io.onedev.k8shelper.PruneBuilderCacheFacade;
+import io.onedev.k8shelper.RegistryLoginFacade;
+import io.onedev.k8shelper.RunImagetoolsFacade;
+import io.onedev.k8shelper.ServiceFacade;
+
+public class AgentUtils {
+
+	private static final Logger logger = LoggerFactory.getLogger(AgentUtils.class);
+
+	public static LineConsumer newInfoLogger(TaskLogger jobLogger) {
+		return new LineConsumer(UTF_8.name()) {
+	
+			private String sessionId = UUID.randomUUID().toString();
+			
+			@Override
+			public void consume(String line) {
+				jobLogger.log(line, sessionId);
+			}
+			
+		};
+	}
+
+	public static LineConsumer newWarningLogger(TaskLogger jobLogger) {
+		return new LineConsumer(UTF_8.name()) {
+	
+			@Override
+			public void consume(String line) {
+				jobLogger.warning(line);
+			}
+			
+		};
+	}
+
+	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
+		return new LineConsumer(UTF_8.name()) {
+	
+			@Override
+			public void consume(String line) {
+				jobLogger.error(line);
+			}
+			
+		};
+	}
+	
+	public static OsInfo getOsInfo() {
+		String osName;
+		String osVersion;
+		if (SystemUtils.IS_OS_WINDOWS) {
+			osName = "Windows";
+			
+			logger.info("Checking Windows OS version...");
+			
+			Commandline systemInfo = new Commandline("cmd").addArgs("/c", "ver");
+			
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			systemInfo.execute(baos, new LineConsumer() {
+
+				@Override
+				public void consume(String line) {
+					logger.error(line);
+				}
+				
+			}).checkReturnCode();
+			
+			String output = baos.toString();
+			osVersion = StringUtils.substringBeforeLast(output, ".");
+			osVersion = StringUtils.substringAfterLast(osVersion, " ");
+			logger.info("Windows OS version: " + osVersion);
+		} else {
+			osName = System.getProperty("os.name");
+			osVersion = System.getProperty("os.version");
+		}
+
+		return new OsInfo(osName, osVersion, System.getProperty("os.arch"));
+	}
+
+	public static boolean runStep(CompositeFacade entry, List<Integer> position,
+								  TaskLogger logger, Callable<Boolean> task) {
+		String stepPath = entry.getPathAsString(position);
+		logger.notice("Running step \"" + stepPath + "\"...");
+		try {
+			long time = System.currentTimeMillis();
+			var successful = task.call();
+			var duration = formatDuration(System.currentTimeMillis() - time);
+			if (successful)
+				logger.success("Step \"" + stepPath + "\" is successful (" + duration + ")");
+			else
+				logger.error("Step \"" + stepPath + "\" is failed (" + duration + ")");
+			return successful;
+		} catch (Exception e) {
+			if (ExceptionUtils.find(e, InterruptedException.class) == null) {
+				logger.error(getErrorMessage(e));
+				return false;
+			} else {
+				throw ExceptionUtils.unchecked(e);
+			}
+		}
+	}
+
+    public static void testCommands(Commandline git, String commands, TaskLogger jobLogger) {
+    	CommandFacade executable = new CommandFacade(null, null, null, commands, new HashMap<>(), true);
+    	Commandline interpreter = executable.getScriptInterpreter();
+    	File buildDir = FileUtils.createTempDir("onedev-build");
+    	try {
+    		jobLogger.log("Running specified commands...");
+    		
+    		File testScriptFile = new File(buildDir, "test" + executable.getScriptExtension());
+    		FileUtils.writeStringToFile(testScriptFile, executable.normalizeCommands(commands), UTF_8);
+    		File workDir = new File(buildDir, "workspace");
+    		FileUtils.createDir(workDir);
+    		interpreter.workingDir(workDir).addArgs(testScriptFile.getAbsolutePath());
+    		interpreter.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+    
+    		KubernetesHelper.testGitLfsAvailability(git, jobLogger);
+    	} catch (IOException e) {
+    		throw new RuntimeException(e);
+    	} finally {
+    		FileUtils.deleteDir(buildDir);
+    	}
+    }
 
 	public static String getErrorMessage(Exception exception) {
 		ExplicitException explicitException = ExceptionUtils.find(exception, ExplicitException.class);
@@ -46,9 +177,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			return explicitException.getMessage();
 	}
 
-	private static List<String> parseDockerOptions(File hostBuildHome, String optionString) {
+	private static List<String> parseDockerOptions(File hostBuildDir, String optionString) {
 		var options = new ArrayList<String>();
-		for (var option: StringUtils.splitAndTrim(replacePlaceholders(optionString, hostBuildHome), " ")) {
+		for (var option: StringUtils.splitAndTrim(replacePlaceholders(optionString, hostBuildDir), " ")) {
 			if (option.startsWith("-") && option.contains("=")) {
 				options.add(StringUtils.substringBefore(option, "="));
 				options.add(StringUtils.substringAfter(option, "="));
@@ -88,7 +219,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
-								  File hostBuildHome, boolean pullAlways, TaskLogger jobLogger) {
+								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
 		docker.clearArgs();
@@ -96,10 +227,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		if (pullAlways)
 			docker.addArgs("--pull");
 		if (buildImageFacade.getPlatforms() != null)
-			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildHome));
+			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildDir));
 
 		if (buildImageFacade.getMoreOptions() != null) {
-			var options = parseDockerOptions(hostBuildHome, buildImageFacade.getMoreOptions());
+			var options = parseDockerOptions(hostBuildDir, buildImageFacade.getMoreOptions());
 			var it = options.iterator();
 			while (it.hasNext()) {
 				var option = it.next();
@@ -112,6 +243,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 					case "--no-cache-filter":
 					case "--progress":
 					case "--target":
+					case "--provenance":
 						docker.addArgs(option);
 						if (it.hasNext())
 							docker.addArgs(it.next());
@@ -184,9 +316,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			}
 		}
 
-		var workspaceDir = new File(hostBuildHome, "workspace");
+		var workDir = new File(hostBuildDir, "workspace");
 		if (buildImageFacade.getBuildPath() != null) {
-			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildHome);
+			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir);
 			if (!PathUtils.isSubPath(buildPath))
 				throw new ExplicitException("Build path of build image step should be a relative path not containing '..'");
 			docker.addArgs(buildPath);
@@ -195,31 +327,31 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		}
 
 		if (buildImageFacade.getDockerfile() != null) {
-			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildHome);
+			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir);
 			if (!PathUtils.isSubPath(dockerFile))
 				throw new ExplicitException("Dockerfile of build image step should be a relative path not containing '..'");
 			docker.addArgs("-f", dockerFile);
 		}
 
-		docker.workingDir(workspaceDir);
-		buildImageFacade.getOutput().execute(docker, hostBuildHome, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
+		docker.workingDir(workDir);
+		buildImageFacade.getOutput().execute(docker, hostBuildDir, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
 	}
 
 	public static void pruneBuilderCache(Commandline docker, String builder,
 										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
-										 File hostBuildHome, TaskLogger jobLogger) {
+										 File hostBuildDir, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
 		docker.clearArgs();
 		docker.addArgs("buildx", "prune", "--builder", builder, "-f");
 		if (pruneBuilderCacheFacade.getOptions() != null) {
-			var options = parseDockerOptions(hostBuildHome, pruneBuilderCacheFacade.getOptions());
+			var options = parseDockerOptions(hostBuildDir, pruneBuilderCacheFacade.getOptions());
 			docker.addArgs(options.toArray(new String[0]));
 		}
-		docker.workingDir(new File(hostBuildHome, "workspace"));
+		docker.workingDir(new File(hostBuildDir, "workspace"));
 
 		var containerNotFound = new AtomicBoolean(false);
-		var result = docker.execute(newInfoLogger(jobLogger), new LineConsumer(StandardCharsets.UTF_8.name()) {
+		var result = docker.execute(newInfoLogger(jobLogger), new LineConsumer(UTF_8.name()) {
 
 			@Override
 			public void consume(String line) {
@@ -235,10 +367,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
-									 File hostBuildHome, TaskLogger jobLogger) {
+									 File hostBuildDir, TaskLogger jobLogger) {
 		docker.clearArgs();
 		docker.addArgs("buildx", "imagetools");
-		var options = parseDockerOptions(hostBuildHome, runImagetoolsFacade.getArguments());
+		var options = parseDockerOptions(hostBuildDir, runImagetoolsFacade.getArguments());
 		var it = options.iterator();
 		while (it.hasNext()) {
 			var option = it.next();
@@ -251,7 +383,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 			}
 		}
 
-		docker.workingDir(new File(hostBuildHome, "workspace"));
+		docker.workingDir(new File(hostBuildDir, "workspace"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 	}
 
@@ -278,34 +410,27 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		};
 	}
 
-	public static Commandline getEntrypoint(File hostBuildHome, CommandFacade commandFacade, List<Integer> stepPosition) {
+	public static Commandline getEntrypoint(File hostBuildDir, CommandFacade commandFacade, List<Integer> stepPosition) {
 		Commandline interpreter = commandFacade.getScriptInterpreter();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		
-		commandFacade.generatePauseCommand(hostBuildHome);
+		commandFacade.generatePauseCommand(hostBuildDir);
 
 		/*
 		 * Use different file for different step although steps are executed sequentially, as otherwise
 		 * we will encounter odd issues on Mac running successive command steps
 		 */
-		var commandDir = new File(hostBuildHome, "command");
+		var commandDir = new File(hostBuildDir, "command");
 		FileUtils.createDir(commandDir);
 		File stepScriptFile = new File(commandDir, "step-" + stringifyStepPosition(stepPosition)
 				+ commandFacade.getScriptExtension());
 		FileUtils.writeFile(stepScriptFile,
-				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildHome)));
+				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
 
-		if (SystemUtils.IS_OS_WINDOWS) {
-			entrypointExecutable = "cmd";
-			entrypointArgs = new String[] { "/c",
-					"xcopy /Y /S /K /Q /H /R C:\\onedev-build\\user\\* C:\\Users\\%USERNAME% > nul && "
-							+ interpreter + " C:\\onedev-build\\command\\" + stepScriptFile.getName() };
-		} else {
-			entrypointExecutable = "sh";
-			entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + interpreter
-					+ " /onedev-build/command/" + stepScriptFile.getName() };
-		}
+		entrypointExecutable = "sh";
+		entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + interpreter
+				+ " /onedev-build/command/" + stepScriptFile.getName() };
 
 		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
 	}
@@ -399,7 +524,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void deleteDir(File dir, Commandline docker, boolean runInDocker) {
-		if (SystemUtils.IS_OS_WINDOWS || runInDocker) {
+		if (runInDocker) {
 			FileUtils.deleteDir(dir);
 		} else {
 			docker.addArgs("run", "-v", dir.getParentFile().getAbsolutePath() + ":/parent-of-dir-to-delete", "--rm", "busybox", "sh", "-c",
@@ -430,7 +555,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		Map<Object, Object> authsMap = new HashMap<>();
 		for (var login: registryLogins) {
 			Map<Object, Object> authMap = new HashMap<>();
-			authMap.put("auth", getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
+			authMap.put("auth", Base64.getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
 			authsMap.put(login.getRegistryUrl(), authMap);
 		}
 		configMap.put("auths", authsMap);
@@ -481,19 +606,13 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void useDockerSock(Commandline docker, @Nullable String dockerSock) {
-		if (dockerSock != null) {
-			if (SystemUtils.IS_OS_WINDOWS)
-				docker.environments().put("DOCKER_HOST", "npipe://" + dockerSock);
-			else
-				docker.environments().put("DOCKER_HOST", "unix://" + dockerSock);
-		}
+		if (dockerSock != null) 
+			docker.environments().put("DOCKER_HOST", "unix://" + dockerSock);
 	}
 
 	public static void createNetwork(Commandline docker, String network, @Nullable String options, TaskLogger jobLogger) {
 		docker.clearArgs();
 		docker.addArgs("network", "create");
-		if (SystemUtils.IS_OS_WINDOWS)
-			docker.addArgs("-d", "nat");
 		if (options != null) {
 			for (var option: StringUtils.parseQuoteTokens(options))
 				docker.addArgs(option);
@@ -690,24 +809,11 @@ public class DockerExecutorUtils extends ExecutorUtils {
 		} else {
 			result.checkReturnCode();
 
-			List<String> fields = splitAndTrim(osInfoString.get(), "%");
+			List<String> fields = StringUtils.splitAndTrim(osInfoString.get(), "%");
 			String osName = WordUtils.capitalize(fields.get(0));
 			String osVersion = fields.get(1);
-			if (osName.equals("Windows"))
-				osVersion = StringUtils.substringBeforeLast(osVersion, ".");
 			return new OsInfo(osName, osVersion, fields.get(2));
 		}
-	}
-
-	public static boolean isUseProcessIsolation(Commandline docker, String image, OsInfo nodeOsInfo,
-			TaskLogger jobLogger) {
-		if (SystemUtils.IS_OS_WINDOWS) {
-			jobLogger.log("Checking image OS info...");
-			OsInfo imageOsInfo = getOsInfo(docker, image, jobLogger, true);
-			if (imageOsInfo.getWindowsBuild() == nodeOsInfo.getWindowsBuild())
-				return true;
-		}
-		return false;
 	}
 
 	public static String getHostPath(Commandline docker, String mountPath) {
@@ -834,13 +940,12 @@ public class DockerExecutorUtils extends ExecutorUtils {
 	}
 
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,
-									OsInfo nodeOsInfo, @Nullable String cpuLimit, @Nullable String memoryLimit,
+									@Nullable String cpuLimit, @Nullable String memoryLimit,
 									TaskLogger jobLogger) {
 		String image = jobService.getImage();
 		jobLogger.log("Starting service (name: " + jobService.getName() + ", image: " + image + ")...");
 
 		docker.clearArgs();
-		boolean useProcessIsolation = isUseProcessIsolation(docker, image, nodeOsInfo, jobLogger);
 
 		jobLogger.log("Creating service container...");
 
@@ -852,7 +957,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		if (jobService.getRunAs() != null)
 			docker.addArgs("--user", jobService.getRunAs());
-		else if (!SystemUtils.IS_OS_WINDOWS)
+		else 
 			docker.addArgs("--user", "0:0");
 
 		if (cpuLimit != null)
@@ -862,11 +967,9 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 		for (var entry : jobService.getEnvs().entrySet())
 			docker.addArgs("--env", entry.getKey() + "=" + entry.getValue());
-		if (useProcessIsolation)
-			docker.addArgs("--isolation=process");
 		docker.addArgs(image);
 		if (jobService.getArguments() != null) {
-			for (String token : parseQuoteTokens(jobService.getArguments()))
+			for (String token : StringUtils.parseQuoteTokens(jobService.getArguments()))
 				docker.addArgs(token);
 		}
 
@@ -916,12 +1019,7 @@ public class DockerExecutorUtils extends ExecutorUtils {
 
 			if (stateNode.get("Status").asText().equals("running")) {
 				docker.clearArgs();
-				docker.addArgs("exec", containerName);
-
-				if (SystemUtils.IS_OS_WINDOWS)
-					docker.addArgs("cmd", "/c", jobService.getReadinessCheckCommand());
-				else
-					docker.addArgs("sh", "-c", jobService.getReadinessCheckCommand());
+				docker.addArgs("exec", containerName, "sh", "-c", jobService.getReadinessCheckCommand());
 
 				ExecutionResult result = docker.execute(new LineConsumer() {
 
@@ -976,6 +1074,10 @@ public class DockerExecutorUtils extends ExecutorUtils {
 				throw new RuntimeException(e);
 			}
 		}
+	}
+		
+	public static String encodeBase64Error(String error) {
+		return Base64.getEncoder().encodeToString(("\r\n\033[31m" + error + "\033[0m").getBytes(UTF_8));
 	}
 
 }
