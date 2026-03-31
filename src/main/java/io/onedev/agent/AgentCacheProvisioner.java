@@ -3,18 +3,19 @@ package io.onedev.agent;
 import java.io.File;
 import java.util.List;
 
-import io.onedev.commons.utils.TaskLogger;
-import io.onedev.k8shelper.CacheAvailability;
-import io.onedev.k8shelper.CacheHelper;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.k8shelper.SetupCacheFacade;
 import org.jspecify.annotations.Nullable;
 
-public class AgentCacheHelper extends CacheHelper {
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.k8shelper.CacheAvailability;
+import io.onedev.k8shelper.CacheConfigFacade;
+import io.onedev.k8shelper.CacheProvisioner;
+import io.onedev.k8shelper.KubernetesHelper;
+
+public class AgentCacheProvisioner extends CacheProvisioner {
 
     private final String jobToken;
 
-    public AgentCacheHelper(String jobToken, File buildDir, TaskLogger logger) {
+    public AgentCacheProvisioner(String jobToken, File buildDir, TaskLogger logger) {
         super(buildDir, logger);
         this.jobToken = jobToken;
     }
@@ -27,7 +28,7 @@ public class AgentCacheHelper extends CacheHelper {
     }
 
     @Override
-    protected boolean uploadCache(SetupCacheFacade cacheConfig, List<File> cacheDirs) {
+    protected boolean uploadCache(CacheConfigFacade cacheConfig, List<File> cacheDirs) {
         return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken, cacheConfig,
                 cacheDirs, Agent.sslFactory);
     }

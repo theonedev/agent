@@ -43,7 +43,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.jspecify.annotations.Nullable;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Invocation;
@@ -312,7 +311,7 @@ public class AgentSocket implements Runnable {
 	    			LeafFacade runningStep = runningSteps.get(jobToken);
 	    			if (runningStep instanceof CommandFacade) {
 	    				CommandFacade commandStep = (CommandFacade) runningStep;
-	    				docker.addArgs(commandStep.getShell(false, null));
+	    				docker.addArgs(commandStep.getExecutable());
 	    			} else {
 	    				docker.addArgs("sh");
 	    			}
@@ -322,13 +321,13 @@ public class AgentSocket implements Runnable {
 	    			LeafFacade runningStep = runningSteps.get(jobToken);
 	    			if (runningStep instanceof CommandFacade) {
 	    				CommandFacade commandStep = (CommandFacade) runningStep;
-	    				shell = new Commandline(commandStep.getShell(SystemUtils.IS_OS_WINDOWS, null)[0]);
+	    				shell = new Commandline(commandStep.getExecutable());
 	    			} else if (SystemUtils.IS_OS_WINDOWS) {
 	    				shell = new Commandline("cmd");
 	    			} else {
 	    				shell = new Commandline("sh");
 	    			}
-	    			shell.workingDir(new File(buildDir, "workspace"));
+	    			shell.workingDir(new File(buildDir, "work"));
 	    			shellSessions.put(sessionId, new ShellSession(sessionId, session, shell));
 	    		} else {
 	    			sendOutput(sessionId, session, Base64.getEncoder().encodeToString("Shell not ready".getBytes(UTF_8)));
@@ -387,7 +386,7 @@ public class AgentSocket implements Runnable {
 		File buildDir = new File(Agent.getTempDir(),
 				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber() + "-" + jobData.getSubmitSequence());
 		FileUtils.createDir(buildDir);
-		File workDir = new File(buildDir, "workspace");
+		File workDir = new File(buildDir, "work");
 		
 		File attributesDir = new File(buildDir, KubernetesHelper.ATTRIBUTES);
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
@@ -409,7 +408,7 @@ public class AgentSocket implements Runnable {
 
 			FileUtils.createDir(workDir);
 
-			var cacheHelper = new AgentCacheHelper(jobData.getJobToken(), buildDir, jobLogger);
+			var cacheProvisioner = new AgentCacheProvisioner(jobData.getJobToken(), buildDir, jobLogger);
 
 			jobLogger.log("Downloading job dependencies...");
 			
@@ -420,7 +419,7 @@ public class AgentSocket implements Runnable {
 			FileUtils.createDir(userDir);
 			
 			String messageData = jobData.getJobToken() + ":" + workDir.getAbsolutePath();
-			new Message(MessageTypes.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
+			new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
 
 			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 			var successful = entryFacade.execute(new LeafHandler() {
@@ -458,16 +457,15 @@ public class AgentSocket implements Runnable {
 							throw new RuntimeException(e);
 						}
 
-						Commandline interpreter = commandFacade.getScriptInterpreter();
+						Commandline cmdline = commandFacade.buildScriptCmdline();
 						Map<String, String> environments = new HashMap<>();
 						environments.put("HOME", userDir.getAbsolutePath());
 						environments.put("ONEDEV_WORKDIR", workDir.getAbsolutePath());
-						environments.put("ONEDEV_WORKSPACE", workDir.getAbsolutePath());
 						environments.putAll(commandFacade.getEnvMap());
-						interpreter.workingDir(workDir).environments(environments);
-						interpreter.addArgs(stepScriptFile.getAbsolutePath());
+						cmdline.workingDir(workDir).environments(environments);
+						cmdline.addArgs(stepScriptFile.getAbsolutePath());
 
-						var result = interpreter.execute(
+						var result = cmdline.execute(
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
 						if (result.getReturnCode() != 0) {
 							jobLogger.error("Command exited with code " + result.getReturnCode());
@@ -506,11 +504,11 @@ public class AgentSocket implements Runnable {
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
 					} else if (facade instanceof SetupCacheFacade) {
 						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-						for (var cachePath: setupCacheFacade.getPaths()) {
+						for (var cachePath: setupCacheFacade.getCacheConfig().getPaths()) {
 							if (cachePath.isAbsolute())
-								throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath.getPathValue());
+								throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath.getPath());
 						}
-						cacheHelper.setupCache(setupCacheFacade);
+						cacheProvisioner.setupCache(setupCacheFacade.getCacheConfig());
 					} else if (facade instanceof ServerSideFacade) {
 						ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 						return KubernetesHelper.runServerStep(Agent.sslFactory,
@@ -529,7 +527,8 @@ public class AgentSocket implements Runnable {
 				
 			}, new ArrayList<>());
 
-			cacheHelper.buildFinished(successful);
+			if (successful)
+				cacheProvisioner.uploadCaches();
 
 			return successful;
 		} finally {
@@ -593,12 +592,12 @@ public class AgentSocket implements Runnable {
 					});
 				}
 
-				File hostWorkDir = new File(hostBuildDir, "workspace");
+				File hostWorkDir = new File(hostBuildDir, "work");
 				File hostUserDir = new File(hostBuildDir, "user");
 				FileUtils.createDir(hostWorkDir);
 				FileUtils.createDir(hostUserDir);
 
-				var cacheHelper = new AgentCacheHelper(jobData.getJobToken(), hostBuildDir, jobLogger);
+				var cacheProvisioner = new AgentCacheProvisioner(jobData.getJobToken(), hostBuildDir, jobLogger);
 
 				try {
 					jobLogger.log("Downloading job dependencies...");
@@ -607,11 +606,11 @@ public class AgentSocket implements Runnable {
 							hostWorkDir, Agent.sslFactory);
 					
 					var containerBuildDirPath = "/onedev-build";
-					var containerWorkspace = "/onedev-build/workspace";
+					var containerWorkDirPath = "/onedev-build/work";
 					var containerTrustCerts = "/onedev-build/trust-certs.pem";
 					
-					String messageData = jobData.getJobToken() + ":" + containerWorkspace;
-					new Message(MessageTypes.REPORT_JOB_WORKSPACE, messageData).sendBy(session);
+					String messageData = jobData.getJobToken() + ":" + containerWorkDirPath;
+					new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
 
 					CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 					var ownerChanged = new AtomicBoolean(false);
@@ -651,10 +650,10 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 
-								cacheHelper.mountVolumes(docker, it -> getHostPath(it, dockerSock));
+								cacheProvisioner.mountVolumes(docker, it -> getHostPath(it, dockerSock));
 
 								if (entrypoint != null)
-									docker.addArgs("-w", containerWorkspace);
+									docker.addArgs("-w", containerWorkDirPath);
 								else if (workingDir != null)
 									docker.addArgs("-w", workingDir);
 
@@ -668,7 +667,7 @@ public class AgentSocket implements Runnable {
 								for (Map.Entry<String, String> entry: environments.entrySet())
 									docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
 
-								docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkspace);
+								docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkDirPath);
 
 								if (useTTY)
 									docker.addArgs("-t");
@@ -785,7 +784,7 @@ public class AgentSocket implements Runnable {
 								checkoutFacade.setupWorkingDir(git, hostWorkDir);
 
 								if (!isInDocker()) {
-									checkoutFacade.setupSafeDirectory(git, containerWorkspace,
+									checkoutFacade.setupSafeDirectory(git, containerWorkDirPath,
 											newInfoLogger(jobLogger), newErrorLogger(jobLogger));
 								}
 
@@ -813,11 +812,11 @@ public class AgentSocket implements Runnable {
 										AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
 							} else if (facade instanceof SetupCacheFacade) {
 								SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-								for (var cachePath: setupCacheFacade.getPaths()) {
+								for (var cachePath: setupCacheFacade.getCacheConfig().getPaths()) {
 									if (cachePath.isRelativeToHomeIfNotAbsolute() && !cachePath.isAbsolute())
-										throw new ExplicitException("Docker executor does not allow home relative cache path (" + cachePath.getPathValue() + "). Use absolute path instead");
+										throw new ExplicitException("Docker executor does not allow home relative cache path (" + cachePath.getPath() + "). Use absolute path instead");
 								}		
-								cacheHelper.setupCache(setupCacheFacade);
+								cacheProvisioner.setupCache(setupCacheFacade.getCacheConfig());
 							} else if (facade instanceof ServerSideFacade) {
 								ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
 								return KubernetesHelper.runServerStep(Agent.sslFactory,
@@ -836,7 +835,8 @@ public class AgentSocket implements Runnable {
 						
 					}, new ArrayList<>());
 
-					cacheHelper.buildFinished(successful);
+					if (successful)
+						cacheProvisioner.uploadCaches();
 
 					return successful;
 				} finally {
@@ -919,7 +919,7 @@ public class AgentSocket implements Runnable {
 
 				};
 
-				workDir = FileUtils.createTempDir("workspace");
+				workDir = FileUtils.createTempDir("work");
 				authInfoDir = FileUtils.createTempDir();
 
 				jobLogger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
@@ -936,10 +936,10 @@ public class AgentSocket implements Runnable {
 				if (jobData.getDockerOptions() != null)
 					docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 
-				var containerWorkspacePath = "/onedev-build/workspace";
-				docker.addArgs("-v", getHostPath(workDir.getAbsolutePath(), dockerSock) + ":" + containerWorkspacePath);
+				var containerWorkDirPath = "/onedev-build/work";
+				docker.addArgs("-v", getHostPath(workDir.getAbsolutePath(), dockerSock) + ":" + containerWorkDirPath);
 
-				docker.addArgs("-w", containerWorkspacePath);
+				docker.addArgs("-w", containerWorkDirPath);
 				docker.addArgs(jobData.getDockerImage(), "sh", "-c", "echo hello from container");
 
 				docker.execute(new LineConsumer() {

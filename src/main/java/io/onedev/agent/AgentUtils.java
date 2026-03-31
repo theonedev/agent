@@ -148,18 +148,18 @@ public class AgentUtils {
 	}
 
     public static void testCommands(Commandline git, String commands, TaskLogger jobLogger) {
-    	CommandFacade executable = new CommandFacade(null, null, null, commands, new HashMap<>(), true);
-    	Commandline interpreter = executable.getScriptInterpreter();
+    	var commandFacade = new CommandFacade(null, null, new ArrayList<>(), new HashMap<>(), true, commands);
+    	Commandline cmdline = commandFacade.buildScriptCmdline();
     	File buildDir = FileUtils.createTempDir("onedev-build");
     	try {
     		jobLogger.log("Running specified commands...");
     		
-    		File testScriptFile = new File(buildDir, "test" + executable.getScriptExtension());
-    		FileUtils.writeStringToFile(testScriptFile, executable.normalizeCommands(commands), UTF_8);
-    		File workDir = new File(buildDir, "workspace");
+    		File testScriptFile = new File(buildDir, "test" + commandFacade.getScriptExtension());
+    		FileUtils.writeStringToFile(testScriptFile, commandFacade.normalizeCommands(commands), UTF_8);
+    		File workDir = new File(buildDir, "work");
     		FileUtils.createDir(workDir);
-    		interpreter.workingDir(workDir).addArgs(testScriptFile.getAbsolutePath());
-    		interpreter.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
+    		cmdline.workingDir(workDir).addArgs(testScriptFile.getAbsolutePath());
+    		cmdline.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
     
     		KubernetesHelper.testGitLfsAvailability(git, jobLogger);
     	} catch (IOException e) {
@@ -316,7 +316,7 @@ public class AgentUtils {
 			}
 		}
 
-		var workDir = new File(hostBuildDir, "workspace");
+		var workDir = new File(hostBuildDir, "work");
 		if (buildImageFacade.getBuildPath() != null) {
 			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir);
 			if (!PathUtils.isSubPath(buildPath))
@@ -348,7 +348,7 @@ public class AgentUtils {
 			var options = parseDockerOptions(hostBuildDir, pruneBuilderCacheFacade.getOptions());
 			docker.addArgs(options.toArray(new String[0]));
 		}
-		docker.workingDir(new File(hostBuildDir, "workspace"));
+		docker.workingDir(new File(hostBuildDir, "work"));
 
 		var containerNotFound = new AtomicBoolean(false);
 		var result = docker.execute(newInfoLogger(jobLogger), new LineConsumer(UTF_8.name()) {
@@ -383,7 +383,7 @@ public class AgentUtils {
 			}
 		}
 
-		docker.workingDir(new File(hostBuildDir, "workspace"));
+		docker.workingDir(new File(hostBuildDir, "work"));
 		docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
 	}
 
@@ -411,7 +411,7 @@ public class AgentUtils {
 	}
 
 	public static Commandline getEntrypoint(File hostBuildDir, CommandFacade commandFacade, List<Integer> stepPosition) {
-		Commandline interpreter = commandFacade.getScriptInterpreter();
+		Commandline cmdline = commandFacade.buildScriptCmdline();
 		String entrypointExecutable;
 		String[] entrypointArgs;
 		
@@ -429,7 +429,7 @@ public class AgentUtils {
 				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
 
 		entrypointExecutable = "sh";
-		entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + interpreter
+		entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + cmdline
 				+ " /onedev-build/command/" + stepScriptFile.getName() };
 
 		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
