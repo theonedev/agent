@@ -331,12 +331,8 @@ public class Agent {
 				dockerPath = System.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath))
 				dockerPath = agentProps.getProperty(DOCKER_PATH_KEY);
-			if (StringUtils.isBlank(dockerPath)) {
-				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/docker").exists())
-					dockerPath = "/usr/local/bin/docker";
-				else
-					dockerPath = "docker";
-			}
+
+			dockerPath = AgentUtils.getDockerExecutable(StringUtils.trimToNull(dockerPath));
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
 

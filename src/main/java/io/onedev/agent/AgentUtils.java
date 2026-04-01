@@ -149,7 +149,8 @@ public class AgentUtils {
 
     public static void testCommands(Commandline git, String commands, TaskLogger jobLogger) {
     	var commandFacade = new CommandFacade(null, null, new ArrayList<>(), new HashMap<>(), true, commands);
-    	Commandline cmdline = commandFacade.buildScriptCmdline();
+    	Commandline cmdline = new Commandline(commandFacade.getExecutable());
+		cmdline.addArgs(commandFacade.getScriptOptions());
     	File buildDir = FileUtils.createTempDir("onedev-build");
     	try {
     		jobLogger.log("Running specified commands...");
@@ -410,11 +411,7 @@ public class AgentUtils {
 		};
 	}
 
-	public static Commandline getEntrypoint(File hostBuildDir, CommandFacade commandFacade, List<Integer> stepPosition) {
-		Commandline cmdline = commandFacade.buildScriptCmdline();
-		String entrypointExecutable;
-		String[] entrypointArgs;
-		
+	public static List<String> getEntrypointArgs(File hostBuildDir, CommandFacade commandFacade, List<Integer> stepPosition) {		
 		commandFacade.generatePauseCommand(hostBuildDir);
 
 		/*
@@ -428,11 +425,9 @@ public class AgentUtils {
 		FileUtils.writeFile(stepScriptFile,
 				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
 
-		entrypointExecutable = "sh";
-		entrypointArgs = new String[] { "-c", "test -w $HOME && cp -r -f -p /onedev-build/user/. $HOME || export HOME=/onedev-build/user && " + cmdline
-				+ " /onedev-build/command/" + stepScriptFile.getName() };
-
-		return new Commandline(entrypointExecutable).addArgs(entrypointArgs);
+		return List.of("-c", commandFacade.getExecutable() + " " 
+				+ StringUtils.join(commandFacade.getScriptOptions(), " ")
+				+ " /onedev-build/command/" + stepScriptFile.getName());
 	}
 
 	public static void writeFile(File file, String content, Commandline docker, boolean runInDocker) {
@@ -469,11 +464,11 @@ public class AgentUtils {
 		}
 	}
 
-	public static String getOwner() {
-		return getId("-u") + ":" + getId("-g");
+	public static String getOwner(TaskLogger logger) {
+		return getId("-u", logger) + ":" + getId("-g", logger);
 	}
 
-	private static int getId(String flag) {
+	private static int getId(String flag, TaskLogger logger) {
 		var cmd = new Commandline("id");
 		cmd.addArgs(flag);
 		AtomicInteger id = new AtomicInteger(0);
@@ -488,34 +483,18 @@ public class AgentUtils {
 				logger.error(line);
 			}
 		}).checkReturnCode();
+
 		return id.get();
 	}
 
-	public static boolean changeOwner(File dir, @Nullable String owner, Commandline docker, boolean runInDocker) {
+	public static boolean changeOwner(File dir, @Nullable String owner, Commandline docker, boolean runInDocker, TaskLogger logger) {
 		if (owner != null) {
 			if (runInDocker) {
 				KubernetesHelper.changeOwner(dir, owner);
 			} else {
 				docker.addArgs("run", "-v", dir.getAbsolutePath() + ":/dir-to-change-owner", "--rm", "busybox", "sh", "-c",
 						"chown -R " + owner + " /dir-to-change-owner");
-				docker.execute(new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						logger.info(line);
-					}
-
-				}, new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						if (line.contains("Error response from daemon"))
-							logger.error(line);
-						else
-							logger.info(line);
-					}
-
-				}).checkReturnCode();
+				docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 			}
 			return true;
 		} else {
@@ -523,31 +502,17 @@ public class AgentUtils {
 		}
 	}
 
-	public static void deleteDir(File dir, Commandline docker, boolean runInDocker) {
-		if (runInDocker) {
+	public static void deleteDir(File dir, Commandline docker, boolean runInDocker, TaskLogger logger) {
+		if (runInDocker) 
 			FileUtils.deleteDir(dir);
-		} else {
-			docker.addArgs("run", "-v", dir.getParentFile().getAbsolutePath() + ":/parent-of-dir-to-delete", "--rm", "busybox", "sh", "-c",
-					"rm -rf /parent-of-dir-to-delete/" + dir.getName());
-			docker.execute(new LineConsumer() {
+		else 
+			deleteDirWithDocker(dir, docker, logger);
+	}
 
-				@Override
-				public void consume(String line) {
-					logger.info(line);
-				}
-
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					if (line.contains("Error response from daemon"))
-						logger.error(line);
-					else
-						logger.info(line);
-				}
-
-			}).checkReturnCode();
-		}
+	public static void deleteDirWithDocker(File dir, Commandline docker, TaskLogger logger) {
+		docker.addArgs("run", "-v", dir.getParentFile().getAbsolutePath() + ":/parent-of-dir-to-delete", "--rm", "busybox", "sh", "-c",
+				"rm -rf /parent-of-dir-to-delete/" + dir.getName());
+		docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 	}
 
 	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins) {
@@ -605,9 +570,18 @@ public class AgentUtils {
 		}
 	}
 
-	public static void useDockerSock(Commandline docker, @Nullable String dockerSock) {
-		if (dockerSock != null) 
-			docker.environments().put("DOCKER_HOST", "unix://" + dockerSock);
+	public static void useDockerSock(Commandline docker, @Nullable String dockerSockPath) {
+		if (dockerSockPath != null) 
+			docker.environments().put("DOCKER_HOST", "unix://" + dockerSockPath);
+	}
+
+	public static String getDockerExecutable(@Nullable String dockerExecutable) {
+		if (dockerExecutable != null)
+			return dockerExecutable;
+		else if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/docker").exists())
+			return "/usr/local/bin/docker";
+		else
+			return "docker";
 	}
 
 	public static void createNetwork(Commandline docker, String network, @Nullable String options, TaskLogger jobLogger) {

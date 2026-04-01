@@ -6,10 +6,9 @@ import static io.onedev.agent.AgentUtils.changeOwner;
 import static io.onedev.agent.AgentUtils.createNetwork;
 import static io.onedev.agent.AgentUtils.deleteDir;
 import static io.onedev.agent.AgentUtils.deleteNetwork;
-import static io.onedev.agent.AgentUtils.getEntrypoint;
+import static io.onedev.agent.AgentUtils.getEntrypointArgs;
 import static io.onedev.agent.AgentUtils.getOwner;
 import static io.onedev.agent.AgentUtils.newDockerKiller;
-import static io.onedev.agent.AgentUtils.newErrorLogger;
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.agent.AgentUtils.pruneBuilderCache;
@@ -19,8 +18,10 @@ import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
 import static io.onedev.k8shelper.KubernetesHelper.downloadDependencies;
-import static io.onedev.k8shelper.KubernetesHelper.installGitCert;
+import static io.onedev.k8shelper.KubernetesHelper.initRepository;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
+import static io.onedev.k8shelper.KubernetesHelper.setupGitCerts;
+import static io.onedev.k8shelper.KubernetesHelper.setupSafeDirectory;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.RegistryLoginFacade.merge;
 import static java.lang.System.lineSeparator;
@@ -50,6 +51,7 @@ import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
 
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SerializationUtils;
 import org.apache.commons.lang3.SystemUtils;
 import org.eclipse.jetty.websocket.api.Session;
@@ -414,10 +416,7 @@ public class AgentSocket implements Runnable {
 			
 			downloadDependencies(Agent.serverUrl,  jobData.getJobToken(),
 					workDir, Agent.sslFactory);
-			
-			File userDir = new File(buildDir, "user");
-			FileUtils.createDir(userDir);
-			
+						
 			String messageData = jobData.getJobToken() + ":" + workDir.getAbsolutePath();
 			new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
 
@@ -457,13 +456,14 @@ public class AgentSocket implements Runnable {
 							throw new RuntimeException(e);
 						}
 
-						Commandline cmdline = commandFacade.buildScriptCmdline();
-						Map<String, String> environments = new HashMap<>();
-						environments.put("HOME", userDir.getAbsolutePath());
-						environments.put("ONEDEV_WORKDIR", workDir.getAbsolutePath());
-						environments.putAll(commandFacade.getEnvMap());
-						cmdline.workingDir(workDir).environments(environments);
+						var cmdline = new Commandline(commandFacade.getExecutable());
+						cmdline.addArgs(commandFacade.getScriptOptions());
 						cmdline.addArgs(stepScriptFile.getAbsolutePath());
+
+						Map<String, String> envs = new HashMap<>();
+						envs.put("ONEDEV_WORKDIR", workDir.getAbsolutePath());
+						envs.putAll(commandFacade.getEnvMap());
+						cmdline.workingDir(workDir).environments(envs);
 
 						var result = cmdline.execute(
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
@@ -479,23 +479,23 @@ public class AgentSocket implements Runnable {
 						jobLogger.log("Checking out code...");
 
 						Commandline git = new Commandline(Agent.gitPath);
-
-						Map<String, String> environments = new HashMap<>();
-						environments.put("HOME", userDir.getAbsolutePath());
-						git.environments(environments);
-
 						checkoutFacade.setupWorkingDir(git, workDir);
 
-						File trustCertsFile = new File(buildDir, "trust-certs.pem");
-						installGitCert(git, Agent.getTrustCertsDir(), trustCertsFile,
-								trustCertsFile.getAbsolutePath(), newInfoLogger(jobLogger),
-								newWarningLogger(jobLogger));
+						var infoLogger = AgentUtils.newInfoLogger(jobLogger);
+						var warningLogger = AgentUtils.newWarningLogger(jobLogger);
 
-						CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
+						initRepository(git, infoLogger, warningLogger);
 
-						cloneInfo.writeAuthData(userDir, git, false,
-								AgentUtils.newInfoLogger(jobLogger),
-								AgentUtils.newWarningLogger(jobLogger));
+						var cloneInfo = checkoutFacade.getCloneInfo();
+						var trustCertsFile = new File(buildDir, "trust-certs.pem");
+
+						var remoteAccessArgs = new ArrayList<String>();
+						remoteAccessArgs.addAll(setupGitCerts(git, Bootstrap.getTrustCertsDir(), trustCertsFile,
+								trustCertsFile.getAbsolutePath(), infoLogger, warningLogger));
+						remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
+								infoLogger, warningLogger));
+
+						git.arguments(remoteAccessArgs);
 
 						int cloneDepth = checkoutFacade.getCloneDepth();
 						cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
@@ -504,9 +504,9 @@ public class AgentSocket implements Runnable {
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
 					} else if (facade instanceof SetupCacheFacade) {
 						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-						for (var cachePath: setupCacheFacade.getCacheConfig().getPaths()) {
-							if (cachePath.isAbsolute())
-								throw new ExplicitException("Shell executor does not allow absolute cache path: " + cachePath.getPath());
+						for (var path: setupCacheFacade.getCacheConfig().getPaths()) {
+							if (FilenameUtils.getPrefixLength(path) > 0)
+								throw new ExplicitException("Shell executor does not allow absolute cache path: " + path);
 						}
 						cacheProvisioner.setupCache(setupCacheFacade.getCacheConfig());
 					} else if (facade instanceof ServerSideFacade) {
@@ -567,16 +567,15 @@ public class AgentSocket implements Runnable {
 		if (dockerSock != null)
 			dockerSocks.put(jobData.getJobToken(), dockerSock);
 		SecretMasker.push(jobData.getSecretMasker());
+		TaskLogger jobLogger = new TaskLogger() {
+
+			@Override
+			public void log(String message, String sessionId) {
+				Agent.log(session, jobData.getJobToken(), message, sessionId);
+			}
+			
+		};
 		try {
-			TaskLogger jobLogger = new TaskLogger() {
-
-				@Override
-				public void log(String message, String sessionId) {
-					Agent.log(session, jobData.getJobToken(), message, sessionId);
-				}
-				
-			};
-
 			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
 					+ jobData.getBuildNumber() + "-" + jobData.getSubmitSequence();
 			jobLogger.log("Creating docker network '" + network + "'...");
@@ -593,9 +592,7 @@ public class AgentSocket implements Runnable {
 				}
 
 				File hostWorkDir = new File(hostBuildDir, "work");
-				File hostUserDir = new File(hostBuildDir, "user");
 				FileUtils.createDir(hostWorkDir);
-				FileUtils.createDir(hostUserDir);
 
 				var cacheProvisioner = new AgentCacheProvisioner(jobData.getJobToken(), hostBuildDir, jobLogger);
 
@@ -607,7 +604,7 @@ public class AgentSocket implements Runnable {
 					
 					var containerBuildDirPath = "/onedev-build";
 					var containerWorkDirPath = "/onedev-build/work";
-					var containerTrustCerts = "/onedev-build/trust-certs.pem";
+					var containerTrustCertsFilePath = "/onedev-build/trust-certs.pem";
 					
 					String messageData = jobData.getJobToken() + ":" + containerWorkDirPath;
 					new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
@@ -624,9 +621,7 @@ public class AgentSocket implements Runnable {
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
-								docker.clearArgs();
-
-								docker.addArgs("run", "--name=" + containerName, "--network=" + network);
+								docker.arguments("run", "--name=" + containerName, "--network=" + network);
 								if (jobData.isAlwaysPullImage())
 									docker.addArgs("--pull=always");
 								if (runAs != null)
@@ -700,7 +695,7 @@ public class AgentSocket implements Runnable {
 
 						private boolean doExecute(LeafFacade facade, List<Integer> position) {
 							if (ownerChanged.get() && !isInDocker()) {
-								changeOwner(hostBuildDir, getOwner(), newDocker(dockerSock), false);
+								changeOwner(hostBuildDir, getOwner(jobLogger), newDocker(dockerSock), false, jobLogger);
 								ownerChanged.set(false);
 							}
 
@@ -710,16 +705,16 @@ public class AgentSocket implements Runnable {
 									throw new ExplicitException("This step can only be executed by server shell "
 											+ "executor or remote shell executor");
 								}
-								Commandline entrypoint = getEntrypoint(hostBuildDir, commandFacade, position);
+								var entrypointArgs = getEntrypointArgs(hostBuildDir, commandFacade, position);
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildDir, commandFacade.getRunAs(), docker, isInDocker()))
+								if (changeOwner(hostBuildDir, commandFacade.getRunAs(), docker, isInDocker(), jobLogger))
 									ownerChanged.set(true);
 
 								var registryLogins = merge(commandFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								docker.clearArgs();
 								int exitCode = callWithDockerConfig(docker, registryLogins, () -> {
 									return runStepContainer(docker, commandFacade.getImage(), commandFacade.getRunAs(),
-											entrypoint.executable(), entrypoint.arguments(), commandFacade.getEnvMap(),
+											"sh", entrypointArgs, commandFacade.getEnvMap(),
 											null, new HashMap<>(), position, commandFacade.isUseTTY());
 								});
 								if (exitCode != 0) {
@@ -759,7 +754,7 @@ public class AgentSocket implements Runnable {
 									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
 
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildDir, runContainerFacade.getRunAs(), docker, Bootstrap.isInDocker()))
+								if (changeOwner(hostBuildDir, runContainerFacade.getRunAs(), docker, Bootstrap.isInDocker(), jobLogger))
 									ownerChanged.set(true);
 
 								var registryLogins = merge(runContainerFacade.getRegistryLogins(), jobData.getRegistryLogins());
@@ -778,44 +773,40 @@ public class AgentSocket implements Runnable {
 								jobLogger.log("Checking out code...");
 
 								Commandline git = new Commandline(Agent.gitPath);
-
-								git.environments().put("HOME", hostUserDir.getAbsolutePath());
-
 								checkoutFacade.setupWorkingDir(git, hostWorkDir);
 
+								var infoLogger = AgentUtils.newInfoLogger(jobLogger);
+								var warningLogger = AgentUtils.newWarningLogger(jobLogger);
+
+								initRepository(git, infoLogger, warningLogger);
+
 								if (!isInDocker()) {
-									checkoutFacade.setupSafeDirectory(git, containerWorkDirPath,
-											newInfoLogger(jobLogger), newErrorLogger(jobLogger));
+									setupSafeDirectory(git, containerWorkDirPath, checkoutFacade.getCheckoutPath(), 
+											infoLogger, warningLogger);
 								}
 
-								File trustCertsFile = new File(hostBuildDir, "trust-certs.pem");
-								installGitCert(git, Agent.getTrustCertsDir(),
-										trustCertsFile, containerTrustCerts,
-										AgentUtils.newInfoLogger(jobLogger),
-										AgentUtils.newWarningLogger(jobLogger));
+								var remoteAccessArgs = new ArrayList<String>();
+								remoteAccessArgs.addAll(setupGitCerts(git, Agent.getTrustCertsDir(),
+										new File(hostBuildDir, "trust-certs.pem"), 
+										containerTrustCertsFilePath, infoLogger, warningLogger));
 
 								CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-								cloneInfo.writeAuthData(hostUserDir, git, true,
-										AgentUtils.newInfoLogger(jobLogger),
-										AgentUtils.newWarningLogger(jobLogger));
-
-								if (trustCertsFile.exists())
-									git.addArgs("-c", "http.sslCAInfo=" + trustCertsFile.getAbsolutePath());
+								remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, hostBuildDir, 
+										containerBuildDirPath, infoLogger, warningLogger));
 
 								int cloneDepth = checkoutFacade.getCloneDepth();
 
 								String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
 								String refName = jobData.getRefName();
 								String commitHash = jobData.getCommitHash();
+
+								git.arguments(remoteAccessArgs);
+
 								cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash,
 										checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
-										AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
+										infoLogger, warningLogger);
 							} else if (facade instanceof SetupCacheFacade) {
 								SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-								for (var cachePath: setupCacheFacade.getCacheConfig().getPaths()) {
-									if (cachePath.isRelativeToHomeIfNotAbsolute() && !cachePath.isAbsolute())
-										throw new ExplicitException("Docker executor does not allow home relative cache path (" + cachePath.getPath() + "). Use absolute path instead");
-								}		
 								cacheProvisioner.setupCache(setupCacheFacade.getCacheConfig());
 							} else if (facade instanceof ServerSideFacade) {
 								ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
@@ -856,7 +847,7 @@ public class AgentSocket implements Runnable {
 			client.close();
 			
 			synchronized (hostBuildDir) {
-				deleteDir(hostBuildDir, newDocker(dockerSock), Agent.isInDocker());
+				deleteDir(hostBuildDir, newDocker(dockerSock), Agent.isInDocker(), jobLogger);
 			}
 		}
 	}
@@ -959,8 +950,7 @@ public class AgentSocket implements Runnable {
 				}).checkReturnCode();
 
 				jobLogger.log("Checking busybox availability...");
-				docker.clearArgs();
-				docker.addArgs("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
+				docker.arguments("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
 				docker.execute(new LineConsumer() {
 
 					@Override
