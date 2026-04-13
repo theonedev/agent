@@ -4,6 +4,8 @@ import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Arrays.stream;
+import static java.util.stream.Collectors.joining;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -426,8 +428,8 @@ public class AgentUtils {
 				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
 
 		return List.of("-c", commandFacade.getExecutable() + " " 
-				+ StringUtils.join(commandFacade.getScriptOptions(), " ")
-				+ " /onedev-build/command/" + stepScriptFile.getName());
+				+ stream(commandFacade.getScriptOptions()).map(it -> it + " ").collect(joining())
+				+ "/onedev-build/command/" + stepScriptFile.getName());
 	}
 
 	public static void writeFile(File file, String content, Commandline docker, boolean runInDocker) {
