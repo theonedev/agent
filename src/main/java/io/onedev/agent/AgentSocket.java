@@ -645,7 +645,8 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 
-								cacheProvisioner.mountVolumes(docker, it -> getHostPath(it, dockerSock));
+								for (var entry: cacheProvisioner.getPathMap().entrySet()) 
+									docker.addArgs("-v", getHostPath(entry.getValue().getAbsolutePath(), dockerSock) + ":" + entry.getKey());
 
 								if (entrypoint != null)
 									docker.addArgs("-w", containerWorkDirPath);
