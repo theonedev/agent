@@ -149,7 +149,7 @@ public class AgentUtils {
 		}
 	}
 
-    public static void testCommands(Commandline git, String commands, TaskLogger jobLogger) {
+    public static void testCommands(String commands, TaskLogger jobLogger) {
     	var commandFacade = new CommandFacade(null, null, new ArrayList<>(), new HashMap<>(), true, commands);
     	Commandline cmdline = new Commandline(commandFacade.getExecutable());
 		cmdline.addArgs(commandFacade.getScriptOptions());
@@ -162,9 +162,7 @@ public class AgentUtils {
     		File workDir = new File(buildDir, "work");
     		FileUtils.createDir(workDir);
     		cmdline.workingDir(workDir).addArgs(testScriptFile.getAbsolutePath());
-    		cmdline.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();
-    
-    		KubernetesHelper.testGitLfsAvailability(git, jobLogger);
+    		cmdline.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger)).checkReturnCode();    
     	} catch (IOException e) {
     		throw new RuntimeException(e);
     	} finally {

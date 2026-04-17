@@ -885,7 +885,8 @@ public class AgentSocket implements Runnable {
 			
 			var git = new Commandline(Agent.gitPath);
 			KubernetesHelper.addMacUsrLocalBinToPath(git);
-			AgentUtils.testCommands(git, jobData.getCommands(), jobLogger);
+			AgentUtils.testCommands(jobData.getCommands(), jobLogger);
+    		KubernetesHelper.testGitLfsAvailability(git, jobLogger);
 		} finally {
 			jobThreads.remove(jobData.getJobToken());
 			client.close();
