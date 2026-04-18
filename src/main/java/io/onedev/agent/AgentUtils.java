@@ -1,5 +1,6 @@
 package io.onedev.agent;
 
+import static io.onedev.k8shelper.KubernetesHelper.GIT_TRUST_ALL_DIRS;
 import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
@@ -17,6 +18,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,12 +30,12 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 
+import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
@@ -223,8 +225,7 @@ public class AgentUtils {
 								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
-		docker.clearArgs();
-		docker.addArgs("buildx", "build", "--builder", builder);
+		docker.args("buildx", "build", "--builder", builder);
 		if (pullAlways)
 			docker.addArgs("--pull");
 		if (buildImageFacade.getPlatforms() != null)
@@ -343,8 +344,7 @@ public class AgentUtils {
 										 File hostBuildDir, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
-		docker.clearArgs();
-		docker.addArgs("buildx", "prune", "--builder", builder, "-f");
+		docker.args("buildx", "prune", "--builder", builder, "-f");
 		if (pruneBuilderCacheFacade.getOptions() != null) {
 			var options = parseDockerOptions(hostBuildDir, pruneBuilderCacheFacade.getOptions());
 			docker.addArgs(options.toArray(new String[0]));
@@ -369,8 +369,7 @@ public class AgentUtils {
 
 	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
 									 File hostBuildDir, TaskLogger jobLogger) {
-		docker.clearArgs();
-		docker.addArgs("buildx", "imagetools");
+		docker.args("buildx", "imagetools");
 		var options = parseDockerOptions(hostBuildDir, runImagetoolsFacade.getArguments());
 		var it = options.iterator();
 		while (it.hasNext()) {
@@ -391,8 +390,7 @@ public class AgentUtils {
 	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {
 		return (process, executionId) -> {
 			jobLogger.log("Stopping container '" + containerName + "'...");
-			docker.clearArgs();
-			docker.addArgs("stop", containerName);
+			docker.args("stop", containerName);
 			docker.execute(new LineConsumer() {
 
 				@Override
@@ -425,7 +423,7 @@ public class AgentUtils {
 		FileUtils.writeFile(stepScriptFile,
 				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
 
-		return List.of("-c", commandFacade.getExecutable() + " " 
+		return List.of("-c", GIT_TRUST_ALL_DIRS + " && " + commandFacade.getExecutable() + " "
 				+ stream(commandFacade.getScriptOptions()).map(it -> it + " ").collect(joining())
 				+ "/onedev-build/command/" + stepScriptFile.getName());
 	}
@@ -464,7 +462,7 @@ public class AgentUtils {
 		}
 	}
 
-	public static String getOwner(TaskLogger logger) {
+	public static String getOsIds(TaskLogger logger) {
 		return getId("-u", logger) + ":" + getId("-g", logger);
 	}
 
@@ -487,18 +485,30 @@ public class AgentUtils {
 		return id.get();
 	}
 
-	public static boolean changeOwner(File dir, @Nullable String owner, Commandline docker, boolean runInDocker, TaskLogger logger) {
-		if (owner != null) {
-			if (runInDocker) {
-				KubernetesHelper.changeOwner(dir, owner);
-			} else {
-				docker.addArgs("run", "-v", dir.getAbsolutePath() + ":/dir-to-change-owner", "--rm", "busybox", "sh", "-c",
-						"chown -R " + owner + " /dir-to-change-owner");
-				docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
-			}
-			return true;
+	public static void changeOwner(Commandline docker, String owner, File dir, TaskLogger logger) {
+		changeOwner(docker, owner, Set.of(dir), logger);
+	}
+
+	public static void changeOwner(Commandline docker, String owner, Collection<File> dirs,
+									  TaskLogger logger) {
+		if (Bootstrap.isInDocker()) {
+			KubernetesHelper.changeOwner(dirs, owner);
 		} else {
-			return false;
+			docker.addArgs("run");
+			int index = 1;
+			for (var dir: dirs) {
+				docker.addArgs("-v", dir.getAbsolutePath() + ":/dir-to-change-owner" + index);
+				index++;
+			}
+			docker.addArgs("--rm", "busybox", "sh", "-c");
+
+			var builder = new StringBuilder("chown -R " + owner);
+			for (int i=1; i<=dirs.size(); i++) {
+				builder.append(" ").append("/dir-to-change-owner").append(i);
+			}
+			docker.addArgs(builder.toString());
+
+			docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
 	}
 
@@ -515,64 +525,61 @@ public class AgentUtils {
 		docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 	}
 
-	public static String buildDockerConfig(Collection<RegistryLoginFacade> registryLogins) {
-		Map<Object, Object> configMap = new HashMap<>();
-		Map<Object, Object> authsMap = new HashMap<>();
+	public static Map<String, Object> buildAuthConfig(Collection<RegistryLoginFacade> registryLogins) {
+		Map<String, Object> authsMap = new HashMap<>();
 		for (var login: registryLogins) {
 			Map<Object, Object> authMap = new HashMap<>();
 			authMap.put("auth", Base64.getEncoder().encodeToString((login.getUserName() + ":" + login.getPassword()).getBytes(UTF_8)));
 			authsMap.put(login.getRegistryUrl(), authMap);
 		}
-		configMap.put("auths", authsMap);
-		try {
-			return new ObjectMapper().writeValueAsString(configMap);
-		} catch (JsonProcessingException e) {
-			throw new RuntimeException(e);
-		}
+		return authsMap;
 	}
 
-	public static <T> T callWithDockerConfig(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
-											 Callable<T> callable) {
+	public static <T> T callWithDockerConfig(Commandline docker, Map<String, Object> configMap, Callable<T> callable) {
 		var tempConfigDir = FileUtils.createTempDir("docker");
-		docker.environments().put("DOCKER_CONFIG", tempConfigDir.getAbsolutePath());
+		docker.envs().put("DOCKER_CONFIG", tempConfigDir.getAbsolutePath());
 		try {
-			var configHome = System.getenv("DOCKER_CONFIG");
-			if (configHome == null)
-				configHome = System.getProperty("user.home") + "/.docker";
-			var configDir = new File(configHome);
-			try {
-				if (new File(configDir, "buildx").exists()) {
-					FileUtils.copyDirectory(
-							new File(configDir, "buildx"),
-							new File(tempConfigDir, "buildx"));
-				}
-				if (new File(configDir, "contexts").exists()) {
-					FileUtils.copyDirectory(
-							new File(configDir, "contexts"),
-							new File(tempConfigDir, "contexts"));
-				}
-				if (new File(configDir, "cli-plugins").exists()) {
-					Files.createSymbolicLink(
-							new File(tempConfigDir, "cli-plugins").toPath(),
-							new File(configDir, "cli-plugins").toPath());
-				}
-			} catch (IOException e) {
-				throw new RuntimeException(e);
-			}
-			var config = buildDockerConfig(registryLogins);
+			var config = new ObjectMapper().writeValueAsString(configMap);
 			FileUtils.writeStringToFile(new File(tempConfigDir, "config.json"), config, UTF_8);
+
+			var configDirPath = System.getenv("DOCKER_CONFIG");
+			if (configDirPath == null)
+				configDirPath = System.getProperty("user.home") + "/.docker";
+			var configDir = new File(configDirPath);
+			if (new File(configDir, "buildx").exists()) {
+				FileUtils.copyDirectory(
+						new File(configDir, "buildx"),
+						new File(tempConfigDir, "buildx"));
+			}
+			if (new File(configDir, "contexts").exists()) {
+				FileUtils.copyDirectory(
+						new File(configDir, "contexts"),
+						new File(tempConfigDir, "contexts"));
+			}
+			if (new File(configDir, "cli-plugins").exists()) {
+				Files.createSymbolicLink(
+						new File(tempConfigDir, "cli-plugins").toPath(),
+						new File(configDir, "cli-plugins").toPath());
+			}
 			return callable.call();
 		} catch (Exception e) {
 			throw ExceptionUtils.unchecked(e);
 		} finally {
-			docker.environments().remove("DOCKER_CONFIG");
+			docker.envs().remove("DOCKER_CONFIG");
 			FileUtils.deleteDir(tempConfigDir);
-		}
+		}										
+	}	
+
+	public static <T> T callWithRegistryLogins(Commandline docker, Collection<RegistryLoginFacade> registryLogins, 
+				Callable<T> callable) {
+		var configMap = new HashMap<String, Object>();
+		configMap.put("auths", buildAuthConfig(registryLogins));
+		return callWithDockerConfig(docker, configMap, callable);
 	}
 
 	public static void useDockerSock(Commandline docker, @Nullable String dockerSockPath) {
 		if (dockerSockPath != null) 
-			docker.environments().put("DOCKER_HOST", "unix://" + dockerSockPath);
+			docker.envs().put("DOCKER_HOST", "unix://" + dockerSockPath);
 	}
 
 	public static String getDockerExecutable(@Nullable String dockerExecutable) {
@@ -919,20 +926,12 @@ public class AgentUtils {
 		String image = jobService.getImage();
 		jobLogger.log("Starting service (name: " + jobService.getName() + ", image: " + image + ")...");
 
-		docker.clearArgs();
-
 		jobLogger.log("Creating service container...");
 
 		String containerName = network + "-service-" + jobService.getName();
 
-		docker.clearArgs();
-		docker.addArgs("run", "-d", "--name=" + containerName, "--network=" + network,
-				"--network-alias=" + jobService.getName());
-
-		if (jobService.getRunAs() != null)
-			docker.addArgs("--user", jobService.getRunAs());
-		else 
-			docker.addArgs("--user", "0:0");
+		docker.args("run", "-d", "--name=" + containerName, "--network=" + network,
+				"--network-alias=" + jobService.getName(), "--user", jobService.getRunAs());
 
 		if (cpuLimit != null)
 			docker.addArgs("--cpus", cpuLimit);

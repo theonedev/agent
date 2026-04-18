@@ -1,27 +1,25 @@
 package io.onedev.agent;
 
 import static io.onedev.agent.AgentUtils.buildImage;
-import static io.onedev.agent.AgentUtils.callWithDockerConfig;
+import static io.onedev.agent.AgentUtils.callWithRegistryLogins;
 import static io.onedev.agent.AgentUtils.changeOwner;
 import static io.onedev.agent.AgentUtils.createNetwork;
 import static io.onedev.agent.AgentUtils.deleteDir;
 import static io.onedev.agent.AgentUtils.deleteNetwork;
 import static io.onedev.agent.AgentUtils.getEntrypointArgs;
-import static io.onedev.agent.AgentUtils.getOwner;
+import static io.onedev.agent.AgentUtils.getOsIds;
 import static io.onedev.agent.AgentUtils.newDockerKiller;
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.agent.AgentUtils.pruneBuilderCache;
 import static io.onedev.agent.AgentUtils.runImagetools;
 import static io.onedev.agent.AgentUtils.startService;
-import static io.onedev.commons.bootstrap.Bootstrap.isInDocker;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
 import static io.onedev.k8shelper.KubernetesHelper.downloadDependencies;
 import static io.onedev.k8shelper.KubernetesHelper.initRepository;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static io.onedev.k8shelper.KubernetesHelper.setupGitCerts;
-import static io.onedev.k8shelper.KubernetesHelper.setupSafeDirectory;
 import static io.onedev.k8shelper.KubernetesHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.RegistryLoginFacade.merge;
 import static java.lang.System.lineSeparator;
@@ -42,7 +40,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
@@ -387,10 +384,11 @@ public class AgentSocket implements Runnable {
 		checkShellApplicable();
 		File buildDir = new File(Agent.getTempDir(),
 				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber() + "-" + jobData.getSubmitSequence());
-		FileUtils.createDir(buildDir);
 		File workDir = new File(buildDir, "work");
 		
 		File attributesDir = new File(buildDir, KubernetesHelper.ATTRIBUTES);
+		FileUtils.createDir(attributesDir);
+
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet()) {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), UTF_8);
@@ -463,7 +461,7 @@ public class AgentSocket implements Runnable {
 						Map<String, String> envs = new HashMap<>();
 						envs.put("ONEDEV_WORKDIR", workDir.getAbsolutePath());
 						envs.putAll(commandFacade.getEnvMap());
-						cmdline.workingDir(workDir).environments(envs);
+						cmdline.workingDir(workDir).envs(envs);
 
 						var result = cmdline.execute(
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
@@ -495,7 +493,7 @@ public class AgentSocket implements Runnable {
 						remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
 								infoLogger, warningLogger));
 
-						git.arguments(remoteAccessArgs);
+						git.args(remoteAccessArgs);
 
 						int cloneDepth = checkoutFacade.getCloneDepth();
 						cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
@@ -555,10 +553,11 @@ public class AgentSocket implements Runnable {
 	private boolean executeDockerJob(Session session, DockerJobData jobData) {
 		File hostBuildDir = new File(Agent.getTempDir(),
 				"onedev-build-" + jobData.getProjectId() + "-" + jobData.getBuildNumber() + "-" + jobData.getSubmitSequence());
-		FileUtils.createDir(hostBuildDir);
-		File attributesDir = new File(hostBuildDir, KubernetesHelper.ATTRIBUTES);
+		File hostAttributesDir = new File(hostBuildDir, KubernetesHelper.ATTRIBUTES);
+		FileUtils.createDir(hostAttributesDir);
+
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet())
-			FileUtils.writeFile(new File(attributesDir, entry.getKey()), entry.getValue(), UTF_8);
+			FileUtils.writeFile(new File(hostAttributesDir, entry.getKey()), entry.getValue(), UTF_8);
 		var dockerSock = jobData.getDockerSock();
 
 		Client client = ClientBuilder.newClient();
@@ -585,7 +584,7 @@ public class AgentSocket implements Runnable {
 				var docker = newDocker(dockerSock);
 				for (var jobService: jobData.getServices()) {
 					var registryLogins = merge(jobService.getRegistryLogins(), jobData.getRegistryLogins());
-					callWithDockerConfig(docker, registryLogins, () -> {
+					callWithRegistryLogins(docker, registryLogins, () -> {
 						startService(docker, network, jobService, jobData.getCpuLimit(), jobData.getMemoryLimit(), jobLogger);
 						return null;
 					});
@@ -610,7 +609,7 @@ public class AgentSocket implements Runnable {
 					new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
 
 					CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
-					var ownerChanged = new AtomicBoolean(false);
+					var osIds = getOsIds(jobLogger);
 					var successful = entryFacade.execute(new LeafHandler() {
 
 						private int runStepContainer(Commandline docker, String image, @Nullable String runAs,
@@ -621,7 +620,7 @@ public class AgentSocket implements Runnable {
 							String containerName = network + "-step-" + stringifyStepPosition(position);
 							containerNames.put(jobData.getJobToken(), containerName);
 							try {
-								docker.arguments("run", "--name=" + containerName, "--network=" + network);
+								docker.args("run", "--name=" + containerName, "--network=" + network);
 								if (jobData.isAlwaysPullImage())
 									docker.addArgs("--pull=always");
 								if (runAs != null)
@@ -645,8 +644,12 @@ public class AgentSocket implements Runnable {
 									docker.addArgs("-v", hostPath + ":" + entry.getValue());
 								}
 
-								for (var entry: cacheProvisioner.getPathMap().entrySet()) 
-									docker.addArgs("-v", getHostPath(entry.getValue().getAbsolutePath(), dockerSock) + ":" + entry.getKey());
+								for (var allocation: cacheProvisioner.getAllocations()) {
+									for (var entry: allocation.getPathMap().entrySet()) {
+										if (FilenameUtils.getPrefixLength(entry.getKey()) > 0)
+											docker.addArgs("-v", getHostPath(entry.getValue().getAbsolutePath(), dockerSock) + ":" + entry.getKey());
+									}
+								}
 
 								if (entrypoint != null)
 									docker.addArgs("-w", containerWorkDirPath);
@@ -695,11 +698,6 @@ public class AgentSocket implements Runnable {
 						}
 
 						private boolean doExecute(LeafFacade facade, List<Integer> position) {
-							if (ownerChanged.get() && !isInDocker()) {
-								changeOwner(hostBuildDir, getOwner(jobLogger), newDocker(dockerSock), false, jobLogger);
-								ownerChanged.set(false);
-							}
-
 							if (facade instanceof CommandFacade) {
 								CommandFacade commandFacade = ((CommandFacade) facade).replacePlaceholders(hostBuildDir);
 								if (commandFacade.getImage() == null) {
@@ -708,25 +706,35 @@ public class AgentSocket implements Runnable {
 								}
 								var entrypointArgs = getEntrypointArgs(hostBuildDir, commandFacade, position);
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildDir, commandFacade.getRunAs(), docker, isInDocker(), jobLogger))
-									ownerChanged.set(true);
 
 								var registryLogins = merge(commandFacade.getRegistryLogins(), jobData.getRegistryLogins());
-								docker.clearArgs();
-								int exitCode = callWithDockerConfig(docker, registryLogins, () -> {
-									return runStepContainer(docker, commandFacade.getImage(), commandFacade.getRunAs(),
-											"sh", entrypointArgs, commandFacade.getEnvMap(),
-											null, new HashMap<>(), position, commandFacade.isUseTTY());
-								});
-								if (exitCode != 0) {
-									jobLogger.error("Command exited with code " + exitCode);
-									return false;
+								
+								var runAs = commandFacade.getRunAs();
+								if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
+									jobLogger.log("Changing owner of build directory to container user...");
+									changeOwner(docker, runAs, hostBuildDir, jobLogger);
+								}
+								try {
+									int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
+										return runStepContainer(docker, commandFacade.getImage(), runAs,
+												"sh", entrypointArgs, commandFacade.getEnvMap(),
+												null, new HashMap<>(), position, commandFacade.isUseTTY());
+									});
+									if (exitCode != 0) {
+										jobLogger.error("Command exited with code " + exitCode);
+										return false;
+									}
+								} finally {
+									if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
+										jobLogger.log("Changing owner of build directory to host user...");
+										changeOwner(newDocker(dockerSock), osIds, hostBuildDir, jobLogger);
+									}
 								}
 							} else if (facade instanceof BuildImageFacade) {
 								var buildImageFacade = (BuildImageFacade) facade;
 								var registryLogins = merge(buildImageFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								var docker = newDocker(dockerSock);
-								callWithDockerConfig(docker, registryLogins, () -> {
+								callWithRegistryLogins(docker, registryLogins, () -> {
 									buildImage(docker, jobData.getDockerBuilder(), buildImageFacade, hostBuildDir,
 											jobData.isAlwaysPullImage(), jobLogger);
 									return null;
@@ -735,14 +743,14 @@ public class AgentSocket implements Runnable {
 								var runImagetoolsFacade = (RunImagetoolsFacade) facade;
 								var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), jobData.getRegistryLogins());
 								var docker = newDocker(dockerSock);
-								callWithDockerConfig(docker, registryLogins, () -> {
+								callWithRegistryLogins(docker, registryLogins, () -> {
 									runImagetools(docker, runImagetoolsFacade, hostBuildDir, jobLogger);
 									return null;
 								});
 							} else if (facade instanceof PruneBuilderCacheFacade) {
 								var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
 								var docker = newDocker(dockerSock);
-								callWithDockerConfig(docker, new ArrayList<>(), () -> {
+								callWithRegistryLogins(docker, new ArrayList<>(), () -> {
 									pruneBuilderCache(docker, jobData.getDockerBuilder(), pruneBuilderCacheFacade,
 											hostBuildDir, jobLogger);
 									return null;
@@ -755,19 +763,27 @@ public class AgentSocket implements Runnable {
 									arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
 
 								var docker = newDocker(dockerSock);
-								if (changeOwner(hostBuildDir, runContainerFacade.getRunAs(), docker, Bootstrap.isInDocker(), jobLogger))
-									ownerChanged.set(true);
-
 								var registryLogins = merge(runContainerFacade.getRegistryLogins(), jobData.getRegistryLogins());
-								docker.clearArgs();
-								int exitCode = callWithDockerConfig(docker, registryLogins, () -> {
-									return runStepContainer(docker, runContainerFacade.getImage(), runContainerFacade.getRunAs(),null, arguments,
-											runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
-											position, runContainerFacade.isUseTTY());
-								});
-								if (exitCode != 0) {
-									jobLogger.error("Container exited with code " + exitCode);
-									return false;
+								var runAs = runContainerFacade.getRunAs() != null ? runContainerFacade.getRunAs() : "0:0";
+								if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
+									jobLogger.log("Changing owner of build directory to container user...");
+									changeOwner(docker, runAs, hostBuildDir, jobLogger);
+								}
+								try {
+									int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
+										return runStepContainer(docker, runContainerFacade.getImage(), runAs, null, arguments,
+												runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
+												position, runContainerFacade.isUseTTY());
+									});
+									if (exitCode != 0) {
+										jobLogger.error("Container exited with code " + exitCode);
+										return false;
+									}
+								} finally {
+									if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
+										jobLogger.log("Changing owner of build directory to host user...");
+										changeOwner(newDocker(dockerSock), osIds, hostBuildDir, jobLogger);
+									}
 								}
 							} else if (facade instanceof CheckoutFacade) {
 								CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
@@ -780,11 +796,6 @@ public class AgentSocket implements Runnable {
 								var warningLogger = AgentUtils.newWarningLogger(jobLogger);
 
 								initRepository(git, infoLogger, warningLogger);
-
-								if (!isInDocker()) {
-									setupSafeDirectory(git, containerWorkDirPath, checkoutFacade.getCheckoutPath(), 
-											infoLogger, warningLogger);
-								}
 
 								var remoteAccessArgs = new ArrayList<String>();
 								remoteAccessArgs.addAll(setupGitCerts(git, Agent.getTrustCertsDir(),
@@ -801,7 +812,7 @@ public class AgentSocket implements Runnable {
 								String refName = jobData.getRefName();
 								String commitHash = jobData.getCommitHash();
 
-								git.arguments(remoteAccessArgs);
+								git.args(remoteAccessArgs);
 
 								cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash,
 										checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
@@ -896,7 +907,7 @@ public class AgentSocket implements Runnable {
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		callWithDockerConfig(docker, jobData.getRegistryLogins(), () -> {
+		callWithRegistryLogins(docker, jobData.getRegistryLogins(), () -> {
 			File workDir = null;
 			File authInfoDir = null;
 
@@ -925,7 +936,7 @@ public class AgentSocket implements Runnable {
 				}
 
 				jobLogger.log("Testing specified docker image...");
-				docker.addArgs("run", "--rm");
+				docker.args("run", "--rm");
 				if (jobData.getDockerOptions() != null)
 					docker.addArgs(StringUtils.parseQuoteTokens(jobData.getDockerOptions()));
 
@@ -952,7 +963,7 @@ public class AgentSocket implements Runnable {
 				}).checkReturnCode();
 
 				jobLogger.log("Checking busybox availability...");
-				docker.arguments("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
+				docker.args("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
 				docker.execute(new LineConsumer() {
 
 					@Override

@@ -1,7 +1,6 @@
 package io.onedev.agent;
 
 import java.io.File;
-import java.util.List;
 
 import org.jspecify.annotations.Nullable;
 
@@ -22,15 +21,15 @@ public class AgentCacheProvisioner extends CacheProvisioner {
 
     @Override
     protected CacheAvailability downloadCache(String key, @Nullable String checksum,
-                                    String cachePathsString, List<File> cacheDirs) {
+                                    String path, File cacheDir) {
         return KubernetesHelper.downloadCache(Agent.serverUrl, jobToken,
-                key, checksum, cachePathsString, cacheDirs, Agent.sslFactory);
+                key, checksum, path, cacheDir, Agent.sslFactory);
     }
 
     @Override
-    protected boolean uploadCache(CacheConfigFacade cacheConfig, List<File> cacheDirs) {
+    protected boolean uploadCache(CacheConfigFacade cacheConfig, String path, File cacheDir) {
         return KubernetesHelper.uploadCache(Agent.serverUrl, jobToken, cacheConfig,
-                cacheDirs, Agent.sslFactory);
+                path, cacheDir, Agent.sslFactory);
     }
 
 }
