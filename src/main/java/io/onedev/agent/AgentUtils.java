@@ -152,7 +152,7 @@ public class AgentUtils {
 	}
 
     public static void testCommands(String commands, TaskLogger jobLogger) {
-    	var commandFacade = new CommandFacade(null, null, new ArrayList<>(), new HashMap<>(), true, commands);
+    	var commandFacade = new CommandFacade(null, "0:0", new ArrayList<>(), new HashMap<>(), true, commands);
     	Commandline cmdline = new Commandline(commandFacade.getExecutable());
 		cmdline.addArgs(commandFacade.getScriptOptions());
     	File buildDir = FileUtils.createTempDir("onedev-build");
