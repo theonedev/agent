@@ -35,7 +35,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 
-import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
@@ -485,13 +484,14 @@ public class AgentUtils {
 		return id.get();
 	}
 
-	public static void changeOwner(Commandline docker, String owner, File dir, TaskLogger logger) {
-		changeOwner(docker, owner, Set.of(dir), logger);
+	public static void changeOwner(Commandline docker, String owner, File dir, 
+				String osIds, TaskLogger logger) {
+		changeOwner(docker, owner, Set.of(dir), osIds, logger);
 	}
 
 	public static void changeOwner(Commandline docker, String owner, Collection<File> dirs,
-									  TaskLogger logger) {
-		if (Bootstrap.isInDocker()) {
+									  String osIds, TaskLogger logger) {
+		if (osIds.equals("0:0")) {
 			KubernetesHelper.changeOwner(dirs, owner);
 		} else {
 			docker.addArgs("run");
