@@ -491,7 +491,7 @@ public class AgentSocket implements Runnable {
 								trustCertsFile.getAbsolutePath(), infoLogger, warningLogger));
 						remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
 								infoLogger, warningLogger));
-
+						
 						git.args(remoteAccessArgs);
 
 						int cloneDepth = checkoutFacade.getCloneDepth();
