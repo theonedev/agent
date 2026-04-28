@@ -484,30 +484,14 @@ public class AgentUtils {
 		return id.get();
 	}
 
-	public static void changeOwner(Commandline docker, String owner, File dir, 
-				String osIds, TaskLogger logger) {
-		changeOwner(docker, owner, Set.of(dir), osIds, logger);
-	}
-
-	public static void changeOwner(Commandline docker, String owner, Collection<File> dirs,
+	public static void changeOwner(Commandline docker, String owner, File dir,
 									  String osIds, TaskLogger logger) {
 		if (osIds.equals("0:0")) {
-			KubernetesHelper.changeOwner(dirs, owner);
+			KubernetesHelper.changeOwner(dir, owner);
 		} else {
-			docker.addArgs("run");
-			int index = 1;
-			for (var dir: dirs) {
-				docker.addArgs("-v", dir.getAbsolutePath() + ":/dir-to-change-owner" + index);
-				index++;
-			}
-			docker.addArgs("--rm", "busybox", "sh", "-c");
-
-			var builder = new StringBuilder("chown -R " + owner);
-			for (int i=1; i<=dirs.size(); i++) {
-				builder.append(" ").append("/dir-to-change-owner").append(i);
-			}
-			docker.addArgs(builder.toString());
-
+			docker.args("run");
+			docker.addArgs("-v", dir.getAbsolutePath() + ":/dir-to-change-owner");
+			docker.addArgs("--rm", "busybox", "sh", "-c", "chown -R " + owner + " /dir-to-change-owner");
 			docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
 	}
