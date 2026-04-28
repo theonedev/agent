@@ -4,7 +4,6 @@ import static io.onedev.agent.AgentUtils.buildImage;
 import static io.onedev.agent.AgentUtils.callWithRegistryLogins;
 import static io.onedev.agent.AgentUtils.changeOwner;
 import static io.onedev.agent.AgentUtils.createNetwork;
-import static io.onedev.agent.AgentUtils.deleteDir;
 import static io.onedev.agent.AgentUtils.deleteNetwork;
 import static io.onedev.agent.AgentUtils.getEntrypointArgs;
 import static io.onedev.agent.AgentUtils.getOsIds;
@@ -483,17 +482,14 @@ public class AgentSocket implements Runnable {
 
 						initRepository(git, infoLogger, warningLogger);
 
+						git.clearArgs();
 						var cloneInfo = checkoutFacade.getCloneInfo();
 						var trustCertsFile = new File(buildDir, "trust-certs.pem");
-
-						var remoteAccessArgs = new ArrayList<String>();
-						remoteAccessArgs.addAll(setupGitCerts(git, Bootstrap.getTrustCertsDir(), trustCertsFile,
-								trustCertsFile.getAbsolutePath(), infoLogger, warningLogger));
-						remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
-								infoLogger, warningLogger));
+						setupGitCerts(git, Bootstrap.getTrustCertsDir(), trustCertsFile,
+								trustCertsFile.getAbsolutePath(), infoLogger, warningLogger);
+						cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
+								infoLogger, warningLogger);
 						
-						git.args(remoteAccessArgs);
-
 						int cloneDepth = checkoutFacade.getCloneDepth();
 						cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
 								jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(),
@@ -796,22 +792,19 @@ public class AgentSocket implements Runnable {
 
 								initRepository(git, infoLogger, warningLogger);
 
-								var remoteAccessArgs = new ArrayList<String>();
-								remoteAccessArgs.addAll(setupGitCerts(git, Agent.getTrustCertsDir(),
+								git.clearArgs();
+								setupGitCerts(git, Agent.getTrustCertsDir(),
 										new File(hostBuildDir, "trust-certs.pem"), 
-										containerTrustCertsFilePath, infoLogger, warningLogger));
+										containerTrustCertsFilePath, infoLogger, warningLogger);
 
 								CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-								remoteAccessArgs.addAll(cloneInfo.setupGitAuth(git, hostBuildDir, 
-										containerBuildDirPath, infoLogger, warningLogger));
+								cloneInfo.setupGitAuth(git, hostBuildDir, containerBuildDirPath, infoLogger, warningLogger);
 
 								int cloneDepth = checkoutFacade.getCloneDepth();
 
 								String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
 								String refName = jobData.getRefName();
 								String commitHash = jobData.getCommitHash();
-
-								git.args(remoteAccessArgs);
 
 								cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash,
 										checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
@@ -858,7 +851,7 @@ public class AgentSocket implements Runnable {
 			client.close();
 			
 			synchronized (hostBuildDir) {
-				deleteDir(hostBuildDir, newDocker(dockerSock), Agent.isInDocker(), jobLogger);
+				FileUtils.deleteDir(hostBuildDir);
 			}
 		}
 	}

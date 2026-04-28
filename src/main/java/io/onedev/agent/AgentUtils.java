@@ -18,7 +18,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -198,8 +197,7 @@ public class AgentUtils {
 	}
 
 	private static void createBuilder(Commandline docker, String builder, TaskLogger jobLogger) {
-		docker.clearArgs();
-		docker.addArgs("buildx", "create", "--name", builder);
+		docker.args("buildx", "create", "--name", builder);
 		var builderExists = new AtomicBoolean(false);
 		var result = docker.execute(new LineConsumer() {
 			@Override
@@ -427,40 +425,6 @@ public class AgentUtils {
 				+ "/onedev-build/command/" + stepScriptFile.getName());
 	}
 
-	public static void writeFile(File file, String content, Commandline docker, boolean runInDocker) {
-		if (runInDocker) {
-			FileUtils.writeFile(file, content, UTF_8);
-		} else {
-			var tempFile = FileUtils.createTempFile();
-			try {
-				FileUtils.writeFile(tempFile, content, UTF_8);
-				docker.clearArgs();
-				docker.addArgs("run", "-v", tempFile.getAbsolutePath() + ":/copy-from", "-v", file.getParentFile().getAbsolutePath() + ":/parent-of-copy-to", "--rm", "busybox",
-						"sh", "-c", "cp /copy-from /parent-of-copy-to/" + file.getName());
-				docker.execute(new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						logger.info(line);
-					}
-
-				}, new LineConsumer() {
-
-					@Override
-					public void consume(String line) {
-						if (line.contains("Error response from daemon"))
-							logger.error(line);
-						else
-							logger.info(line);
-					}
-
-				}).checkReturnCode();
-			} finally {
-				FileUtils.deleteFile(tempFile);
-			}
-		}
-	}
-
 	public static String getOsIds(TaskLogger logger) {
 		return getId("-u", logger) + ":" + getId("-g", logger);
 	}
@@ -494,19 +458,6 @@ public class AgentUtils {
 			docker.addArgs("--rm", "busybox", "sh", "-c", "chown -R " + owner + " /dir-to-change-owner");
 			docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
-	}
-
-	public static void deleteDir(File dir, Commandline docker, boolean runInDocker, TaskLogger logger) {
-		if (runInDocker) 
-			FileUtils.deleteDir(dir);
-		else 
-			deleteDirWithDocker(dir, docker, logger);
-	}
-
-	public static void deleteDirWithDocker(File dir, Commandline docker, TaskLogger logger) {
-		docker.addArgs("run", "-v", dir.getParentFile().getAbsolutePath() + ":/parent-of-dir-to-delete", "--rm", "busybox", "sh", "-c",
-				"rm -rf /parent-of-dir-to-delete/" + dir.getName());
-		docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 	}
 
 	public static Map<String, Object> buildAuthConfig(Collection<RegistryLoginFacade> registryLogins) {
@@ -576,8 +527,7 @@ public class AgentUtils {
 	}
 
 	public static void createNetwork(Commandline docker, String network, @Nullable String options, TaskLogger jobLogger) {
-		docker.clearArgs();
-		docker.addArgs("network", "create");
+		docker.args("network", "create");
 		if (options != null) {
 			for (var option: StringUtils.parseQuoteTokens(options))
 				docker.addArgs(option);
@@ -604,9 +554,8 @@ public class AgentUtils {
 		int retried = 0;
 		while (true) {
 			try {
-				docker.clearArgs();
 				AtomicBoolean networkExists = new AtomicBoolean(false);
-				docker.addArgs("network", "ls", "-q", "--filter", "name=" + network);
+				docker.args("network", "ls", "-q", "--filter", "name=" + network);
 				docker.execute(new LineConsumer() {
 
 					@Override
@@ -625,8 +574,7 @@ public class AgentUtils {
 
 				if (networkExists.get()) {
 					List<String> containerIds = new ArrayList<>();
-					docker.clearArgs();
-					docker.addArgs("ps", "-a", "-q", "--filter", "network=" + network);
+					docker.args("ps", "-a", "-q", "--filter", "network=" + network);
 					docker.execute(new LineConsumer() {
 
 						@Override
@@ -644,8 +592,7 @@ public class AgentUtils {
 					}).checkReturnCode();
 
 					for (String container : containerIds) {
-						docker.clearArgs();
-						docker.addArgs("container", "stop", container);
+						docker.args("container", "stop", container);
 						docker.execute(new LineConsumer() {
 
 							@Override
@@ -662,8 +609,7 @@ public class AgentUtils {
 
 						}).checkReturnCode();
 
-						docker.clearArgs();
-						docker.addArgs("container", "rm", "-v", container);
+						docker.args("container", "rm", "-v", container);
 						docker.execute(new LineConsumer() {
 
 							@Override
@@ -681,8 +627,7 @@ public class AgentUtils {
 						}).checkReturnCode();
 					}
 
-					docker.clearArgs();
-					docker.addArgs("network", "rm", network);
+					docker.args("network", "rm", network);
 					docker.execute(new LineConsumer() {
 
 						@Override
@@ -718,8 +663,7 @@ public class AgentUtils {
 	}
 
 	private static void pullImage(Commandline docker, String image, TaskLogger jobLogger) {
-		docker.clearArgs();
-		docker.addArgs("pull", image);
+		docker.args("pull", image);
 
 		docker.execute(new LineConsumer() {
 
@@ -739,8 +683,7 @@ public class AgentUtils {
 	}
 
 	public static OsInfo getOsInfo(Commandline docker, String image, TaskLogger jobLogger, boolean pullIfNotExist) {
-		docker.clearArgs();
-		docker.addArgs("image", "inspect", image, "--format={{.Os}}%{{.OsVersion}}%{{.Architecture}}");
+		docker.args("image", "inspect", image, "--format={{.Os}}%{{.OsVersion}}%{{.Architecture}}");
 
 		AtomicReference<String> imageNotExistError = new AtomicReference<>();
 		AtomicReference<String> osInfoString = new AtomicReference<>(null);
@@ -785,8 +728,7 @@ public class AgentUtils {
 		logger.info("Finding host path mounted to '" + mountPath + "'...");
 
 		List<String> containerIds = new ArrayList<>();
-		docker.clearArgs();
-		docker.addArgs("ps", "--format={{.ID}}", "-f", "volume=" + mountPath);
+		docker.args("ps", "--format={{.ID}}", "-f", "volume=" + mountPath);
 		docker.execute(new LineConsumer() {
 
 			@Override
@@ -804,8 +746,7 @@ public class AgentUtils {
 		}).checkReturnCode();
 
 		if (containerIds.isEmpty()) { // podman has a bug not being able to filter by volume
-			docker.clearArgs();
-			docker.addArgs("ps", "--format={{.ID}}");
+			docker.args("ps", "--format={{.ID}}");
 			docker.execute(new LineConsumer() {
 
 				@Override
@@ -826,10 +767,9 @@ public class AgentUtils {
 		if (containerIds.isEmpty())
 			throw new IllegalStateException("Unable to find any running container");
 
-		docker.clearArgs();
 		String inspectFormat = String.format("{{range .Mounts}}{{if eq .Destination \"%s\"}}{{.Source}}{{end}}{{end}}",
 				mountPath);
-		docker.addArgs("container", "inspect", "-f", inspectFormat);
+		docker.args("container", "inspect", "-f", inspectFormat);
 
 		for (String containerId : containerIds)
 			docker.addArgs(containerId);
@@ -861,8 +801,7 @@ public class AgentUtils {
 			FileUtils.touchFile(testFile);
 			try {
 				for (String possibleHostInstallPath : possibleHostInstallPaths) {
-					docker.clearArgs();
-					docker.addArgs("run", "--rm", "-v", possibleHostInstallPath + ":" + mountPath, "busybox", "ls",
+					docker.args("run", "--rm", "-v", possibleHostInstallPath + ":" + mountPath, "busybox", "ls",
 							mountPath + "/" + testFile.getName());
 					AtomicBoolean fileNotExist = new AtomicBoolean(false);
 					ExecutionResult result = docker.execute(new LineConsumer() {
@@ -949,8 +888,7 @@ public class AgentUtils {
 
 		while (true) {
 			StringBuilder builder = new StringBuilder();
-			docker.clearArgs();
-			docker.addArgs("inspect", containerName);
+			docker.args("inspect", containerName);
 			docker.execute(new LineConsumer(UTF_8.name()) {
 
 				@Override
@@ -975,8 +913,7 @@ public class AgentUtils {
 			}
 
 			if (stateNode.get("Status").asText().equals("running")) {
-				docker.clearArgs();
-				docker.addArgs("exec", containerName, "sh", "-c", jobService.getReadinessCheckCommand());
+				docker.args("exec", containerName, "sh", "-c", jobService.getReadinessCheckCommand());
 
 				ExecutionResult result = docker.execute(new LineConsumer() {
 
@@ -1003,8 +940,7 @@ public class AgentUtils {
 				else if (stateNode.get("Error").asText().length() != 0)
 					jobLogger.error(stateNode.get("Error").asText());
 
-				docker.clearArgs();
-				docker.addArgs("logs", containerName);
+				docker.args("logs", containerName);
 				docker.execute(new LineConsumer(UTF_8.name()) {
 
 					@Override
