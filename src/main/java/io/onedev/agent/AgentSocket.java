@@ -485,7 +485,7 @@ public class AgentSocket implements Runnable {
 						git.clearArgs();
 						var cloneInfo = checkoutFacade.getCloneInfo();
 						var trustCertsFile = new File(buildDir, "trust-certs.pem");
-						setupGitCerts(git, Bootstrap.getTrustCertsDir(), trustCertsFile,
+						setupGitCerts(git, Agent.getTrustCertsDir(), trustCertsFile,
 								trustCertsFile.getAbsolutePath(), infoLogger, warningLogger);
 						cloneInfo.setupGitAuth(git, buildDir, buildDir.getAbsolutePath(), 
 								infoLogger, warningLogger);
