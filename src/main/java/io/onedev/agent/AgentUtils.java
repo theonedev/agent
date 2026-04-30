@@ -448,13 +448,13 @@ public class AgentUtils {
 		return id.get();
 	}
 
-	public static void changeOwner(Commandline docker, String owner, File dir,
+	public static void changeOwner(Commandline docker, String owner, File dirOrFile,
 									  String osIds, TaskLogger logger) {
 		if (osIds.equals("0:0")) {
-			KubernetesHelper.changeOwner(dir, owner);
+			KubernetesHelper.changeOwner(dirOrFile, owner);
 		} else {
 			docker.args("run");
-			docker.addArgs("-v", dir.getAbsolutePath() + ":/dir-to-change-owner");
+			docker.addArgs("-v", dirOrFile.getAbsolutePath() + ":/dir-to-change-owner");
 			docker.addArgs("--rm", "busybox", "sh", "-c", "chown -R " + owner + " /dir-to-change-owner");
 			docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
