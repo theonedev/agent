@@ -193,7 +193,7 @@ public class Agent {
 					}
 				}
 			} else if (!tempDir.mkdirs()) {
-				throw new RuntimeException("Can not create directory '" + tempDir.getAbsolutePath() + "'");
+				throw new RuntimeException("Cannot create directory '" + tempDir.getAbsolutePath() + "'");
 			}
 
 			System.setProperty("java.io.tmpdir", tempDir.getAbsolutePath());
