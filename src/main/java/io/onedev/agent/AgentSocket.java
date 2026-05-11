@@ -13,6 +13,7 @@ import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.agent.AgentUtils.pruneBuilderCache;
 import static io.onedev.agent.AgentUtils.runImagetools;
 import static io.onedev.agent.AgentUtils.startService;
+import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
 import static io.onedev.k8shelper.KubernetesHelper.downloadDependencies;
@@ -41,7 +42,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 
 import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.HttpHeaders;
@@ -151,7 +151,7 @@ public class AgentSocket implements Runnable {
 				File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
 	    		if (!versionAtServer.equals(Agent.version)) {
 	    			logger.info("Updating agent to version " + versionAtServer + "...");
-	    			Client client = ClientBuilder.newClient();
+	    			Client client = buildRestClient(Agent.sslFactory);
 	    			try {
 	    				WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
 	    				Invocation.Builder builder =  target.request();
@@ -555,7 +555,6 @@ public class AgentSocket implements Runnable {
 			FileUtils.writeFile(new File(hostAttributesDir, entry.getKey()), entry.getValue(), UTF_8);
 		var dockerSock = jobData.getDockerSock();
 
-		Client client = ClientBuilder.newClient();
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		buildDirs.put(jobData.getJobToken(), hostBuildDir);
 		if (dockerSock != null)
@@ -848,7 +847,6 @@ public class AgentSocket implements Runnable {
 			buildDirs.remove(jobData.getJobToken());
 			if (dockerSock != null)
 				dockerSocks.remove(jobData.getJobToken());
-			client.close();
 			
 			synchronized (hostBuildDir) {
 				FileUtils.deleteDir(hostBuildDir);
@@ -857,7 +855,7 @@ public class AgentSocket implements Runnable {
 	}
 
 	private void testShellExecutor(Session session, TestShellJobData jobData) {
-		Client client = ClientBuilder.newClient();
+		Client client = buildRestClient(Agent.sslFactory);
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 		try {
 			TaskLogger jobLogger = new TaskLogger() {
@@ -895,7 +893,7 @@ public class AgentSocket implements Runnable {
 			File workDir = null;
 			File authInfoDir = null;
 
-			Client client = ClientBuilder.newClient();
+			Client client = buildRestClient(Agent.sslFactory);
 			jobThreads.put(jobData.getJobToken(), Thread.currentThread());
 			try {
 				TaskLogger jobLogger = new TaskLogger() {
