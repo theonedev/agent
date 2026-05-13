@@ -60,7 +60,6 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
 
 import io.onedev.agent.job.DockerJobData;
@@ -118,8 +117,6 @@ public class AgentSocket implements Runnable {
 	
 	private volatile boolean stopped;
 
-	private static volatile String hostWorkPath;
-	
 	@OnWebSocketConnect
 	public void onConnect(Session session) throws IOException {
 		logger.info("Connected to server");
@@ -129,15 +126,10 @@ public class AgentSocket implements Runnable {
 	}
 
 	private String getHostPath(String path, @Nullable String dockerSock) {
-		String workPath = Agent.getWorkDir().getAbsolutePath();
-		Preconditions.checkState(path.startsWith(workPath + "/") || path.startsWith(workPath + "\\"));
-		if (hostWorkPath == null) {
-			if (Agent.isInDocker()) 
-				hostWorkPath = AgentUtils.getHostPath(newDocker(dockerSock), workPath);
-			else 
-				hostWorkPath = workPath;
-		}
-		return hostWorkPath + path.substring(workPath.length());
+		if (Agent.isInDocker()) 
+			return AgentUtils.getHostPath(newDocker(dockerSock), path);
+		else 
+			return path;
 	}
 	
 	@OnWebSocketMessage

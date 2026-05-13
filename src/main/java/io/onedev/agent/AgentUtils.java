@@ -12,10 +12,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -58,6 +61,8 @@ import io.onedev.k8shelper.ServiceFacade;
 public class AgentUtils {
 
 	private static final Logger logger = LoggerFactory.getLogger(AgentUtils.class);
+
+	private static volatile Map<String, String> mountVolumes;
 
 	public static LineConsumer newInfoLogger(TaskLogger jobLogger) {
 		return new LineConsumer(UTF_8.name()) {
@@ -724,29 +729,26 @@ public class AgentUtils {
 		}
 	}
 
-	public static String getHostPath(Commandline docker, String mountPath) {
-		logger.info("Finding host path mounted to '" + mountPath + "'...");
+	public static Map<String, String> getMountVolumes(Commandline docker) {
+		if (mountVolumes == null) {
+			var tempMountVolumes = new HashMap<String, String>();
 
-		List<String> containerIds = new ArrayList<>();
-		docker.args("ps", "--format={{.ID}}", "-f", "volume=" + mountPath);
-		docker.execute(new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				containerIds.add(line);
+			String anchorPathString;
+			if (Files.exists(Paths.get("/opt/onedev"))) {
+				anchorPathString = "/opt/onedev";
+			} else if (Files.exists(Paths.get("/agent/work"))) {
+				anchorPathString = "/agent/work";
+			} else {
+				throw new ExplicitException("Neither /opt/onedev nor /agent/work is present: "
+						+ "unable to determine current container's mount volumes");
 			}
+			Path anchorPath = Paths.get(anchorPathString);
 
-		}, new LineConsumer() {
+			logger.info("Discovering mount volumes of current container (anchor: " + anchorPathString + ")...");
+			long time = System.currentTimeMillis();
 
-			@Override
-			public void consume(String line) {
-				logger.error(line);
-			}
-
-		}).checkReturnCode();
-
-		if (containerIds.isEmpty()) { // podman has a bug not being able to filter by volume
-			docker.args("ps", "--format={{.ID}}");
+			List<String> containerIds = new ArrayList<>();
+			docker.args("ps", "--filter", "volume=" + anchorPathString, "--format={{.ID}}");
 			docker.execute(new LineConsumer() {
 
 				@Override
@@ -762,85 +764,116 @@ public class AgentUtils {
 				}
 
 			}).checkReturnCode();
-		}
-		
-		if (containerIds.isEmpty())
-			throw new IllegalStateException("Unable to find any running container");
 
-		String inspectFormat = String.format("{{range .Mounts}}{{if eq .Destination \"%s\"}}{{.Source}}{{end}}{{end}}",
-				mountPath);
-		docker.args("container", "inspect", "-f", inspectFormat);
+			if (containerIds.isEmpty())
+				throw new ExplicitException("Unable to identify current container's mount volumes");
 
-		for (String containerId : containerIds)
-			docker.addArgs(containerId);
+			String inspectFormat = "{{range .Mounts}}{{.Destination}}\t{{.Source}}{{println}}{{end}}";
+			Map<String, Map<String, String>> candidates = new LinkedHashMap<>();
+			for (String containerId : containerIds) {
+				Map<String, String> mounts = new LinkedHashMap<>();
+				docker.args("container", "inspect", "-f", inspectFormat, containerId);
+				docker.execute(new LineConsumer() {
 
-		List<String> possibleHostInstallPaths = new ArrayList<>();
-		docker.execute(new LineConsumer() {
+					@Override
+					public void consume(String line) {						
+						int sepIdx = line.indexOf('\t');
+						if (sepIdx != -1)
+							mounts.put(line.substring(0, sepIdx), line.substring(sepIdx + 1));
+					}
 
-			@Override
-			public void consume(String line) {
-				if (StringUtils.isNotBlank(line))
-					possibleHostInstallPaths.add(line);
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						logger.error(line);
+					}
+
+				}).checkReturnCode();
+
+				candidates.put(containerId, mounts);
 			}
 
-		}, new LineConsumer() {
+			if (candidates.isEmpty()) {
+				throw new ExplicitException("Unable to identify current container's mount volumes");
+			} else if (candidates.size() == 1) {
+				tempMountVolumes.putAll(candidates.values().iterator().next());
+			} else {
+				String expectedFingerprint;
+				try {
+					Map<String, Object> attrs = Files.readAttributes(anchorPath, "unix:dev,ino");
+					expectedFingerprint = attrs.get("dev") + ":" + attrs.get("ino");
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
 
-			@Override
-			public void consume(String line) {
-				logger.error(line);
-			}
+				for (Map<String, String> mounts : candidates.values()) {
+					String candidateAnchorHostPathString = null;
+					for (var entry : mounts.entrySet()) {
+						if (anchorPath.equals(Paths.get(entry.getKey()))) {
+							candidateAnchorHostPathString = entry.getValue();
+							break;
+						}
+					}
+					if (candidateAnchorHostPathString == null)
+						continue;
 
-		}).checkReturnCode();
-
-		String hostInstallPath = null;
-
-		if (possibleHostInstallPaths.isEmpty()) {
-			throw new IllegalStateException("No container mounting host path found: please make sure to use bind mount to launch OneDev server/agent");
-		} else if (possibleHostInstallPaths.size() > 1) {
-			File testFile = new File(mountPath, UUID.randomUUID().toString());
-			FileUtils.touchFile(testFile);
-			try {
-				for (String possibleHostInstallPath : possibleHostInstallPaths) {
-					docker.args("run", "--rm", "-v", possibleHostInstallPath + ":" + mountPath, "busybox", "ls",
-							mountPath + "/" + testFile.getName());
-					AtomicBoolean fileNotExist = new AtomicBoolean(false);
-					ExecutionResult result = docker.execute(new LineConsumer() {
+					docker.args("run", "--rm", "-v", candidateAnchorHostPathString + ":" + anchorPathString, "busybox",
+							"stat", "-c", "%d:%i", anchorPathString);
+					AtomicReference<String> actualFingerprint = new AtomicReference<>();
+					docker.execute(new LineConsumer() {
 
 						@Override
 						public void consume(String line) {
+							actualFingerprint.set(line.trim());
 						}
 
 					}, new LineConsumer() {
 
 						@Override
 						public void consume(String line) {
-							if (line.contains("No such file or directory"))
-								fileNotExist.set(true);
-							else
-								logger.error(line);
+							logger.error(line);
 						}
 
-					});
-					if (fileNotExist.get()) {
-						continue;
-					} else {
-						result.checkReturnCode();
-						hostInstallPath = possibleHostInstallPath;
+					}).checkReturnCode();
+
+					if (expectedFingerprint.equals(actualFingerprint.get())) {
+						tempMountVolumes.putAll(mounts);
 						break;
 					}
 				}
-			} finally {
-				FileUtils.deleteFile(testFile);
-			}
-		} else {
-			hostInstallPath = possibleHostInstallPaths.iterator().next();
-		}
-		if (hostInstallPath != null)
-			logger.info("Found host path: " + hostInstallPath);
-		else
-			throw new ExplicitException("Unable to find host path");
 
-		return hostInstallPath;
+				if (tempMountVolumes.isEmpty())
+					throw new ExplicitException("Unable to identify current container's mount volumes");
+			}
+
+			logger.info("Discovered " + tempMountVolumes.size() + " mount volume(s) (took "
+					+ (System.currentTimeMillis() - time) + "ms)");
+			mountVolumes = tempMountVolumes;
+		}
+		return mountVolumes;
+	}
+
+	public static String getHostPath(Commandline docker, String containerPathString) {
+		Path containerPath = Paths.get(containerPathString).normalize();
+		Path bestDestinationPath = null;
+		Path bestSourcePath = null;
+		for (var entry : getMountVolumes(docker).entrySet()) {
+			Path destinationPath = Paths.get(entry.getKey());
+			if (containerPath.startsWith(destinationPath)) {
+				if (bestDestinationPath == null || destinationPath.getNameCount() > bestDestinationPath.getNameCount()) {
+					bestDestinationPath = destinationPath;
+					bestSourcePath = Paths.get(entry.getValue());
+				}
+			}
+		}
+
+		if (bestDestinationPath == null) {
+			throw new ExplicitException("No container mount found containing path '" + containerPathString
+					+ "': please make sure to use bind mount to launch OneDev server/agent");
+		}
+
+		return bestSourcePath.resolve(bestDestinationPath.relativize(containerPath)).toString();
 	}
 
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,
