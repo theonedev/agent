@@ -17,7 +17,6 @@ import org.eclipse.jetty.websocket.api.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.agent.AgentSocket;
 import io.onedev.agent.AgentUtils;
 import io.onedev.agent.Message;
 import io.onedev.agent.MessageTypes;
@@ -31,27 +30,26 @@ import io.onedev.commons.utils.command.PtyMode;
 import io.onedev.commons.utils.command.PtyMode.ResizeSupport;
 import io.onedev.commons.utils.command.StreamPumper;
 
-public class ShellSession {
+public abstract class ShellSession {
 
 	private static final Logger logger = LoggerFactory.getLogger(ShellSession.class);
 
-	private final String sessionId;
+	protected final String sessionId;
 	
-	private final Session agentSession;
-	
+	protected final Session agentSession;
+		
 	private final PtyMode ptyMode;
 	
 	private volatile OutputStream shellStdin;
 	
 	private final Future<?> execution;
 	
-	public ShellSession(String sessionId, Session agentSession, Commandline cmdline) {
+	public ShellSession(String sessionId, Session agentSession, MessageTypes exitMessageType, Commandline cmdline) {
 		this.sessionId = sessionId;
 		this.agentSession = agentSession;
 		
         ptyMode = new PtyMode();
         cmdline.ptyMode(ptyMode);
-
 
         execution = Bootstrap.executorService.submit(new Runnable() {
 
@@ -111,7 +109,7 @@ public class ShellSession {
                     if (result.getReturnCode() != 0)
                     	onOutput(AgentUtils.encodeBase64Error("Shell exited with return code: " + result.getReturnCode()));
                     else
-                    	new Message(MessageTypes.SHELL_EXIT, sessionId).sendBy(agentSession);
+                    	new Message(exitMessageType, sessionId).sendBy(agentSession);
 	            } catch (Throwable e) {
 	            	ExplicitException explicitException = ExceptionUtils.find(e, ExplicitException.class);
 	            	if (explicitException != null) {
@@ -130,9 +128,7 @@ public class ShellSession {
         
 	}
 	
-	private void onOutput(String base64Data) {
-		AgentSocket.sendOutput(sessionId, agentSession, base64Data);
-	}
+	protected abstract void onOutput(String base64Data);
 
 	public void writeToStdin(String data) {
 		var shellStdinCopy = shellStdin;

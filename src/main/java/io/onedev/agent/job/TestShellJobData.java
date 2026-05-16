@@ -1,26 +1,13 @@
 package io.onedev.agent.job;
 
-import java.io.Serializable;
+import io.onedev.agent.TestShellData;
 
-public class TestShellJobData implements Serializable {
+public class TestShellJobData extends TestShellData {
 
 	private static final long serialVersionUID = 1L;
-	
-	private final String jobToken;
-	
-	private final String commands;
-	
-	public TestShellJobData(String jobToken, String commands) {
-		this.jobToken = jobToken;
-		this.commands = commands;
-	}
 
-	public String getJobToken() {
-		return jobToken;
-	}
-
-	public String getCommands() {
-		return commands;
+	public TestShellJobData(String jobToken) {
+		super(jobToken);
 	}
 
 }

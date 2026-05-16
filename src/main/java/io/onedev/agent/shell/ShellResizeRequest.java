@@ -2,7 +2,7 @@ package io.onedev.agent.shell;
 
 import java.io.Serializable;
 
-public class ShellResizeRequest implements Serializable {
+public abstract class ShellResizeRequest implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 

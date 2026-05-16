@@ -16,12 +16,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.TimeoutException;
 import java.util.logging.Handler;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.SystemUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
@@ -120,17 +118,7 @@ public class Agent {
 		thread = Thread.currentThread();
 		
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-			if (client != null) {
-				for (Session session: client.getOpenSessions()) {
-					logger.info("Waiting for running jobs to finish...");
-					try {
-						WebsocketUtils.call(session, new WantToDisconnectAgent(), 0);
-					} catch (InterruptedException | TimeoutException e) {
-						logger.error("Error waiting for running jobs", e);
-					}
-				}
-			}
-
+			AgentSocket.onStopping();
 			stopping = true;
 			while (!stopped) {
 				thread.interrupt();
@@ -315,12 +303,8 @@ public class Agent {
 				gitPath = System.getProperty(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath))
 				gitPath = agentProps.getProperty(GIT_PATH_KEY);
-			if (StringUtils.isBlank(gitPath)) {
-				if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/git").exists())
-					gitPath = "/usr/local/bin/git";
-				else
-					gitPath = "git";
-			}
+			if (StringUtils.isBlank(gitPath)) 
+				gitPath = "git";
 			
 			String gitError = checkGitError(gitPath, GIT_MIN_VERSION);
 			if (gitError != null)
@@ -331,8 +315,8 @@ public class Agent {
 				dockerPath = System.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath))
 				dockerPath = agentProps.getProperty(DOCKER_PATH_KEY);
-
-			dockerPath = AgentUtils.getDockerExecutable(StringUtils.trimToNull(dockerPath));
+			if (StringUtils.isBlank(dockerPath)) 
+				dockerPath = "docker";
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
 
@@ -354,9 +338,12 @@ public class Agent {
 			ClientUpgradeRequest request = new ClientUpgradeRequest();
 			request.setHeader(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + token);
 			
+			boolean websocketConnectionAttempted = false;
 			while (!stopping) {
 				try {
-					logger.info("Connecting to " + serverUrl + "...");
+					if (websocketConnectionAttempted)
+						logger.info("Connecting to " + serverUrl + "...");
+					websocketConnectionAttempted = true;
 					
 					reconnect = false;
 					client.start();
@@ -389,7 +376,7 @@ public class Agent {
 		}
 	}
 
-	static File getTrustCertsDir() {
+	public static File getTrustCertsDir() {
 		return new File(installDir, "conf/trust-certs");
 	}
 	
@@ -558,10 +545,10 @@ public class Agent {
 		throw new RuntimeException("Unable to find agent directory");
 	}
 
-	public static void log(Session session, String jobToken, String message, @Nullable String sessionId) {
+	public static void log(Session session, String token, String message, @Nullable String sessionId) {
 		if (sessionId == null)
 			sessionId = "";
-		new Message(MessageTypes.JOB_LOG, jobToken + ":" + sessionId + ":" + message).sendBy(session);
+		new Message(MessageTypes.LOG, token + ":" + sessionId + ":" + message).sendBy(session);
 	}
 	
 }
