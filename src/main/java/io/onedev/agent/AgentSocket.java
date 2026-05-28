@@ -67,6 +67,7 @@ import javax.ws.rs.core.Response;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SerializationUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
@@ -230,13 +231,13 @@ public class AgentSocket implements Runnable {
 	    					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
 	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
 	    					if (!logbackConfig.contains("MaskingPatternLayout")) {
-	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    						logbackConfig = Strings.CS.replace(logbackConfig, 
 	    								"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
 	    								"ch.qos.logback.core.encoder.LayoutWrappingEncoder");
-	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    						logbackConfig = Strings.CS.replace(logbackConfig, 
 	    								"<pattern>", 
 	    								"<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
-	    						logbackConfig = StringUtils.replace(logbackConfig, 
+	    						logbackConfig = Strings.CS.replace(logbackConfig, 
 	    								"</pattern>", 
 	    								"</pattern>\n			</layout>");
 	    						FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
