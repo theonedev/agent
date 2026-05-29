@@ -48,36 +48,36 @@ public class AgentUtils {
 
 	private static volatile Map<String, String> mountVolumes;
 
-	public static LineConsumer newInfoLogger(TaskLogger jobLogger) {
+	public static LineConsumer newInfoLogger(TaskLogger taskLogger) {
 		return new LineConsumer(UTF_8.name()) {
 	
 			private String sessionId = UUID.randomUUID().toString();
 			
 			@Override
 			public void consume(String line) {
-				jobLogger.log(line, sessionId);
+				taskLogger.log(line, sessionId);
 			}
 			
 		};
 	}
 
-	public static LineConsumer newWarningLogger(TaskLogger jobLogger) {
+	public static LineConsumer newWarningLogger(TaskLogger taskLogger) {
 		return new LineConsumer(UTF_8.name()) {
 	
 			@Override
 			public void consume(String line) {
-				jobLogger.warning(line);
+				taskLogger.warning(line);
 			}
 			
 		};
 	}
 
-	public static LineConsumer newErrorLogger(TaskLogger jobLogger) {
+	public static LineConsumer newErrorLogger(TaskLogger taskLogger) {
 		return new LineConsumer(UTF_8.name()) {
 	
 			@Override
 			public void consume(String line) {
-				jobLogger.error(line);
+				taskLogger.error(line);
 			}
 			
 		};
@@ -123,9 +123,9 @@ public class AgentUtils {
 			return explicitException.getMessage();
 	}
 
-	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger jobLogger) {
+	public static ProcessKiller newDockerKiller(Commandline docker, String containerName, TaskLogger taskLogger) {
 		return (process, executionId) -> {
-			jobLogger.log("Stopping container '" + containerName + "'...");
+			taskLogger.log("Stopping container '" + containerName + "'...");
 			docker.args("stop", containerName);
 			docker.execute(new LineConsumer() {
 
@@ -138,18 +138,18 @@ public class AgentUtils {
 
 				@Override
 				public void consume(String line) {
-					jobLogger.log(line);
+					taskLogger.log(line);
 				}
 
 			}).checkReturnCode();
 		};
 	}
 
-	public static String getOsIds(TaskLogger logger) {
-		return getId("-u", logger) + ":" + getId("-g", logger);
+	public static String getOsIds(TaskLogger taskLogger) {
+		return getId("-u", taskLogger) + ":" + getId("-g", taskLogger);
 	}
 
-	private static int getId(String flag, TaskLogger logger) {
+	private static int getId(String flag, TaskLogger taskLogger) {
 		var cmd = new Commandline("id");
 		cmd.addArgs(flag);
 		AtomicInteger id = new AtomicInteger(0);
@@ -169,14 +169,14 @@ public class AgentUtils {
 	}
 
 	public static void changeOwner(Commandline docker, String owner, File dirOrFile,
-									  String osIds, TaskLogger logger) {
+									  String osIds, TaskLogger taskLogger) {
 		if (osIds.equals("0:0")) {
 			KubernetesHelper.changeOwner(dirOrFile, owner);
 		} else {
 			docker.args("run");
 			docker.addArgs("-v", dirOrFile.getAbsolutePath() + ":/dir-to-change-owner");
 			docker.addArgs("--rm", "busybox", "sh", "-c", "chown -R " + owner + " /dir-to-change-owner");
-			docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+			docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
 		}
 	}
 
@@ -236,11 +236,11 @@ public class AgentUtils {
 								  String dockerImage, @Nullable String cpuLimit,
 								  @Nullable String memoryLimit, @Nullable String dockerOptions,
 								  Function<String, String> hostPathResolver,
-								  TaskLogger logger) {
+								  TaskLogger taskLogger) {
 		callWithRegistryLogins(docker, registryLogins, () -> {
 			File testDir = FileUtils.createTempDir("docker-test");
 			try {
-				logger.log("Testing specified docker image...");
+				taskLogger.log("Testing specified docker image...");
 				docker.args("run", "--rm");
 				if (cpuLimit != null)
 					docker.addArgs("--cpus", cpuLimit);
@@ -251,11 +251,11 @@ public class AgentUtils {
 				docker.addArgs("-v", hostPathResolver.apply(testDir.getAbsolutePath()) + ":" + "/onedev-docker-test");
 				docker.addArgs("-w", "/onedev-docker-test");
 				docker.addArgs(dockerImage, "sh", "-c", "echo hello from container");
-				docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+				docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
 
-				logger.log("Checking busybox availability...");
+				taskLogger.log("Checking busybox availability...");
 				docker.args("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
-				docker.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+				docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
 			} finally {
 				FileUtils.deleteDir(testDir);
 			}
@@ -265,10 +265,10 @@ public class AgentUtils {
 
 	public static void testDocker(Commandline docker, TestDockerData testData,
 								  Function<String, String> hostPathResolver,
-								  TaskLogger logger) {
+								  TaskLogger taskLogger) {
 		testDocker(docker, testData.getRegistryLogins(), testData.getDockerImage(), testData.getCpuLimit(),
 				testData.getMemoryLimit(), testData.getDockerOptions(), hostPathResolver,
-				logger);
+				taskLogger);
 	}
 
 	public static void useDockerSock(Commandline docker, @Nullable String dockerSockPath) {
@@ -448,10 +448,10 @@ public class AgentUtils {
 		return docker;
 	}
 
-	public static void testCommands(TaskLogger logger) {
+	public static void testCommands(TaskLogger taskLogger) {
 		var testDir = FileUtils.createTempDir("commands-test");
 		try {
-			logger.log("Running test commands...");
+			taskLogger.log("Running test commands...");
 
 			var shellFacility = new DefaultShellFacility();
 			var cmdline = new Commandline(shellFacility.getExecutable());
@@ -460,7 +460,7 @@ public class AgentUtils {
 			var testScriptFile = new File(testDir, "test" + shellFacility.getScriptExtension());
 			FileUtils.writeStringToFile(testScriptFile, "echo 'hello from shell'", UTF_8);
 			cmdline.workingDir(testDir).addArgs(testScriptFile.getAbsolutePath());
-			cmdline.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+			cmdline.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		} finally {
