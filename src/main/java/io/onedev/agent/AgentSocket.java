@@ -50,6 +50,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -715,6 +716,7 @@ public class AgentSocket implements Runnable {
 				CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 				var osIds = getOsIds(jobLogger);
 				var cacheConfigIndex = new AtomicInteger(1);
+				var pulledImages = new HashSet<String>();
 				var successful = entryFacade.execute(new LeafHandler() {
 
 					private int runStepContainer(Commandline docker, String image, String runAs,
@@ -726,7 +728,7 @@ public class AgentSocket implements Runnable {
 						jobContainerNames.put(jobData.getJobToken(), containerName);
 						try {
 							docker.args("run", "--name=" + containerName, "--network=" + network);
-							if (dockerSettings.isAlwaysPullImage())
+							if (dockerSettings.isAlwaysPullImage() && pulledImages.add(image))
 								docker.addArgs("--pull=always");
 							docker.addArgs("--user", runAs);
 
@@ -1132,7 +1134,8 @@ public class AgentSocket implements Runnable {
 						callWithRegistryLogins(docker, allRegistryLogins, () -> {
 							WorkspaceUtils.deleteContainerIfExist(newDocker(dockerSock), containerName, workspaceLogger);
 
-							WorkspaceUtils.setCommonDockerRunOptions(docker, containerName, runAs, dockerSettings.isAlwaysPullImage(),
+							WorkspaceUtils.setCommonDockerRunOptions(docker, containerName, runAs, 
+									dockerSettings.isAlwaysPullImage() && userDataInitEntrypointArgs == null,
 									dockerSettings.getCpuLimit(), dockerSettings.getMemoryLimit());
 							docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, workspaceLogger));
 
