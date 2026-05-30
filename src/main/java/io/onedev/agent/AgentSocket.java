@@ -59,6 +59,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
 
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.Invocation;
@@ -187,6 +188,7 @@ public class AgentSocket implements Runnable {
 	    	case UPDATE:
 	    		String versionAtServer = new String(messageData, UTF_8);
 				File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
+				File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
 	    		if (!versionAtServer.equals(Agent.version)) {
 	    			logger.info("Updating agent to version " + versionAtServer + "...");
 	    			Client client = buildRestClient(Agent.sslFactory);
@@ -229,7 +231,6 @@ public class AgentSocket implements Runnable {
 
 	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 
-	    					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
 	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
 	    					if (!logbackConfig.contains("MaskingPatternLayout")) {
 	    						logbackConfig = Strings.CS.replace(logbackConfig, 
@@ -241,21 +242,25 @@ public class AgentSocket implements Runnable {
 	    						logbackConfig = Strings.CS.replace(logbackConfig, 
 	    								"</pattern>", 
 	    								"</pattern>\n			</layout>");
-	    						FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
 	    					}
-	    					
+	    					if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
+	    						logbackConfig = logbackConfig.replaceFirst(
+	    								"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
+	    								Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
+	    					}
+	    					FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);	    					
 	    				} 
 	    			} finally {
 	    				client.close();
 	    			}
 	        		Agent.restart();
 	    		} else {
-					if (wrapperConfFile.exists()) {
-						var confChanged = false;
+					if (!Agent.isSandboxMode()) {						
+						var wrapperConfChanged = false;
 						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
 						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
 						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
-							confChanged = true;
+							wrapperConfChanged = true;
 							lines = new ArrayList<>(lines);
 							lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
 
@@ -272,22 +277,36 @@ public class AgentSocket implements Runnable {
 							wrapperConf = StringUtils.join(lineSeparator(), lines);
 						}
 						if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
-							confChanged = true;
+							wrapperConfChanged = true;
 							wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
 						}
 						if (wrapperConf.contains("wrapper.java.version.min=11")) {
-							confChanged = true;
+							wrapperConfChanged = true;
 							wrapperConf = wrapperConf.replace( "wrapper.java.version.min=11", "wrapper.java.version.min=17");
 							wrapperConf = wrapperConf.replace("Java version 11", "Java version 17");
 							wrapperConf = wrapperConf.replace("Java 11 or higher", "Java 17 or higher");
 						}
 
-						if (confChanged) {
+						if (wrapperConfChanged) 
 							FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
+	
+						var logbackConfigChanged = false;
+						String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
+						if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
+							logbackConfigChanged = true;
+							logbackConfig = logbackConfig.replaceFirst(
+									"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
+									Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
+						}
+						if (logbackConfigChanged) 
+							FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
+	
+						if (wrapperConfChanged || logbackConfigChanged) {
 							Agent.restart();
 							break;
 						}
 					}
+
 					AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
 							Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
 					new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);

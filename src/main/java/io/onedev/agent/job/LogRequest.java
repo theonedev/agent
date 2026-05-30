@@ -1,17 +1,19 @@
 package io.onedev.agent.job;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.Serializable;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
-
-import io.onedev.commons.utils.FileUtils;
 
 public class LogRequest implements Serializable {
 
@@ -27,13 +29,26 @@ public class LogRequest implements Serializable {
 			for (int i=index; i>=1; i--) {
 				File rollFile = new File(logDir, logFile.getName() + "." + i);
 				if (rollFile.exists())
-					lines.addAll((FileUtils.readLines(rollFile, StandardCharsets.UTF_8)));
+					lines.addAll(readLines(rollFile));
 			}
-			lines.addAll((FileUtils.readLines(logFile, StandardCharsets.UTF_8)));
+			lines.addAll(readLines(logFile));
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
     	return lines;
+	}
+
+	private static List<String> readLines(File file) throws IOException {
+		var decoder = StandardCharsets.UTF_8.newDecoder()
+				.onMalformedInput(CodingErrorAction.REPLACE)
+				.onUnmappableCharacter(CodingErrorAction.REPLACE);
+		try (var reader = new BufferedReader(new InputStreamReader(Files.newInputStream(file.toPath()), decoder))) {
+			var lines = new ArrayList<String>();
+			String line;
+			while ((line = reader.readLine()) != null)
+				lines.add(line);
+			return lines;
+		}
 	}
 	
 	public static List<String> toZoneId(List<String> logLines, ZoneId zoneId) {

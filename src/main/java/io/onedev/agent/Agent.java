@@ -494,6 +494,10 @@ public class Agent {
 			logger.warn("Restart request ignored as there is no wrapper manager available");
 		}
 	}
+
+	public static boolean isSandboxMode() {
+		return wrapperManagerClass == null;
+	}
 	
 	public static boolean isInDocker() {
 		return new File(installDir, "IN_DOCKER").exists();
