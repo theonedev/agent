@@ -685,6 +685,9 @@ public class AgentSocket implements Runnable {
 	}
 
 	private boolean executeDockerJob(Session session, DockerJobData jobData) {
+		if (SystemUtils.IS_OS_WINDOWS) {
+			throw new ExplicitException("Docker executor is not supported on Windows");
+		}
 		File hostBuildDir = getBuildDir(Agent.getTempDir(), jobData.getProjectId(), 
 				jobData.getBuildNumber(), jobData.getSubmitSequence());
 		File hostAttributesDir = new File(hostBuildDir, KubernetesHelper.ATTRIBUTES);
@@ -1022,6 +1025,9 @@ public class AgentSocket implements Runnable {
 	}
 	
 	private void testDockerExecutor(Session session, TestDockerJobData jobData) {
+		if (SystemUtils.IS_OS_WINDOWS) {
+			throw new ExplicitException("Docker executor is not supported on Windows");
+		}
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
 		Client client = buildRestClient(Agent.sslFactory);
@@ -1037,6 +1043,9 @@ public class AgentSocket implements Runnable {
 	}
 
 	private void testDockerWorkspace(Session session, TestDockerWorkspaceData workspaceData) {
+		if (SystemUtils.IS_OS_WINDOWS) {
+			throw new ExplicitException("Docker workspace is not supported on Windows");
+		}
 		var dockerSock = workspaceData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
 		Client client = buildRestClient(Agent.sslFactory);
@@ -1070,6 +1079,9 @@ public class AgentSocket implements Runnable {
 	}
 	
 	private WorkspaceProvisioned provisionDockerWorkspace(Session session, ProvisionDockerWorkspaceData data) {
+		if (SystemUtils.IS_OS_WINDOWS) {
+			throw new ExplicitException("Docker workspace is not supported on Windows");
+		}
 		var provisionTask = new AwaitableFutureTask<WorkspaceProvisioned>(() -> {
 			var token = data.getWorkspaceToken();
 			var dockerSettings = data.getDockerSettings();
