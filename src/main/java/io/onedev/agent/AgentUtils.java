@@ -245,7 +245,7 @@ public class AgentUtils {
 				if (cpuLimit != null)
 					docker.addArgs("--cpus", cpuLimit);
 				if (memoryLimit != null)
-					docker.args("--memory", memoryLimit);
+					docker.addArgs("--memory", memoryLimit);
 				if (dockerOptions != null)
 					docker.addArgs(StringUtils.parseQuoteTokens(dockerOptions));
 				docker.addArgs("-v", hostPathResolver.apply(testDir.getAbsolutePath()) + ":" + "/onedev-docker-test");
