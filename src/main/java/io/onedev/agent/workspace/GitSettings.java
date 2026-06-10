@@ -16,17 +16,20 @@ public class GitSettings implements Serializable {
 
 	private final CloneInfo cloneInfo;
 
+	private final String commitHash;
+
 	@Nullable
-	private final String refName;
+	private final String branch;
 
 	private final boolean retrieveLfs;
 
 	public GitSettings(String userName, String userEmail, CloneInfo cloneInfo,
-			@Nullable String refName, boolean retrieveLfs) {
+			String commitHash, @Nullable String branch, boolean retrieveLfs) {
 		this.userName = userName;
 		this.userEmail = userEmail;
 		this.cloneInfo = cloneInfo;
-		this.refName = refName;
+		this.commitHash = commitHash;
+		this.branch = branch;
 		this.retrieveLfs = retrieveLfs;
 	}
 
@@ -42,9 +45,13 @@ public class GitSettings implements Serializable {
 		return cloneInfo;
 	}
 
+	public String getCommitHash() {
+		return commitHash;
+	}
+
 	@Nullable
-	public String getRefName() {
-		return refName;
+	public String getBranch() {
+		return branch;
 	}
 
 	public boolean isRetrieveLfs() {

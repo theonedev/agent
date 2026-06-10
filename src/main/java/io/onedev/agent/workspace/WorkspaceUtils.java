@@ -150,14 +150,6 @@ public class WorkspaceUtils {
 		return portMappings;
 	}
 
-	public static void setupRepository(File workspaceDir, ProvisionDockerWorkspaceData data, TaskLogger logger) {
-		setupRepository(workspaceDir, data.getGitSettings(), WorkspaceHelper.WORKSPACE_PATH, logger);
-	}
-
-	public static void setupRepository(File workspaceDir, ProvisionShellWorkspaceData data, TaskLogger logger) {
-		setupRepository(workspaceDir, data.getGitSettings(), workspaceDir.getAbsolutePath(), logger);
-	}
-
 	public static void setupShellProvisioned(SetupScriptConfig setupScriptConfig, File workspaceDir, 
 			Map<String, String> envVars, TaskLogger logger) {
 		logger.log("Running setup commands...");
@@ -176,14 +168,14 @@ public class WorkspaceUtils {
 		cmdline.execute(newInfoLogger(logger), newErrorLogger(logger)).checkReturnCode();
 	}
 
-	private static void setupRepository(File workspaceDir, GitSettings gitSettings,
+	public static void setupRepository(File workspaceDir, GitSettings gitSettings,
 			String runtimeWorkspaceDirPath, TaskLogger logger) {
 		var cloneInfo = gitSettings.getCloneInfo();
 		var cloneUrl = cloneInfo.getCloneUrl();
 
 		WorkspaceHelper.setupRepository(workspaceDir, new Commandline(Agent.gitPath),
-				gitSettings.getUserName(), gitSettings.getUserEmail(), cloneInfo,
-				gitSettings.getRefName(), gitSettings.isRetrieveLfs(),
+				gitSettings.getUserName(), gitSettings.getUserEmail(), cloneInfo, 
+				gitSettings.getCommitHash(), gitSettings.getBranch(), gitSettings.isRetrieveLfs(),
 				Agent.getTrustCertsDir(), runtimeWorkspaceDirPath, cloneUrl,
 				newInfoLogger(logger), newWarningLogger(logger));
 	}

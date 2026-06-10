@@ -636,8 +636,9 @@ public class AgentSocket implements Runnable {
 								infoLogger, warningLogger);
 						
 						int cloneDepth = checkoutFacade.getCloneDepth();
+						String branch = KubernetesHelper.ref2branch(jobData.getRefName());
 						cloneRepository(git, cloneInfo.getCloneUrl(), cloneInfo.getCloneUrl(),
-								jobData.getRefName(), jobData.getCommitHash(), checkoutFacade.isWithLfs(),
+								branch, jobData.getCommitHash(), checkoutFacade.isWithLfs(),
 								checkoutFacade.isWithSubmodules(), cloneDepth,
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
 					} else if (facade instanceof SetupCacheFacade) {
@@ -930,10 +931,11 @@ public class AgentSocket implements Runnable {
 							int cloneDepth = checkoutFacade.getCloneDepth();
 
 							String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
-							String refName = jobData.getRefName();
 							String commitHash = jobData.getCommitHash();
 
-							cloneRepository(git, cloneUrl, cloneUrl, refName, commitHash,
+							String branch = KubernetesHelper.ref2branch(jobData.getRefName());
+							
+							cloneRepository(git, cloneUrl, cloneUrl, branch, commitHash,
 									checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
 									infoLogger, warningLogger);
 						} else if (facade instanceof SetupCacheFacade) {
@@ -1102,7 +1104,7 @@ public class AgentSocket implements Runnable {
 
 			var allRegistryLogins = merge(new ArrayList<>(), dockerSettings.getRegistryLogins());
 
-			setupRepository(workspaceDir, data, workspaceLogger);
+			setupRepository(workspaceDir, data.getGitSettings(), WORKSPACE_PATH, workspaceLogger);			
 
 			var envVars = WorkspaceHelper.buildEnvVars(dockerSettings.getEnvVars(),
 					Agent.serverUrl, data.getWorkspaceToken(), WORKSPACE_PATH + "/work");
@@ -1255,7 +1257,7 @@ public class AgentSocket implements Runnable {
 			var workspaceDir = getWorkspaceDir(data.getProjectId(), data.getWorkspaceNumber());
 			FileUtils.createDir(workspaceDir);
 
-			setupRepository(workspaceDir, data, workspaceLogger);
+			setupRepository(workspaceDir, data.getGitSettings(), workspaceDir.getAbsolutePath(), workspaceLogger);			
 
 			var envVars = WorkspaceHelper.buildEnvVars(data.getEnvVars(),
 					Agent.serverUrl, data.getWorkspaceToken(), 
