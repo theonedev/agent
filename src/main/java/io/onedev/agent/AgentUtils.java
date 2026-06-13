@@ -37,10 +37,12 @@ import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
-import io.onedev.k8shelper.DefaultShellFacility;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.OsInfo;
+import io.onedev.k8shelper.PosixFacility;
 import io.onedev.k8shelper.RegistryLoginFacade;
+import io.onedev.k8shelper.ShellFacility;
+import io.onedev.k8shelper.WindowsBatchFacility;
 
 public class AgentUtils {
 
@@ -453,7 +455,11 @@ public class AgentUtils {
 		try {
 			taskLogger.log("Running test commands...");
 
-			var shellFacility = new DefaultShellFacility();
+			ShellFacility shellFacility;
+			if (SystemUtils.IS_OS_WINDOWS)
+				shellFacility = new WindowsBatchFacility();
+			else
+				shellFacility = new PosixFacility();
 			var cmdline = new Commandline(shellFacility.getExecutable());
 			cmdline.addArgs(shellFacility.getScriptOptions());
 			
