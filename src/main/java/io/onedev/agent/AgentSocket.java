@@ -38,6 +38,7 @@ import static io.onedev.k8shelper.KubernetesHelper.setupGitCerts;
 import static io.onedev.k8shelper.RegistryLoginFacade.merge;
 import static io.onedev.k8shelper.WorkspaceHelper.CONTAINER_READY_FILE;
 import static io.onedev.k8shelper.WorkspaceHelper.WORKSPACE_PATH;
+import static io.onedev.k8shelper.WorkspaceHelper.buildEnvVars;
 import static java.lang.System.lineSeparator;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -981,10 +982,10 @@ public class AgentSocket implements Runnable {
 		}
 	}
 
-	private void testK8sResource(TaskLogger logger, Client client, String token) {
+	private void testWorkerResource(TaskLogger logger, Client client, String token) {
 		logger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
 		WebTarget target = client.target(Agent.serverUrl)
-				.path("~api/k8s/test")
+				.path("~api/worker/test")
 				.queryParam("token", token);
 		Invocation.Builder builder = target.request();
 		try (Response response = builder.get()) {
@@ -997,7 +998,7 @@ public class AgentSocket implements Runnable {
 		jobThreads.put(jobData.getToken(), Thread.currentThread());
 		try {
 			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-			testK8sResource(jobLogger, client, jobData.getToken());
+			testWorkerResource(jobLogger, client, jobData.getToken());
 			testCommands(jobLogger);
 		} finally {
 			jobThreads.remove(jobData.getToken());
@@ -1008,7 +1009,7 @@ public class AgentSocket implements Runnable {
 	private CacheProvisioner newCacheProvisioner(String jobToken, CacheConfigFacade config, int configIndex) {
 		return new CacheProvisioner(config, configIndex) {
 
-			private static final String API_PATH = "~api/k8s/job-cache";
+			private static final String API_PATH = "~api/worker/job-cache";
 
 			@Override
 			protected CacheAvailability download(String key, @Nullable String checksum,
@@ -1036,7 +1037,7 @@ public class AgentSocket implements Runnable {
 		jobThreads.put(jobData.getToken(), Thread.currentThread());
 		try {
 			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-			testK8sResource(jobLogger, client, jobData.getToken());
+			testWorkerResource(jobLogger, client, jobData.getToken());
 			AgentUtils.testDocker(docker, jobData, path -> getHostPath(path, dockerSock), jobLogger);
 		} finally {
 			jobThreads.remove(jobData.getToken());
@@ -1053,7 +1054,7 @@ public class AgentSocket implements Runnable {
 		Client client = buildRestClient(Agent.sslFactory);
 		try {
 			TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-			testK8sResource(workspaceLogger, client, workspaceData.getToken());
+			testWorkerResource(workspaceLogger, client, workspaceData.getToken());
 			AgentUtils.testDocker(docker, workspaceData, path -> getHostPath(path, dockerSock), workspaceLogger);
 		} finally {
 			client.close();
@@ -1064,7 +1065,7 @@ public class AgentSocket implements Runnable {
 		Client client = buildRestClient(Agent.sslFactory);
 		try {
 			TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-			testK8sResource(workspaceLogger, client, workspaceData.getToken());
+			testWorkerResource(workspaceLogger, client, workspaceData.getToken());
 			testCommands(workspaceLogger);
 
 			var tmuxExecutable = workspaceData.getTmuxExecutable();
@@ -1106,14 +1107,19 @@ public class AgentSocket implements Runnable {
 
 			setupRepository(workspaceDir, data.getGitSettings(), WORKSPACE_PATH, workspaceLogger);			
 
-			var envVars = WorkspaceHelper.buildEnvVars(dockerSettings.getEnvVars(),
-					Agent.serverUrl, data.getWorkspaceToken(), WORKSPACE_PATH + "/work");
+			var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
+			var envVars = buildEnvVars(
+					dockerSettings.getEnvVars(),
+					data.getServerUrl(), 
+					data.getWorkspaceToken(), 
+					trustCertsFile.exists()? WORKSPACE_PATH + "/trust-certs.pem": null,
+					WORKSPACE_PATH + "/work");
 
 			var cacheProvisioners = new ArrayList<CacheProvisioner>();
 			var cacheConfigIndex = 1;
 			for (var cacheConfig : data.getCacheConfigs()) {
 				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
-						"~api/k8s/workspace-cache", data.getWorkspaceToken(),
+						"~api/worker/workspace-cache", data.getWorkspaceToken(),
 						cacheConfig, Agent.getTrustCertsDir(), cacheConfigIndex++);
 				cacheProvisioner.download(workspaceDir, workspaceLogger);
 				cacheProvisioners.add(cacheProvisioner);
@@ -1259,8 +1265,12 @@ public class AgentSocket implements Runnable {
 
 			setupRepository(workspaceDir, data.getGitSettings(), workspaceDir.getAbsolutePath(), workspaceLogger);			
 
-			var envVars = WorkspaceHelper.buildEnvVars(data.getEnvVars(),
-					Agent.serverUrl, data.getWorkspaceToken(), 
+			var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
+			var envVars = buildEnvVars(
+					data.getEnvVars(),
+					data.getServerUrl(), 
+					data.getWorkspaceToken(), 
+					trustCertsFile.exists()? trustCertsFile.getAbsolutePath(): null,
 					new File(workspaceDir, "work").getAbsolutePath());
 
 			var cacheProvisioners = new ArrayList<CacheProvisioner>();
@@ -1271,7 +1281,7 @@ public class AgentSocket implements Runnable {
 						throw new ExplicitException("Shell provisioner does not allow absolute cache path: " + path);
 				}	
 				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
-						"~api/k8s/workspace-cache", data.getWorkspaceToken(),
+						"~api/worker/workspace-cache", data.getWorkspaceToken(),
 						cacheConfig, Agent.getTrustCertsDir(), cacheConfigIndex++);
 				cacheProvisioner.download(workspaceDir, workspaceLogger);
 				cacheProvisioners.add(cacheProvisioner);
@@ -1375,19 +1385,19 @@ public class AgentSocket implements Runnable {
 
 			@Override
 			protected void download(String key, String path, File pathFile) {
-				WorkspaceHelper.downloadUserData(Agent.serverUrl, "~api/k8s/workspace-user-data",
+				WorkspaceHelper.downloadUserData(Agent.serverUrl, "~api/worker/workspace-user-data",
 						workspaceToken, key, path, pathFile, Agent.sslFactory);
 			}
 
 			@Override
 			protected void upload(String key, String path, File pathFile) {
-				WorkspaceHelper.uploadUserData(Agent.serverUrl, "~api/k8s/workspace-user-data",
+				WorkspaceHelper.uploadUserData(Agent.serverUrl, "~api/worker/workspace-user-data",
 						workspaceToken, key, path, pathFile, Agent.sslFactory);
 			}
 
 			@Override
 			protected void notifyUploaded(String key) {
-				WorkspaceHelper.notifyUserDataUploaded(Agent.serverUrl, "~api/k8s/workspace-user-data",
+				WorkspaceHelper.notifyUserDataUploaded(Agent.serverUrl, "~api/worker/workspace-user-data",
 						workspaceToken, key, Agent.sslFactory);
 			}
 

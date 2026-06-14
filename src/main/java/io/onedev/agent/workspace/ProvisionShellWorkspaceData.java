@@ -28,10 +28,12 @@ public class ProvisionShellWorkspaceData implements Serializable {
 
 	private final Long workspaceNumber;
 
+	private final String serverUrl;
+
 	public ProvisionShellWorkspaceData(String workspaceToken, GitSettings gitSettings,
 							  List<CacheConfigFacade> cacheConfigs, Map<String, String> envVars,
 							  @Nullable SetupScriptConfig setupScriptConfig, Long projectId,
-							  Long workspaceNumber) {
+							  Long workspaceNumber, String serverUrl) {
 		this.gitSettings = gitSettings;
 		this.cacheConfigs = cacheConfigs;
 		this.envVars = envVars;
@@ -39,6 +41,7 @@ public class ProvisionShellWorkspaceData implements Serializable {
 		this.workspaceToken = workspaceToken;
 		this.projectId = projectId;
 		this.workspaceNumber = workspaceNumber;
+		this.serverUrl = serverUrl;
 	}
 
 	public GitSettings getGitSettings() {
@@ -68,6 +71,10 @@ public class ProvisionShellWorkspaceData implements Serializable {
 
 	public Long getWorkspaceNumber() {
 		return workspaceNumber;
+	}
+
+	public String getServerUrl() {
+		return serverUrl;
 	}
 
 }

@@ -37,11 +37,13 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 
 	private final WorkspaceDockerSettings dockerSettings;
 
+	private final String serverUrl;
+
 	public ProvisionDockerWorkspaceData(String workspaceToken, String provisionerName, GitSettings gitSettings,
 							   List<CacheConfigFacade> cacheConfigs, List<UserDataFacade> userDatas,
 							   @Nullable String userDataInitEntrypointArgs, List<ConfigFileFacade> configFiles, 
 							   @Nullable SetupScriptConfig setupScriptConfig, Long projectId, Long workspaceNumber, 
-							   WorkspaceDockerSettings dockerSettings) {
+							   WorkspaceDockerSettings dockerSettings, String serverUrl) {
 		this.gitSettings = gitSettings;
 		this.cacheConfigs = cacheConfigs;
 		this.userDatas = userDatas;
@@ -53,6 +55,7 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 		this.projectId = projectId;
 		this.workspaceNumber = workspaceNumber;
 		this.dockerSettings = dockerSettings;
+		this.serverUrl = serverUrl;
 	}
 
 	public GitSettings getGitSettings() {
@@ -99,6 +102,10 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 
 	public WorkspaceDockerSettings getDockerSettings() {
 		return dockerSettings;
+	}
+
+	public String getServerUrl() {
+		return serverUrl;
 	}
 
 }
