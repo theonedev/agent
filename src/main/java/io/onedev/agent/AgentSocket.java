@@ -1411,9 +1411,9 @@ public class AgentSocket implements Runnable {
 			}
 
 			@Override
-			protected void upload(String key, String path, File pathFile) {
+			protected void upload(String key, String path, File pathFile, List<String> excludes) {
 				WorkspaceHelper.uploadUserData(Agent.serverUrl, "~api/worker/workspace-user-data",
-						workspaceToken, key, path, pathFile, Agent.sslFactory);
+						workspaceToken, key, path, pathFile, excludes, Agent.sslFactory);
 			}
 
 			@Override
