@@ -7,8 +7,6 @@ import static io.onedev.agent.AgentUtils.getHostPath;
 import static io.onedev.agent.AgentUtils.getOsIds;
 import static io.onedev.agent.AgentUtils.newDocker;
 import static io.onedev.agent.AgentUtils.newDockerKiller;
-import static io.onedev.agent.AgentUtils.newInfoLogger;
-import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.agent.AgentUtils.testCommands;
 import static io.onedev.agent.job.JobUtils.buildImage;
 import static io.onedev.agent.job.JobUtils.createNetwork;
@@ -420,7 +418,7 @@ public class AgentSocket implements Runnable {
 	    		break;
 	    	case WORKSPACE_SHELL_OPEN:
 	    		WorkspaceShellOpenData shellOpenData = SerializationUtils.deserialize(messageData);
-				sessionId = shellOpenData.getSessionId();
+				var shellId = shellOpenData.getShellId();
 				if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
 					var containerName = getWorkspaceContainerName(
 							dockerProvisionedShellOpenData.getProvisionerName(), 
@@ -428,20 +426,34 @@ public class AgentSocket implements Runnable {
 							dockerProvisionedShellOpenData.getWorkspaceNumber());
 					Commandline docker = newDocker(dockerProvisionedShellOpenData.getDockerSock());
 					var shellExecutable = shellOpenData.getShellExecutable();
+					var tmuxSocket = "onedev-" + shellId;
 					docker.addArgs("exec", "-it", "--detach-keys=ctrl-z,z", "-w",
 							WORKSPACE_PATH + "/work", containerName, 
-							"tmux", "new-session", shellExecutable);
-					workspaceShellSessions.put(sessionId, new WorkspaceShellSession(sessionId, session, docker));
+							"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
+					workspaceShellSessions.put(shellId, new WorkspaceShellSession(shellId, session, docker, () -> {
+						WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket);
+					}));
 				} else {					
-					var tmuxExecutable = ((ShellProvisionedShellOpenData) shellOpenData).getTmuxExecutable();
+					var shellProvisionedShellOpenData = (ShellProvisionedShellOpenData) shellOpenData;
+					var tmuxExecutable = shellProvisionedShellOpenData.getTmuxExecutable();
 					if (tmuxExecutable == null)
 						tmuxExecutable = "tmux";
-					var tmux = new Commandline(tmuxExecutable);
 					var workspaceDir = getWorkspaceDir(shellOpenData.getProjectId(), shellOpenData.getWorkspaceNumber());
-					tmux.addArgs("new-session")
-							.addArgs(shellOpenData.getShellExecutable())
+					var envVars = buildShellProvisionedEnvVars(
+							workspaceDir, 
+							shellProvisionedShellOpenData.getEnvVars(), 
+							shellProvisionedShellOpenData.getServerUrl(),
+							shellOpenData.getToken());
+					// Use a dedicated tmux server (unique socket) per shell so that tearing down one
+					// shell can never kill the tmux server shared by other shells/workspaces on this agent
+					var tmuxSocket = "onedev-" + shellId;
+					var tmux = new Commandline(tmuxExecutable);
+					tmux.addArgs("-L", tmuxSocket, "new-session");
+					for (var envVar : envVars.entrySet())
+						tmux.addArgs("-e", envVar.getKey() + "=" + envVar.getValue());
+					tmux.addArgs(shellOpenData.getShellExecutable())
 							.workingDir(new File(workspaceDir, "work"));
-					workspaceShellSessions.put(sessionId, new WorkspaceShellSession(sessionId, session, tmux));
+					workspaceShellSessions.put(shellId, new WorkspaceShellSession(shellId, session, tmux, null));
 				}
 	    		break;
 	    	case WORKSPACE_SHELL_TERMINATE:
@@ -681,7 +693,7 @@ public class AgentSocket implements Runnable {
 			jobThreads.remove(jobData.getJobToken());
 						
 			synchronized (buildDir) {
-				FileUtils.deleteDir(buildDir);
+				FileUtils.deleteDir(buildDir, 5);
 			}
 		}
 	}
@@ -801,7 +813,7 @@ public class AgentSocket implements Runnable {
 							docker.addArgs(image);
 							docker.addArgs(arguments.toArray(new String[arguments.size()]));
 							docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
-							var result = docker.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger),
+							var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger),
 									null);
 							return result.getReturnCode();
 						} finally {
@@ -977,7 +989,7 @@ public class AgentSocket implements Runnable {
 			jobThreads.remove(jobData.getJobToken());
 			
 			synchronized (hostBuildDir) {
-				FileUtils.deleteDir(hostBuildDir);
+				FileUtils.deleteDir(hostBuildDir, 5);
 			}
 		}
 	}
@@ -1162,7 +1174,7 @@ public class AgentSocket implements Runnable {
 						docker.processKiller(newDockerKiller(newDocker(dockerSock), initContainerName, workspaceLogger));
 						docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + WORKSPACE_PATH);
 						docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", userDataInitEntrypointArgs);
-						docker.execute(newInfoLogger(workspaceLogger), newWarningLogger(workspaceLogger)).checkReturnCode();
+						docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger)).checkReturnCode();
 						return null;
 					});
 				}
@@ -1206,10 +1218,11 @@ public class AgentSocket implements Runnable {
 
 							docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", entrypointArgs);
 
-							var result = docker.execute(newInfoLogger(workspaceLogger), newWarningLogger(workspaceLogger));
-							if (result.getReturnCode() != 0)
+							var result = docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger));
+							if (result.getReturnCode() != 0) {
 								throw new ExplicitException(
 										"Docker container exited with code " + result.getReturnCode());
+							}
 							return null;
 						});
 						return null;
@@ -1255,6 +1268,19 @@ public class AgentSocket implements Runnable {
 		}
 	}
 
+	private Map<String, String> buildShellProvisionedEnvVars(
+			File workspaceDir, Map<String, String> customEnvVars, 
+			String serverUrl, String workspaceToken) {
+		var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
+		var envVars = buildEnvVars(
+				customEnvVars,
+				serverUrl, 
+				workspaceToken, 
+				trustCertsFile.exists()? trustCertsFile.getAbsolutePath(): null,
+				new File(workspaceDir, "work").getAbsolutePath());
+		return envVars;
+	}
+
 	private void provisionShellWorkspace(Session session, ProvisionShellWorkspaceData data) {
 		var token = data.getWorkspaceToken();
 
@@ -1265,13 +1291,8 @@ public class AgentSocket implements Runnable {
 
 			setupRepository(workspaceDir, data.getGitSettings(), workspaceDir.getAbsolutePath(), workspaceLogger);			
 
-			var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
-			var envVars = buildEnvVars(
-					data.getEnvVars(),
-					data.getServerUrl(), 
-					data.getWorkspaceToken(), 
-					trustCertsFile.exists()? trustCertsFile.getAbsolutePath(): null,
-					new File(workspaceDir, "work").getAbsolutePath());
+			var envVars = buildShellProvisionedEnvVars(workspaceDir, data.getEnvVars(), 
+					data.getServerUrl(), data.getWorkspaceToken());
 
 			var cacheProvisioners = new ArrayList<CacheProvisioner>();
 			var cacheConfigIndex = 1;
@@ -1371,7 +1392,7 @@ public class AgentSocket implements Runnable {
 	private void deleteWorkspace(WorkspaceDeleteRequest request) {
 		var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
 		if (workspaceDir.exists())
-			FileUtils.deleteDir(workspaceDir);
+			FileUtils.deleteDir(workspaceDir, 5);
 	}
 
 	private static File getWorkspaceDir(Long projectId, Long workspaceNumber) {

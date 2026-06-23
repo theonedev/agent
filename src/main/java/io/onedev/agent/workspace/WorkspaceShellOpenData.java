@@ -8,7 +8,7 @@ public abstract class WorkspaceShellOpenData implements Serializable {
 
 	private final String token;
 
-    private final String sessionId;
+    private final String shellId;
 
 	private final Long projectId;
 
@@ -16,10 +16,10 @@ public abstract class WorkspaceShellOpenData implements Serializable {
 
 	private final String shellExecutable;
 
-	public WorkspaceShellOpenData(String token, String sessionId, 
+	public WorkspaceShellOpenData(String token, String shellId, 
 				Long projectId, Long workspaceNumber, String shellExecutable) {
 		this.token = token;
-		this.sessionId = sessionId;
+		this.shellId = shellId;
 		this.projectId = projectId;
 		this.workspaceNumber = workspaceNumber;
 		this.shellExecutable = shellExecutable;
@@ -29,8 +29,8 @@ public abstract class WorkspaceShellOpenData implements Serializable {
 		return token;
 	}
 
-	public String getSessionId() {
-		return sessionId;
+	public String getShellId() {
+		return shellId;
 	}
 
 	public Long getProjectId() {

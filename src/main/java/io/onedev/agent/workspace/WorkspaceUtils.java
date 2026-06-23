@@ -17,6 +17,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.onedev.agent.Agent;
 import io.onedev.agent.AgentUtils;
@@ -31,6 +33,8 @@ import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
 
 public class WorkspaceUtils {
+
+	private static final Logger logger = LoggerFactory.getLogger(WorkspaceUtils.class);
 
 	public static GitExecutionResult executeGit(
 			@Nullable String dockerSock, String containerName, String[] gitArgs) {
@@ -211,6 +215,25 @@ public class WorkspaceUtils {
 		userDataProvisioner.upload(workspaceDir, logger);		
 		for (var cacheProvisioner : cacheProvisioners) 
 			cacheProvisioner.upload(workspaceDir, logger);
+	}
+
+	public static void killTmuxServer(Commandline docker, String containerName, String tmuxSocket) {
+		docker.args("exec", containerName, "tmux", "-L", tmuxSocket, "kill-server");
+		docker.execute(new LineConsumer() {
+			
+			@Override
+			public void consume(String line) {
+				logger.info(line);
+			}
+
+		}, new LineConsumer() {
+
+			@Override
+			public void consume(String line) {
+				logger.warn(line);
+			}
+
+		});
 	}
 
 }

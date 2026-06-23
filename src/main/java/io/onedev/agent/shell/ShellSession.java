@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import org.eclipse.jetty.websocket.api.Session;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,10 +44,19 @@ public abstract class ShellSession {
 	private volatile OutputStream shellStdin;
 	
 	private final Future<?> execution;
+
+	@Nullable
+	private final Runnable onTerminate;
 	
 	public ShellSession(String sessionId, Session agentSession, MessageTypes exitMessageType, Commandline cmdline) {
+		this(sessionId, agentSession, exitMessageType, cmdline, null);
+	}
+
+	public ShellSession(String sessionId, Session agentSession, MessageTypes exitMessageType, Commandline cmdline,
+			@Nullable Runnable onTerminate) {
 		this.sessionId = sessionId;
 		this.agentSession = agentSession;
+		this.onTerminate = onTerminate;
 		
         ptyMode = new PtyMode();
         cmdline.ptyMode(ptyMode);
@@ -149,6 +159,8 @@ public abstract class ShellSession {
 
 	public void exit() {
 		execution.cancel(true);
+		if (onTerminate != null)
+			onTerminate.run();
 	}
 
 }

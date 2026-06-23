@@ -10,10 +10,10 @@ public class DockerProvisionedShellOpenData extends WorkspaceShellOpenData {
 
 	private final String dockerSock;	
 
-	public DockerProvisionedShellOpenData(String token, String sessionId, 
+	public DockerProvisionedShellOpenData(String token, String shellId, 
 				Long projectId, Long workspaceNumber, String provisionerName, 
 				String shellExecutable, @Nullable String dockerSock) {
-		super(token, sessionId, projectId, workspaceNumber, shellExecutable);
+		super(token, shellId, projectId, workspaceNumber, shellExecutable);
 		this.provisionerName = provisionerName;
 		this.dockerSock = dockerSock;
 	}
