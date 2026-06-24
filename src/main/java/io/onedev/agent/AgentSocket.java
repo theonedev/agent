@@ -1031,9 +1031,9 @@ public class AgentSocket implements Runnable {
 			}
 
 			@Override
-			protected boolean upload(CacheConfigFacade config, String path, File pathDir) {
+			protected boolean upload(CacheConfigFacade config, String path, File pathDir, List<String> excludes) {
 				return KubernetesHelper.uploadCache(Agent.serverUrl, API_PATH, jobToken, 
-						config, path, pathDir, Agent.sslFactory);
+						config, path, pathDir, excludes, Agent.sslFactory);
 			}
 
 		};
