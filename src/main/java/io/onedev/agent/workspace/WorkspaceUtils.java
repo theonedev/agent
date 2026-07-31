@@ -3,6 +3,8 @@ package io.onedev.agent.workspace;
 import static io.onedev.agent.AgentUtils.newErrorLogger;
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
+import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
+import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayOutputStream;
@@ -15,6 +17,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Response;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -31,6 +38,7 @@ import io.onedev.k8shelper.CacheProvisioner;
 import io.onedev.k8shelper.SetupScriptConfig;
 import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
+import nl.altindag.ssl.SSLFactory;
 
 public class WorkspaceUtils {
 
@@ -103,6 +111,22 @@ public class WorkspaceUtils {
 			} catch (InterruptedException e) {
 				throw new RuntimeException(e);
 			}
+		}
+	}
+
+	public static boolean isWorkspaceActive(String serverUrl, String token, @Nullable SSLFactory sslFactory) {
+		Client client = buildRestClient(sslFactory);
+		try {
+			WebTarget target = client.target(serverUrl)
+					.path("~api/worker/workspace-active")
+					.queryParam("token", token);
+			Invocation.Builder builder = target.request();
+			try (Response response = builder.get()) {
+				checkStatus(response);
+				return response.readEntity(boolean.class);
+			}
+		} finally {
+			client.close();
 		}
 	}
 

@@ -350,6 +350,7 @@ public class Agent {
 					client.connect(new AgentSocket(), new URI(websocketUrl), request);
 					
 					while (!reconnect && !stopping) {
+						AgentSocket.houseKeeper();
 						try {
 							Thread.sleep(5000);
 						} catch (Exception e) {

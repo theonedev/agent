@@ -3,6 +3,8 @@ package io.onedev.agent.job;
 import static io.onedev.k8shelper.JobHelper.BUILD_PATH;
 import static io.onedev.k8shelper.JobHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.KubernetesHelper.GIT_TRUST_ALL_DIRS;
+import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
+import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -15,6 +17,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Response;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -41,6 +48,7 @@ import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
 import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
+import nl.altindag.ssl.SSLFactory;
 
 public class JobUtils {
 
@@ -277,6 +285,22 @@ public class JobUtils {
 
 		docker.workingDir(new File(hostBuildDir, "work"));
 		docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger)).checkReturnCode();
+	}
+
+	public static boolean isJobRunning(String serverUrl, String token, @Nullable SSLFactory sslFactory) {
+		Client client = buildRestClient(sslFactory);
+		try {
+			WebTarget target = client.target(serverUrl)
+					.path("~api/worker/job-running")
+					.queryParam("token", token);
+			Invocation.Builder builder = target.request();
+			try (Response response = builder.get()) {
+				checkStatus(response);
+				return response.readEntity(boolean.class);
+			}
+		} finally {
+			client.close();
+		}
 	}
 
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,

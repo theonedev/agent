@@ -84,6 +84,7 @@ import com.google.common.base.Splitter;
 
 import io.onedev.agent.job.DockerJobData;
 import io.onedev.agent.job.JobResumeData;
+import io.onedev.agent.job.JobUtils;
 import io.onedev.agent.job.LogRequest;
 import io.onedev.agent.job.ShellJobData;
 import io.onedev.agent.job.TestDockerJobData;
@@ -373,7 +374,7 @@ public class AgentSocket implements Runnable {
 						} else {
 							docker.addArgs("sh");
 						}
-						jobShellSessions.put(sessionId, new JobShellSession(sessionId, session, docker));
+						jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, docker));
 					} else {
 						sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Container not running")));
 					}
@@ -392,7 +393,7 @@ public class AgentSocket implements Runnable {
 							shell = new Commandline("sh");
 						}
 						shell.workingDir(new File(buildDir, "work"));
-						jobShellSessions.put(sessionId, new JobShellSession(sessionId, session, shell));
+						jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, shell));
 					} else {
 						sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
 					}	
@@ -430,7 +431,8 @@ public class AgentSocket implements Runnable {
 					docker.addArgs("exec", "-it", "--detach-keys=ctrl-z,z", "-w",
 							WORKSPACE_PATH + "/work", containerName, 
 							"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
-					workspaceShellSessions.put(shellId, new WorkspaceShellSession(shellId, session, docker, () -> {
+					var token = shellOpenData.getToken();
+					workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () -> {
 						WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket);
 					}));
 				} else {					
@@ -453,7 +455,8 @@ public class AgentSocket implements Runnable {
 						tmux.addArgs("-e", envVar.getKey() + "=" + envVar.getValue());
 					tmux.addArgs(shellOpenData.getShellExecutable())
 							.workingDir(new File(workspaceDir, "work"));
-					workspaceShellSessions.put(shellId, new WorkspaceShellSession(shellId, session, tmux, null));
+					var token = shellOpenData.getToken();
+					workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, tmux, null));
 				}
 	    		break;
 	    	case WORKSPACE_SHELL_TERMINATE:
@@ -1376,6 +1379,80 @@ public class AgentSocket implements Runnable {
 		return WorkspaceUtils.readFileData(workspaceDir, request.getPath());
 	}
 
+	public static void houseKeeper() {
+		try {
+			var activeWorkspaceTokens = new HashSet<String>();
+			activeWorkspaceTokens.addAll(workspaceProvisionTasks.keySet());
+			activeWorkspaceTokens.addAll(workspaceServeTasks.keySet());
+			for (var session : workspaceShellSessions.values()) 
+				activeWorkspaceTokens.add(session.getWorkspaceToken());
+
+			for (var it = activeWorkspaceTokens.iterator(); it.hasNext(); ) {
+				var workspaceToken = it.next();
+				if (!WorkspaceUtils.isWorkspaceActive(Agent.serverUrl, workspaceToken, Agent.sslFactory)) 
+					it.remove();
+			}
+
+			for (var it = workspaceProvisionTasks.entrySet().iterator(); it.hasNext(); ) {
+				var entry = it.next();
+				var workspaceToken = entry.getKey();
+				if (!activeWorkspaceTokens.contains(workspaceToken)) {
+					entry.getValue().cancel(true);
+					it.remove();
+				}
+			}
+
+			for (var it = workspaceServeTasks.entrySet().iterator(); it.hasNext(); ) {
+				var entry = it.next();
+				var workspaceToken = entry.getKey();
+				if (!activeWorkspaceTokens.contains(workspaceToken)) {
+					entry.getValue().cancel(true);
+					it.remove();
+				}
+			}
+
+			for (var it = workspaceShellSessions.entrySet().iterator(); it.hasNext(); ) {
+				var entry = it.next();
+				var session = entry.getValue();
+				if (!activeWorkspaceTokens.contains(session.getWorkspaceToken())) {
+					entry.getValue().exit();
+					it.remove();
+				}
+			}
+
+			var runningJobTokens = new HashSet<String>();
+			runningJobTokens.addAll(jobThreads.keySet());
+			for (var session : jobShellSessions.values()) 
+				runningJobTokens.add(session.getJobToken());
+
+			for (var it = runningJobTokens.iterator(); it.hasNext(); ) {
+				var jobToken = it.next();
+				if (!JobUtils.isJobRunning(Agent.serverUrl, jobToken, Agent.sslFactory)) 
+					it.remove();
+			}
+
+			for (var it = jobThreads.entrySet().iterator(); it.hasNext(); ) {
+				var entry = it.next();
+				var jobToken = entry.getKey();
+				if (!runningJobTokens.contains(jobToken)) {
+					entry.getValue().interrupt();
+					it.remove();
+				}
+			}
+
+			for (var it = jobShellSessions.entrySet().iterator(); it.hasNext(); ) {
+				var entry = it.next();
+				var session = entry.getValue();
+				if (!runningJobTokens.contains(session.getJobToken())) {
+					entry.getValue().exit();
+					it.remove();
+				}
+			}
+		} catch (Throwable t) {
+			logger.warn("Error running house keeping", t);
+		}
+	}
+
 	private void stopWorkspace(String token) {
 		var task = workspaceProvisionTasks.get(token);
 		if (task != null) {
@@ -1406,20 +1483,17 @@ public class AgentSocket implements Runnable {
 
 			@Override
 			protected void download(String key, String path, File pathFile) {
-				WorkspaceHelper.downloadUserData(Agent.serverUrl, "~api/worker/workspace-user-data",
-						workspaceToken, key, path, pathFile, Agent.sslFactory);
+				WorkspaceHelper.downloadUserData(Agent.serverUrl, workspaceToken, key, path, pathFile, Agent.sslFactory);
 			}
 
 			@Override
 			protected void upload(String key, String path, File pathFile, List<String> excludes) {
-				WorkspaceHelper.uploadUserData(Agent.serverUrl, "~api/worker/workspace-user-data",
-						workspaceToken, key, path, pathFile, excludes, Agent.sslFactory);
+				WorkspaceHelper.uploadUserData(Agent.serverUrl, workspaceToken, key, path, pathFile, excludes, Agent.sslFactory);
 			}
 
 			@Override
 			protected void notifyUploaded(String key) {
-				WorkspaceHelper.notifyUserDataUploaded(Agent.serverUrl, "~api/worker/workspace-user-data",
-						workspaceToken, key, Agent.sslFactory);
+				WorkspaceHelper.notifyUserDataUploaded(Agent.serverUrl, workspaceToken, key, Agent.sslFactory);
 			}
 
 		};
