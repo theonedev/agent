@@ -5,6 +5,8 @@ import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
+import static io.onedev.k8shelper.WorkspaceHelper.SETUP_SCRIPT_NAME;
+import static io.onedev.k8shelper.WorkspaceHelper.TEARDOWN_SCRIPT_NAME;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayOutputStream;
@@ -33,9 +35,10 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.CacheProvisioner;
-import io.onedev.k8shelper.SetupScriptConfig;
+import io.onedev.k8shelper.ScriptConfig;
 import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
 import nl.altindag.ssl.SSLFactory;
@@ -178,22 +181,50 @@ public class WorkspaceUtils {
 		return portMappings;
 	}
 
-	public static void setupShellProvisioned(SetupScriptConfig setupScriptConfig, File workspaceDir, 
+	public static void setupShellProvisioned(ScriptConfig scriptConfig, File workspaceDir, 
 			Map<String, String> envVars, TaskLogger logger) {
-		logger.log("Running setup commands...");
+		var commands = scriptConfig.getSetupCommands();
+		if (commands != null) {
+			logger.log("Running setup commands...");
+			runShellProvisioned(scriptConfig, SETUP_SCRIPT_NAME, commands, workspaceDir, envVars, logger)
+					.checkReturnCode();
+		}
+	}
+
+	/**
+	 * Run teardown commands of a shell provisioned workspace. Any error is logged instead of
+	 * being propagated, as workspace is being torn down anyway and remaining work (uploading
+	 * caches and user data for instance) should still be carried out
+	 */
+	public static void teardownShellProvisioned(ScriptConfig scriptConfig, File workspaceDir,
+			Map<String, String> envVars, TaskLogger logger) {
+		var commands = scriptConfig.getTeardownCommands();
+		if (commands != null) {
+			logger.log("Running teardown commands...");
+			try {
+				runShellProvisioned(scriptConfig, TEARDOWN_SCRIPT_NAME, commands, workspaceDir, envVars, logger)
+						.checkReturnCode();
+			} catch (Throwable t) {
+				logger.error("Error running teardown commands", t);
+			}
+		}
+	}
+
+	private static ExecutionResult runShellProvisioned(ScriptConfig scriptConfig, String scriptName,
+			String commands, File workspaceDir, Map<String, String> envVars, TaskLogger logger) {
 		var commandDir = new File(workspaceDir, "command");
 		FileUtils.createDir(commandDir);
-		var scriptFile = new File(commandDir, "setup" + setupScriptConfig.getScriptExtension());
+		var scriptFile = new File(commandDir, scriptName + scriptConfig.getScriptExtension());
 		try {
-			FileUtils.writeStringToFile(scriptFile, setupScriptConfig.getSetupCommands(), UTF_8);
+			FileUtils.writeStringToFile(scriptFile, commands, UTF_8);
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
-		var cmdline = new Commandline(setupScriptConfig.getScriptExecutable());
-		cmdline.addArgs(setupScriptConfig.getScriptOptions());
+		var cmdline = new Commandline(scriptConfig.getScriptExecutable());
+		cmdline.addArgs(scriptConfig.getScriptOptions());
 		cmdline.workingDir(new File(workspaceDir, "work")).envs(envVars);
 		cmdline.addArgs(scriptFile.getAbsolutePath());
-		cmdline.execute(newInfoLogger(logger), newErrorLogger(logger)).checkReturnCode();
+		return cmdline.execute(newInfoLogger(logger), newErrorLogger(logger));
 	}
 
 	public static void setupRepository(File workspaceDir, GitSettings gitSettings,

@@ -21,6 +21,7 @@ import static io.onedev.agent.workspace.WorkspaceUtils.awaitContainerReady;
 import static io.onedev.agent.workspace.WorkspaceUtils.getPublishedPorts;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupRepository;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupShellProvisioned;
+import static io.onedev.agent.workspace.WorkspaceUtils.teardownShellProvisioned;
 import static io.onedev.agent.workspace.WorkspaceUtils.testTmuxAvailability;
 import static io.onedev.agent.workspace.WorkspaceUtils.upload;
 import static io.onedev.k8shelper.JobHelper.BUILD_PATH;
@@ -1146,10 +1147,9 @@ public class AgentSocket implements Runnable {
 			var configFileProvisioner = new ConfigFileProvisioner(data.getConfigFiles());
 			configFileProvisioner.provision(workspaceDir, workspaceLogger);
 
-			var setupScriptConfig = data.getSetupScriptConfig();
-			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(setupScriptConfig, true);
-			if (setupScriptConfig != null)
-				WorkspaceHelper.writeSetupScript(workspaceDir, setupScriptConfig);
+			var scriptConfig = data.getScriptConfig();
+			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, true);
+			WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
 
 			var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
 			if (containerReadyFile.exists())
@@ -1311,8 +1311,8 @@ public class AgentSocket implements Runnable {
 				cacheProvisioners.add(cacheProvisioner);
 			}
 
-			if (data.getSetupScriptConfig() != null)
-				setupShellProvisioned(data.getSetupScriptConfig(), workspaceDir, envVars, workspaceLogger);
+			var scriptConfig = data.getScriptConfig();
+			setupShellProvisioned(scriptConfig, workspaceDir, envVars, workspaceLogger);
 
 			var serveTask = new AwaitableFutureTask<Void>(() -> {
 				try {
@@ -1320,6 +1320,7 @@ public class AgentSocket implements Runnable {
 					return null;
 				} finally {
 					workspaceServeTasks.remove(token);
+					teardownShellProvisioned(scriptConfig, workspaceDir, envVars, workspaceLogger);
 					for (var cacheProvisioner : cacheProvisioners)
 						cacheProvisioner.upload(workspaceDir, workspaceLogger);
 				}

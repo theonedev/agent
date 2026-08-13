@@ -4,10 +4,8 @@ import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 
-import org.jspecify.annotations.Nullable;
-
 import io.onedev.k8shelper.CacheConfigFacade;
-import io.onedev.k8shelper.SetupScriptConfig;
+import io.onedev.k8shelper.ScriptConfig;
 
 public class ProvisionShellWorkspaceData implements Serializable {
 
@@ -19,8 +17,7 @@ public class ProvisionShellWorkspaceData implements Serializable {
 
 	private final Map<String, String> envVars;
 
-	@Nullable
-	private final SetupScriptConfig setupScriptConfig;
+	private final ScriptConfig scriptConfig;
 
 	private final String workspaceToken;
 
@@ -32,12 +29,12 @@ public class ProvisionShellWorkspaceData implements Serializable {
 
 	public ProvisionShellWorkspaceData(String workspaceToken, GitSettings gitSettings,
 							  List<CacheConfigFacade> cacheConfigs, Map<String, String> envVars,
-							  @Nullable SetupScriptConfig setupScriptConfig, Long projectId,
+							  ScriptConfig scriptConfig, Long projectId,
 							  Long workspaceNumber, String serverUrl) {
 		this.gitSettings = gitSettings;
 		this.cacheConfigs = cacheConfigs;
 		this.envVars = envVars;
-		this.setupScriptConfig = setupScriptConfig;
+		this.scriptConfig = scriptConfig;
 		this.workspaceToken = workspaceToken;
 		this.projectId = projectId;
 		this.workspaceNumber = workspaceNumber;
@@ -56,9 +53,8 @@ public class ProvisionShellWorkspaceData implements Serializable {
 		return envVars;
 	}
 
-	@Nullable
-	public SetupScriptConfig getSetupScriptConfig() {
-		return setupScriptConfig;
+	public ScriptConfig getScriptConfig() {
+		return scriptConfig;
 	}
 
 	public String getWorkspaceToken() {

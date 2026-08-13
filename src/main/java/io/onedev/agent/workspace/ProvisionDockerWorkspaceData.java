@@ -7,7 +7,7 @@ import org.jspecify.annotations.Nullable;
 
 import io.onedev.k8shelper.CacheConfigFacade;
 import io.onedev.k8shelper.ConfigFileFacade;
-import io.onedev.k8shelper.SetupScriptConfig;
+import io.onedev.k8shelper.ScriptConfig;
 import io.onedev.k8shelper.UserDataFacade;
 
 public class ProvisionDockerWorkspaceData implements Serializable {
@@ -24,8 +24,7 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 
 	private final List<ConfigFileFacade> configFiles;
 
-	@Nullable
-	private final SetupScriptConfig setupScriptConfig;
+	private final ScriptConfig scriptConfig;
 
 	private final String workspaceToken;
 
@@ -41,15 +40,15 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 
 	public ProvisionDockerWorkspaceData(String workspaceToken, String provisionerName, GitSettings gitSettings,
 							   List<CacheConfigFacade> cacheConfigs, List<UserDataFacade> userDatas,
-							   @Nullable String userDataInitEntrypointArgs, List<ConfigFileFacade> configFiles, 
-							   @Nullable SetupScriptConfig setupScriptConfig, Long projectId, Long workspaceNumber, 
+							   @Nullable String userDataInitEntrypointArgs, List<ConfigFileFacade> configFiles,
+							   ScriptConfig scriptConfig, Long projectId, Long workspaceNumber,
 							   WorkspaceDockerSettings dockerSettings, String serverUrl) {
 		this.gitSettings = gitSettings;
 		this.cacheConfigs = cacheConfigs;
 		this.userDatas = userDatas;
 		this.userDataInitEntrypointArgs = userDataInitEntrypointArgs;
 		this.configFiles = configFiles;
-		this.setupScriptConfig = setupScriptConfig;
+		this.scriptConfig = scriptConfig;
 		this.workspaceToken = workspaceToken;
 		this.provisionerName = provisionerName;
 		this.projectId = projectId;
@@ -79,9 +78,8 @@ public class ProvisionDockerWorkspaceData implements Serializable {
 		return configFiles;
 	}
 
-	@Nullable
-	public SetupScriptConfig getSetupScriptConfig() {
-		return setupScriptConfig;
+	public ScriptConfig getScriptConfig() {
+		return scriptConfig;
 	}
 
 	public String getWorkspaceToken() {
