@@ -19,6 +19,7 @@ import static io.onedev.agent.job.JobUtils.runStep;
 import static io.onedev.agent.job.JobUtils.startService;
 import static io.onedev.agent.workspace.WorkspaceUtils.awaitContainerReady;
 import static io.onedev.agent.workspace.WorkspaceUtils.getPublishedPorts;
+import static io.onedev.agent.workspace.WorkspaceUtils.getTailscaleIp;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupRepository;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupShellProvisioned;
 import static io.onedev.agent.workspace.WorkspaceUtils.teardownShellProvisioned;
@@ -1148,7 +1149,7 @@ public class AgentSocket implements Runnable {
 			configFileProvisioner.provision(workspaceDir, workspaceLogger);
 
 			var scriptConfig = data.getScriptConfig();
-			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, true);
+			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, false);
 			WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
 
 			var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
@@ -1247,7 +1248,10 @@ public class AgentSocket implements Runnable {
 						portMappings = getPublishedPorts(newDocker(dockerSock), containerName, dockerSettings.getContainerPorts());
 					else
 						portMappings = new HashMap<>();
-					return new WorkspaceProvisioned(data.getWorkspaceToken(), Agent.ipAddress, portMappings);
+					var tailscaleIp = getTailscaleIp(newDocker(dockerSock), containerName,
+							data.getScriptConfig(), dockerSettings.getContainerPorts());
+					return new WorkspaceProvisioned(data.getWorkspaceToken(), Agent.ipAddress,
+							tailscaleIp, portMappings);
 				} catch (Throwable t) {
 					serveTask.cancel(true);
 					throw t;

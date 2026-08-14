@@ -77,6 +77,27 @@ public class WorkspaceUtils {
 	}
 
 	@Nullable
+	public static String getTailscaleIp(Commandline docker, String containerName,
+			ScriptConfig scriptConfig, Collection<Integer> containerPorts) {
+		var setupCommands = scriptConfig.getSetupCommands();
+		if (containerPorts.isEmpty() || setupCommands == null || !setupCommands.contains("tailscale"))
+			return null;
+
+		docker.addArgs("exec", containerName, "tailscale", "ip");
+		var stdout = new ByteArrayOutputStream();
+		var stderr = new ByteArrayOutputStream();
+		if (docker.execute(stdout, stderr).getReturnCode() == 0) {
+			return stdout.toString(UTF_8).lines()
+					.map(String::trim)
+					.filter(it -> !it.isEmpty())
+					.findFirst()
+					.orElse(null);
+		} else {
+			return null;
+		}
+	}
+
+	@Nullable
 	public static FileData readFileData(File workspaceDir, String path) {
 		try {
 			return FileData.from(new File(new File(workspaceDir, "work"), path));
