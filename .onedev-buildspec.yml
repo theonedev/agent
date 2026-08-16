@@ -1,94 +1,120 @@
-version: 31
+version: 53
 imports:
-- projectPath: onedev
+- projectPath: onedev/template
   revision: main
-  accessTokenSecret: onedev-token
 jobs:
 - name: Release
   steps:
-  - !CheckoutStep
+  - type: CheckoutStep
     name: checkout
-    cloneCredential: !DefaultCredential {}
+    cloneCredential:
+      type: DefaultCredential
     withLfs: false
     withSubmodules: true
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !UseTemplateStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: UseTemplateStep
     name: set up cache
     templateName: set up cache
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !UseTemplateStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: UseTemplateStep
     name: set build version
     templateName: set build version
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !CommandStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
     name: build & deploy
     runInContainer: true
     image: '@property:buildEnvironment@'
-    interpreter: !DefaultInterpreter
+    interpreter:
+      type: PosixInterpreter
+      shell: sh
       commands: |
         mvn deploy -Dmaven.deploy.username=@job_token@ -Dmaven.deploy.password=@secrets:maven-deploy-password@
+    runAs: 0:0
     useTTY: false
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !CreateTagStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: CreateTagStep
     name: create tag
     tagName: v@build_version@
     accessTokenSecret: onedev-token
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+    condition: SUCCESSFUL
+    optional: false
   triggers:
-  - !BranchUpdateTrigger
+  - type: BranchUpdateTrigger
     branches: main
+    userMatch: anyone
   jobDependencies:
   - jobName: Scan Vulnerabilities
     requireSuccessful: true
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 3600
 - name: Scan Vulnerabilities
   steps:
-  - !CheckoutStep
+  - type: CheckoutStep
     name: checkout
-    cloneCredential: !DefaultCredential {}
+    cloneCredential:
+      type: DefaultCredential
     withLfs: false
     withSubmodules: false
     cloneDepth: 1
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !ScanDepVulnersStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: OsvSourceScannerStep
     name: scan
     recursive: true
-    reportName: Dependency Vulnerabilities
     failThreshold: HIGH
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+    reportName: Dependency Vulnerabilities
+    publishJSONReportAsArtifact: false
+    condition: SUCCESSFUL
+    optional: false
   triggers:
-  - !ScheduleTrigger
+  - type: ScheduleTrigger
     cronExpression: 0 0 1 * * ?
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 3600
 - name: Sync with GitHub
   steps:
-  - !CheckoutStep
+  - type: CheckoutStep
     name: checkout
-    cloneCredential: !DefaultCredential {}
+    cloneCredential:
+      type: DefaultCredential
     withLfs: false
     withSubmodules: true
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
-  - !CommandStep
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
     name: sync
     runInContainer: true
     image: alpine/git:1.0.7
-    interpreter: !DefaultInterpreter
+    interpreter:
+      type: PosixInterpreter
+      shell: sh
       commands: |
         git config --global --unset http.extraHeader
         git push -f https://robinshine:@secrets:github-token@@@github.com/theonedev/agent HEAD:main
+    runAs: 0:0
     useTTY: false
-    condition: ALL_PREVIOUS_STEPS_WERE_SUCCESSFUL
+    condition: SUCCESSFUL
+    optional: false
   triggers:
-  - !BranchUpdateTrigger
+  - type: BranchUpdateTrigger
     branches: main
+    userMatch: anyone
     projects: onedev/agent
   retryCondition: never
   maxRetries: 3
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 3600
