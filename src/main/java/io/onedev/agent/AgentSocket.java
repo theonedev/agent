@@ -1149,7 +1149,7 @@ public class AgentSocket implements Runnable {
 			configFileProvisioner.provision(workspaceDir, workspaceLogger);
 
 			var scriptConfig = data.getScriptConfig();
-			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, false);
+			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, true);
 			WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
 
 			var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
