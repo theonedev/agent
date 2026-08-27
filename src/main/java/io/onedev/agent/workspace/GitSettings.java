@@ -23,14 +23,18 @@ public class GitSettings implements Serializable {
 
 	private final boolean retrieveLfs;
 
+	private final boolean retrieveSubmodules;
+
 	public GitSettings(String userName, String userEmail, CloneInfo cloneInfo,
-			String commitHash, @Nullable String branch, boolean retrieveLfs) {
+			String commitHash, @Nullable String branch, boolean retrieveLfs,
+			boolean retrieveSubmodules) {
 		this.userName = userName;
 		this.userEmail = userEmail;
 		this.cloneInfo = cloneInfo;
 		this.commitHash = commitHash;
 		this.branch = branch;
 		this.retrieveLfs = retrieveLfs;
+		this.retrieveSubmodules = retrieveSubmodules;
 	}
 
 	public String getUserName() {
@@ -56,6 +60,10 @@ public class GitSettings implements Serializable {
 
 	public boolean isRetrieveLfs() {
 		return retrieveLfs;
+	}
+
+	public boolean isRetrieveSubmodules() {
+		return retrieveSubmodules;
 	}
 
 }

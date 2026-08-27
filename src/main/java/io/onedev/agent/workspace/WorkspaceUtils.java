@@ -256,7 +256,8 @@ public class WorkspaceUtils {
 		WorkspaceHelper.setupRepository(workspaceDir, new Commandline(Agent.gitPath),
 				gitSettings.getUserName(), gitSettings.getUserEmail(), cloneInfo, 
 				gitSettings.getCommitHash(), gitSettings.getBranch(), gitSettings.isRetrieveLfs(),
-				Agent.getTrustCertsDir(), runtimeWorkspaceDirPath, cloneUrl,
+				gitSettings.isRetrieveSubmodules(), Agent.getTrustCertsDir(),
+				runtimeWorkspaceDirPath, cloneUrl,
 				newInfoLogger(logger), newWarningLogger(logger));
 	}
 
