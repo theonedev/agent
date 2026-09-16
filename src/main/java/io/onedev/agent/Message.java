@@ -47,7 +47,7 @@ public class Message implements Serializable {
 		byte[] bytes = new byte[data.length+1];
 		bytes[0] = (byte) type.ordinal();
 		System.arraycopy(data, 0, bytes, 1, data.length);
-		session.getRemote().sendBytesByFuture(ByteBuffer.wrap(bytes));
+		session.sendBinary(ByteBuffer.wrap(bytes), org.eclipse.jetty.websocket.api.Callback.NOOP);
 	}
 	
 }

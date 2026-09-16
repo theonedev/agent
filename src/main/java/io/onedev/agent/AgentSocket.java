@@ -48,6 +48,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -62,19 +63,20 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.Invocation;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.Invocation;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.Response;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SerializationUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.SystemUtils;
+import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
-import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketOpen;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
 import org.eclipse.jetty.websocket.api.annotations.WebSocket;
@@ -148,7 +150,7 @@ import io.onedev.k8shelper.UserDataFacade;
 import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
 
-@WebSocket
+@WebSocket(autoDemand = true)
 public class AgentSocket implements Runnable {
 
 	private static final Logger logger = LoggerFactory.getLogger(AgentSocket.class);
@@ -173,7 +175,7 @@ public class AgentSocket implements Runnable {
 	
 	private volatile boolean stopped;
 
-	@OnWebSocketConnect
+	@OnWebSocketOpen
 	public void onConnect(Session session) throws IOException {
 		logger.info("Connected to server");
 		this.session = session;
@@ -182,312 +184,319 @@ public class AgentSocket implements Runnable {
 	}
 	
 	@OnWebSocketMessage
-	public void onMessage(byte[] bytes, int offset, int length) {
-		Message message = Message.of(bytes, offset, length); 
-    	byte[] messageData = message.getData();
+	public void onMessage(ByteBuffer payload, Callback callback) {
 		try {
-	    	switch (message.getType()) {
-	    	case UPDATE:
-	    		String versionAtServer = new String(messageData, UTF_8);
-				File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
-				File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
-	    		if (!versionAtServer.equals(Agent.version)) {
-	    			logger.info("Updating agent to version " + versionAtServer + "...");
-	    			Client client = buildRestClient(Agent.sslFactory);
-	    			try {
-	    				WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
-	    				Invocation.Builder builder =  target.request();
-	    				builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
-	    				
-	    				try (Response response = builder.get()){
-	    					KubernetesHelper.checkStatus(response);
-	    					
-	    					File newLibDir = new File(Agent.installDir, "lib/" + versionAtServer);
-	    					FileUtils.cleanDir(newLibDir);
-	    					try (InputStream is = response.readEntity(InputStream.class)) {
-	    						TarUtils.untar(is, newLibDir, false);
-	    					} 
-	    					
-	    					String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
-	    					wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
-	    					wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
-	    					
-	    					if (!wrapperConf.contains("java.base/jdk.internal.ref=ALL-UNNAMED")) {
-	    						wrapperConf += ""
-	    								+ "\r\nwrapper.java.additional.30=--add-modules=java.se"
-	    								+ "\r\nwrapper.java.additional.31=--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED" 
-	    								+ "\r\nwrapper.java.additional.32=--add-opens=java.management/sun.management=ALL-UNNAMED"
-	    								+ "\r\nwrapper.java.additional.33=--add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED";
-	    					}
-							if (!wrapperConf.contains("java.base/sun.nio.fs=ALL-UNNAMED")) {
-								wrapperConf += "\r\nwrapper.java.additional.50=--add-opens=java.base/sun.nio.fs=ALL-UNNAMED";
-							}										
-	    					if (!wrapperConf.contains("wrapper.disable_console_input")) 
-	    						wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
-
-							wrapperConf = wrapperConf.replaceAll("\r\n(\r\n)+\r\n", "\r\n\r\n");
-							wrapperConf = wrapperConf.replaceAll("\n(\n)+\n", "\n\n");
-							wrapperConf = wrapperConf.replace(
-									"wrapperConfwrapper.java.additional.30=--add-modules=java.se",
-									"wrapper.java.additional.30=--add-modules=java.se");
-
-	    					FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
-
-	    					String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
-	    					if (!logbackConfig.contains("MaskingPatternLayout")) {
-	    						logbackConfig = Strings.CS.replace(logbackConfig, 
-	    								"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
-	    								"ch.qos.logback.core.encoder.LayoutWrappingEncoder");
-	    						logbackConfig = Strings.CS.replace(logbackConfig, 
-	    								"<pattern>", 
-	    								"<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
-	    						logbackConfig = Strings.CS.replace(logbackConfig, 
-	    								"</pattern>", 
-	    								"</pattern>\n			</layout>");
-	    					}
-	    					if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
-	    						logbackConfig = logbackConfig.replaceFirst(
-	    								"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
-	    								Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
-	    					}
-	    					FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);	    					
-	    				} 
-	    			} finally {
-	    				client.close();
-	    			}
-	        		Agent.restart();
-	    		} else {
-					if (!Agent.isSandboxMode()) {						
-						var wrapperConfChanged = false;
-						String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
-						var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
-						if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
-							wrapperConfChanged = true;
-							lines = new ArrayList<>(lines);
-							lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
-
-							int appendIndex = lines.size();
-							for (int i = 0; i < lines.size(); i++) {
-								if (lines.get(i).contains("wrapper.java.additional.50")) {
-									appendIndex = i + 1;
-									break;
-								}
-							}
-							lines.add(appendIndex, "set.default.max_memory_percent=50");
-							lines.add(appendIndex, "");
-							lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
-							wrapperConf = StringUtils.join(lineSeparator(), lines);
-						}
-						if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
-							wrapperConfChanged = true;
-							wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
-						}
-						if (wrapperConf.contains("wrapper.java.version.min=11")) {
-							wrapperConfChanged = true;
-							wrapperConf = wrapperConf.replace( "wrapper.java.version.min=11", "wrapper.java.version.min=17");
-							wrapperConf = wrapperConf.replace("Java version 11", "Java version 17");
-							wrapperConf = wrapperConf.replace("Java 11 or higher", "Java 17 or higher");
-						}
-
-						if (wrapperConfChanged) 
-							FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
-	
-						var logbackConfigChanged = false;
-						String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
-						if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
-							logbackConfigChanged = true;
-							logbackConfig = logbackConfig.replaceFirst(
-									"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
-									Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
-						}
-						if (logbackConfigChanged) 
-							FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
-	
-						if (wrapperConfChanged || logbackConfigChanged) {
-							Agent.restart();
-							break;
-						}
-					}
-
-					AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
-							Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
-					new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
-	    		}
-	    		break;
-	    	case UPDATE_ATTRIBUTES:
-	    		Map<String, String> attributes = SerializationUtils.deserialize(messageData);
-	    		Agent.attributes = attributes;
-	    		Properties props = new Properties();
-	    		props.putAll(attributes);
-	    		try (var os = new BufferedOutputStream(new FileOutputStream(new File(Agent.installDir, "conf/attributes.properties")))) {
-		    		props.store(os, null);
-	    		}
-	    		break;
-	    	case RESTART:
-				logger.info("Request to restart by server");
-	    		Agent.restart();
-	    		break;
-	    	case STOP:
-				logger.info("Request to stop by server");
-	    		Agent.stop();
-	    		break;
-	    	case ERROR:
-	    		throw new RuntimeException(new String(messageData, UTF_8));
-	    	case REQUEST:
-	    		Bootstrap.executorService.execute(() -> {
-					try {
-						CallData request = SerializationUtils.deserialize(messageData);
-						CallData response = new CallData(request.getUuid(), service(request.getPayload()));
-						new Message(MessageTypes.RESPONSE, response).sendBy(session);
-					} catch (Exception e) {
-						logger.error("Error handling websocket request", e);
-					}
-				});
-	    		break;
-	    	case RESPONSE:
-	    		WebsocketUtils.onResponse(SerializationUtils.deserialize(messageData));
-	    		break;
-	    	case CANCEL_JOB:
-	    		String jobToken = new String(messageData, UTF_8);
-	    		cancelJob(jobToken);
-	    		break;
-	    	case DELETE_WORKSPACE:
-	    		WorkspaceDeleteRequest deleteRequest = SerializationUtils.deserialize(messageData);
-	    		deleteWorkspace(deleteRequest);
-	    		break;
-	    	case RESUME_JOB: 
-	    		JobResumeData jobResumeData = SerializationUtils.deserialize(messageData);
-	    		resumeJob(jobResumeData);
-	    		break;
-	    	case JOB_SHELL_OPEN:
-	    		JobShellOpenData jobShellOpenData = SerializationUtils.deserialize(messageData);
-	    		String sessionId = jobShellOpenData.getSessionId();
-	    		jobToken = jobShellOpenData.getJobToken();
-
-				if (jobShellOpenData.isRunInContainer()) {
-					String containerName = jobContainerNames.get(jobToken);
-					if (containerName != null) {
-						Commandline docker = newDocker(jobShellOpenData.getDockerSock());
-						docker.addArgs("exec", "-it", containerName);
-						LeafFacade runningStep = runningSteps.get(jobToken);
-						if (runningStep instanceof CommandFacade) {
-							CommandFacade commandStep = (CommandFacade) runningStep;
-							docker.addArgs(commandStep.getExecutable());
-						} else {
-							docker.addArgs("sh");
-						}
-						jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, docker));
-					} else {
-						sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Container not running")));
-					}
-				} else {
-					File buildDir = getBuildDir(Agent.getTempDir(), jobShellOpenData.getProjectId(), 
-							jobShellOpenData.getBuildNumber(), jobShellOpenData.getSubmitSequence());
-					if (buildDir.exists()) {
-						Commandline shell;
-						LeafFacade runningStep = runningSteps.get(jobToken);
-						if (runningStep instanceof CommandFacade) {
-							CommandFacade commandStep = (CommandFacade) runningStep;
-							shell = new Commandline(commandStep.getExecutable());
-						} else if (SystemUtils.IS_OS_WINDOWS) {
-							shell = new Commandline("cmd");
-						} else {
-							shell = new Commandline("sh");
-						}
-						shell.workingDir(new File(buildDir, "work"));
-						jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, shell));
-					} else {
-						sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
-					}	
-				}
-	    		break;
-	    	case JOB_SHELL_TERMINATE:
-	    		sessionId = new String(messageData, UTF_8);
-	    		ShellSession shellSession = jobShellSessions.remove(sessionId);
-	    		if (shellSession != null)
-	    			shellSession.exit();
-	    		break;
-	    	case JOB_SHELL_INPUT:
-	    		JobShellInputRequest jobShellInputRequest = SerializationUtils.deserialize(messageData);
-	    		shellSession = jobShellSessions.get(jobShellInputRequest.getSessionId());
-	    		if (shellSession != null)
-	    			shellSession.writeToStdin(jobShellInputRequest.getData());
-	    		break;
-	    	case JOB_SHELL_RESIZE:
-	    		JobShellResizeRequest jobShellResizeRequest = SerializationUtils.deserialize(messageData);
-	    		shellSession = jobShellSessions.get(jobShellResizeRequest.getSessionId());
-	    		if (shellSession != null)
-	    			shellSession.resize(jobShellResizeRequest.getRows(), jobShellResizeRequest.getCols());
-	    		break;
-	    	case WORKSPACE_SHELL_OPEN:
-	    		WorkspaceShellOpenData shellOpenData = SerializationUtils.deserialize(messageData);
-				var shellId = shellOpenData.getShellId();
-				if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
-					var containerName = getWorkspaceContainerName(
-							dockerProvisionedShellOpenData.getProvisionerName(), 
-							dockerProvisionedShellOpenData.getProjectId(), 
-							dockerProvisionedShellOpenData.getWorkspaceNumber());
-					Commandline docker = newDocker(dockerProvisionedShellOpenData.getDockerSock());
-					var shellExecutable = shellOpenData.getShellExecutable();
-					var tmuxSocket = "onedev-" + shellId;
-					docker.addArgs("exec", "-it", "--detach-keys=ctrl-z,z", "-w",
-							WORKSPACE_PATH + "/work", containerName, 
-							"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
-					var token = shellOpenData.getToken();
-					workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () -> {
-						WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket);
-					}));
-				} else {					
-					var shellProvisionedShellOpenData = (ShellProvisionedShellOpenData) shellOpenData;
-					var tmuxExecutable = shellProvisionedShellOpenData.getTmuxExecutable();
-					if (tmuxExecutable == null)
-						tmuxExecutable = "tmux";
-					var workspaceDir = getWorkspaceDir(shellOpenData.getProjectId(), shellOpenData.getWorkspaceNumber());
-					var envVars = buildShellProvisionedEnvVars(
-							workspaceDir, 
-							shellProvisionedShellOpenData.getEnvVars(), 
-							shellProvisionedShellOpenData.getServerUrl(),
-							shellOpenData.getToken());
-					// Use a dedicated tmux server (unique socket) per shell so that tearing down one
-					// shell can never kill the tmux server shared by other shells/workspaces on this agent
-					var tmuxSocket = "onedev-" + shellId;
-					var tmux = new Commandline(tmuxExecutable);
-					tmux.addArgs("-L", tmuxSocket, "new-session");
-					for (var envVar : envVars.entrySet())
-						tmux.addArgs("-e", envVar.getKey() + "=" + envVar.getValue());
-					tmux.addArgs(shellOpenData.getShellExecutable())
-							.workingDir(new File(workspaceDir, "work"));
-					var token = shellOpenData.getToken();
-					workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, tmux, null));
-				}
-	    		break;
-	    	case WORKSPACE_SHELL_TERMINATE:
-	    		sessionId = new String(messageData, UTF_8);
-	    		ShellSession workspaceShellSession = workspaceShellSessions.remove(sessionId);
-	    		if (workspaceShellSession != null)
-	    			workspaceShellSession.exit();
-	    		break;
-	    	case WORKSPACE_SHELL_INPUT:
-	    		WorkspaceShellInputRequest workspaceShellInputRequest = SerializationUtils.deserialize(messageData);
-	    		workspaceShellSession = workspaceShellSessions.get(workspaceShellInputRequest.getSessionId());
-	    		if (workspaceShellSession != null)
-	    			workspaceShellSession.writeToStdin(workspaceShellInputRequest.getData());
-	    		break;
-	    	case WORKSPACE_SHELL_RESIZE:
-	    		WorkspaceShellResizeRequest workspaceShellResizeRequest = SerializationUtils.deserialize(messageData);
-	    		workspaceShellSession = workspaceShellSessions.get(workspaceShellResizeRequest.getSessionId());
-	    		if (workspaceShellSession != null)
-	    			workspaceShellSession.resize(workspaceShellResizeRequest.getRows(), workspaceShellResizeRequest.getCols());
-	    		break;
-	    	default:
-	    	}
-		} catch (Exception e) {
-			if (!Agent.logExpectedError(e, logger))
-				logger.error("Error processing websocket message", e);
+			byte[] bytes = new byte[payload.remaining()];
+			payload.get(bytes);
+			Message message = Message.of(bytes, 0, bytes.length);
+			byte[] messageData = message.getData();
 			try {
-				session.disconnect();
-			} catch (IOException e2) {
+				switch (message.getType()) {
+				case UPDATE:
+					String versionAtServer = new String(messageData, UTF_8);
+					File wrapperConfFile = new File(Agent.installDir, "conf/wrapper.conf");
+					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
+					if (!versionAtServer.equals(Agent.version)) {
+						logger.info("Updating agent to version " + versionAtServer + "...");
+						Client client = buildRestClient(Agent.sslFactory);
+						try {
+							WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
+							Invocation.Builder builder =  target.request();
+							builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
+
+							try (Response response = builder.get()){
+								KubernetesHelper.checkStatus(response);
+
+								File newLibDir = new File(Agent.installDir, "lib/" + versionAtServer);
+								FileUtils.cleanDir(newLibDir);
+								try (InputStream is = response.readEntity(InputStream.class)) {
+									TarUtils.untar(is, newLibDir, false);
+								}
+
+								String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
+								wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
+								wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
+
+								if (!wrapperConf.contains("java.base/jdk.internal.ref=ALL-UNNAMED")) {
+									wrapperConf += ""
+											+ "\r\nwrapper.java.additional.30=--add-modules=java.se"
+											+ "\r\nwrapper.java.additional.31=--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED"
+											+ "\r\nwrapper.java.additional.32=--add-opens=java.management/sun.management=ALL-UNNAMED"
+											+ "\r\nwrapper.java.additional.33=--add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED";
+								}
+								if (!wrapperConf.contains("java.base/sun.nio.fs=ALL-UNNAMED")) {
+									wrapperConf += "\r\nwrapper.java.additional.50=--add-opens=java.base/sun.nio.fs=ALL-UNNAMED";
+								}
+								if (!wrapperConf.contains("wrapper.disable_console_input"))
+									wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
+
+								wrapperConf = wrapperConf.replaceAll("\r\n(\r\n)+\r\n", "\r\n\r\n");
+								wrapperConf = wrapperConf.replaceAll("\n(\n)+\n", "\n\n");
+								wrapperConf = wrapperConf.replace(
+										"wrapperConfwrapper.java.additional.30=--add-modules=java.se",
+										"wrapper.java.additional.30=--add-modules=java.se");
+
+								FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
+
+								String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
+								if (!logbackConfig.contains("MaskingPatternLayout")) {
+									logbackConfig = Strings.CS.replace(logbackConfig,
+											"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
+											"ch.qos.logback.core.encoder.LayoutWrappingEncoder");
+									logbackConfig = Strings.CS.replace(logbackConfig,
+											"<pattern>",
+											"<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
+									logbackConfig = Strings.CS.replace(logbackConfig,
+											"</pattern>",
+											"</pattern>\n			</layout>");
+								}
+								if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
+									logbackConfig = logbackConfig.replaceFirst(
+											"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
+											Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
+								}
+								FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
+							}
+						} finally {
+							client.close();
+						}
+						Agent.restart();
+					} else {
+						if (!Agent.isSandboxMode()) {
+							var wrapperConfChanged = false;
+							String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
+							var lines = Splitter.on('\n').trimResults().splitToList(wrapperConf);
+							if (lines.stream().noneMatch(it -> it.contains("-XX:MaxRAMPercentage"))) {
+								wrapperConfChanged = true;
+								lines = new ArrayList<>(lines);
+								lines.removeIf(line -> line.contains("Maximum Java Heap Size (in MB)") || line.contains("wrapper.java.maxmemory"));
+
+								int appendIndex = lines.size();
+								for (int i = 0; i < lines.size(); i++) {
+									if (lines.get(i).contains("wrapper.java.additional.50")) {
+										appendIndex = i + 1;
+										break;
+									}
+								}
+								lines.add(appendIndex, "set.default.max_memory_percent=50");
+								lines.add(appendIndex, "");
+								lines.add(appendIndex, "wrapper.java.additional.100=-XX:MaxRAMPercentage=%max_memory_percent%");
+								wrapperConf = StringUtils.join(lineSeparator(), lines);
+							}
+							if (!wrapperConf.contains("-Djdk.io.File.allowDeleteReadOnlyFiles=true")) {
+								wrapperConfChanged = true;
+								wrapperConf += lineSeparator() + "wrapper.java.additional.150=-Djdk.io.File.allowDeleteReadOnlyFiles=true" + lineSeparator();
+							}
+							if (wrapperConf.contains("wrapper.java.version.min=11")) {
+								wrapperConfChanged = true;
+								wrapperConf = wrapperConf.replace( "wrapper.java.version.min=11", "wrapper.java.version.min=17");
+								wrapperConf = wrapperConf.replace("Java version 11", "Java version 17");
+								wrapperConf = wrapperConf.replace("Java 11 or higher", "Java 17 or higher");
+							}
+
+							if (wrapperConfChanged)
+								FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
+
+							var logbackConfigChanged = false;
+							String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
+							if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
+								logbackConfigChanged = true;
+								logbackConfig = logbackConfig.replaceFirst(
+										"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
+										Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
+							}
+							if (logbackConfigChanged)
+								FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
+
+							if (wrapperConfChanged || logbackConfigChanged) {
+								Agent.restart();
+								break;
+							}
+						}
+
+						AgentData agentData = new AgentData(Agent.token, Agent.osInfo,
+								Agent.name, Agent.ipAddress, Agent.cpuCount, Agent.attributes);
+						new Message(MessageTypes.AGENT_DATA, agentData).sendBy(session);
+					}
+					break;
+				case UPDATE_ATTRIBUTES:
+					Map<String, String> attributes = SerializationUtils.deserialize(messageData);
+					Agent.attributes = attributes;
+					Properties props = new Properties();
+					props.putAll(attributes);
+					try (var os = new BufferedOutputStream(new FileOutputStream(new File(Agent.installDir, "conf/attributes.properties")))) {
+						props.store(os, null);
+					}
+					break;
+				case RESTART:
+					logger.info("Request to restart by server");
+					Agent.restart();
+					break;
+				case STOP:
+					logger.info("Request to stop by server");
+					Agent.stop();
+					break;
+				case ERROR:
+					throw new RuntimeException(new String(messageData, UTF_8));
+				case REQUEST:
+					Bootstrap.executorService.execute(() -> {
+						try {
+							CallData request = SerializationUtils.deserialize(messageData);
+							CallData response = new CallData(request.getUuid(), service(request.getPayload()));
+							new Message(MessageTypes.RESPONSE, response).sendBy(session);
+						} catch (Exception e) {
+							logger.error("Error handling websocket request", e);
+						}
+					});
+					break;
+				case RESPONSE:
+					WebsocketUtils.onResponse(SerializationUtils.deserialize(messageData));
+					break;
+				case CANCEL_JOB:
+					String jobToken = new String(messageData, UTF_8);
+					cancelJob(jobToken);
+					break;
+				case DELETE_WORKSPACE:
+					WorkspaceDeleteRequest deleteRequest = SerializationUtils.deserialize(messageData);
+					deleteWorkspace(deleteRequest);
+					break;
+				case RESUME_JOB:
+					JobResumeData jobResumeData = SerializationUtils.deserialize(messageData);
+					resumeJob(jobResumeData);
+					break;
+				case JOB_SHELL_OPEN:
+					JobShellOpenData jobShellOpenData = SerializationUtils.deserialize(messageData);
+					String sessionId = jobShellOpenData.getSessionId();
+					jobToken = jobShellOpenData.getJobToken();
+
+					if (jobShellOpenData.isRunInContainer()) {
+						String containerName = jobContainerNames.get(jobToken);
+						if (containerName != null) {
+							Commandline docker = newDocker(jobShellOpenData.getDockerSock());
+							docker.addArgs("exec", "-it", containerName);
+							LeafFacade runningStep = runningSteps.get(jobToken);
+							if (runningStep instanceof CommandFacade) {
+								CommandFacade commandStep = (CommandFacade) runningStep;
+								docker.addArgs(commandStep.getExecutable());
+							} else {
+								docker.addArgs("sh");
+							}
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, docker));
+						} else {
+							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Container not running")));
+						}
+					} else {
+						File buildDir = getBuildDir(Agent.getTempDir(), jobShellOpenData.getProjectId(),
+								jobShellOpenData.getBuildNumber(), jobShellOpenData.getSubmitSequence());
+						if (buildDir.exists()) {
+							Commandline shell;
+							LeafFacade runningStep = runningSteps.get(jobToken);
+							if (runningStep instanceof CommandFacade) {
+								CommandFacade commandStep = (CommandFacade) runningStep;
+								shell = new Commandline(commandStep.getExecutable());
+							} else if (SystemUtils.IS_OS_WINDOWS) {
+								shell = new Commandline("cmd");
+							} else {
+								shell = new Commandline("sh");
+							}
+							shell.workingDir(new File(buildDir, "work"));
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, shell));
+						} else {
+							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
+						}
+					}
+					break;
+				case JOB_SHELL_TERMINATE:
+					sessionId = new String(messageData, UTF_8);
+					ShellSession shellSession = jobShellSessions.remove(sessionId);
+					if (shellSession != null)
+						shellSession.exit();
+					break;
+				case JOB_SHELL_INPUT:
+					JobShellInputRequest jobShellInputRequest = SerializationUtils.deserialize(messageData);
+					shellSession = jobShellSessions.get(jobShellInputRequest.getSessionId());
+					if (shellSession != null)
+						shellSession.writeToStdin(jobShellInputRequest.getData());
+					break;
+				case JOB_SHELL_RESIZE:
+					JobShellResizeRequest jobShellResizeRequest = SerializationUtils.deserialize(messageData);
+					shellSession = jobShellSessions.get(jobShellResizeRequest.getSessionId());
+					if (shellSession != null)
+						shellSession.resize(jobShellResizeRequest.getRows(), jobShellResizeRequest.getCols());
+					break;
+				case WORKSPACE_SHELL_OPEN:
+					WorkspaceShellOpenData shellOpenData = SerializationUtils.deserialize(messageData);
+					var shellId = shellOpenData.getShellId();
+					if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
+						var containerName = getWorkspaceContainerName(
+								dockerProvisionedShellOpenData.getProvisionerName(),
+								dockerProvisionedShellOpenData.getProjectId(),
+								dockerProvisionedShellOpenData.getWorkspaceNumber());
+						Commandline docker = newDocker(dockerProvisionedShellOpenData.getDockerSock());
+						var shellExecutable = shellOpenData.getShellExecutable();
+						var tmuxSocket = "onedev-" + shellId;
+						docker.addArgs("exec", "-it", "--detach-keys=ctrl-z,z", "-w",
+								WORKSPACE_PATH + "/work", containerName,
+								"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
+						var token = shellOpenData.getToken();
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () -> {
+							WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket);
+						}));
+					} else {
+						var shellProvisionedShellOpenData = (ShellProvisionedShellOpenData) shellOpenData;
+						var tmuxExecutable = shellProvisionedShellOpenData.getTmuxExecutable();
+						if (tmuxExecutable == null)
+							tmuxExecutable = "tmux";
+						var workspaceDir = getWorkspaceDir(shellOpenData.getProjectId(), shellOpenData.getWorkspaceNumber());
+						var envVars = buildShellProvisionedEnvVars(
+								workspaceDir,
+								shellProvisionedShellOpenData.getEnvVars(),
+								shellProvisionedShellOpenData.getServerUrl(),
+								shellOpenData.getToken());
+						// Use a dedicated tmux server (unique socket) per shell so that tearing down one
+						// shell can never kill the tmux server shared by other shells/workspaces on this agent
+						var tmuxSocket = "onedev-" + shellId;
+						var tmux = new Commandline(tmuxExecutable);
+						tmux.addArgs("-L", tmuxSocket, "new-session");
+						for (var envVar : envVars.entrySet())
+							tmux.addArgs("-e", envVar.getKey() + "=" + envVar.getValue());
+						tmux.addArgs(shellOpenData.getShellExecutable())
+								.workingDir(new File(workspaceDir, "work"));
+						var token = shellOpenData.getToken();
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, tmux, null));
+					}
+					break;
+				case WORKSPACE_SHELL_TERMINATE:
+					sessionId = new String(messageData, UTF_8);
+					ShellSession workspaceShellSession = workspaceShellSessions.remove(sessionId);
+					if (workspaceShellSession != null)
+						workspaceShellSession.exit();
+					break;
+				case WORKSPACE_SHELL_INPUT:
+					WorkspaceShellInputRequest workspaceShellInputRequest = SerializationUtils.deserialize(messageData);
+					workspaceShellSession = workspaceShellSessions.get(workspaceShellInputRequest.getSessionId());
+					if (workspaceShellSession != null)
+						workspaceShellSession.writeToStdin(workspaceShellInputRequest.getData());
+					break;
+				case WORKSPACE_SHELL_RESIZE:
+					WorkspaceShellResizeRequest workspaceShellResizeRequest = SerializationUtils.deserialize(messageData);
+					workspaceShellSession = workspaceShellSessions.get(workspaceShellResizeRequest.getSessionId());
+					if (workspaceShellSession != null)
+						workspaceShellSession.resize(workspaceShellResizeRequest.getRows(), workspaceShellResizeRequest.getCols());
+					break;
+				default:
+				}
+			} catch (Exception e) {
+				if (!Agent.logExpectedError(e, logger))
+					logger.error("Error processing websocket message", e);
+				try {
+					session.disconnect();
+				} catch (Exception e2) {
+				}
 			}
+			callback.succeed();
+		} catch (Throwable t) {
+			callback.fail(t);
 		}
 	}
 

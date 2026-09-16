@@ -11,7 +11,9 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -327,15 +329,16 @@ public class Agent {
 			sslContextFactory.setIncludeCipherSuites(sslParameters.getCipherSuites());	
 			sslContextFactory.setHostnameVerifier(sslFactory.getHostnameVerifier());
 
-			HttpClient httpClient = new HttpClient(sslContextFactory);
+			HttpClient httpClient = new HttpClient();
+			httpClient.setSslContextFactory(sslContextFactory);
 			client = new WebSocketClient(httpClient);
 
 			client.setStopAtShutdown(false);
-			client.setMaxIdleTimeout(SOCKET_IDLE_TIMEOUT);
-			client.getPolicy().setMaxTextMessageSize(MAX_MESSAGE_BYTES);
-			client.getPolicy().setMaxBinaryMessageSize(MAX_MESSAGE_BYTES);
+			client.setIdleTimeout(Duration.ofMillis(SOCKET_IDLE_TIMEOUT));
+			client.setMaxTextMessageSize(MAX_MESSAGE_BYTES);
+			client.setMaxBinaryMessageSize(MAX_MESSAGE_BYTES);
 			
-			ClientUpgradeRequest request = new ClientUpgradeRequest();
+			ClientUpgradeRequest request = new ClientUpgradeRequest(new URI(websocketUrl));
 			request.setHeader(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + token);
 			
 			boolean websocketConnectionAttempted = false;
@@ -347,7 +350,12 @@ public class Agent {
 					
 					reconnect = false;
 					client.start();
-					client.connect(new AgentSocket(), new URI(websocketUrl), request);
+					var socket = new AgentSocket();
+					// Jetty reports upgrade failures through the future before a socket is opened.
+					client.connect(socket, request).whenComplete((session, error) -> {
+						if (error != null)
+							socket.onError(error);
+					});
 					
 					while (!reconnect && !stopping) {
 						AgentSocket.houseKeeper();
@@ -382,6 +390,9 @@ public class Agent {
 	}
 	
 	static boolean logExpectedError(Throwable t, Logger logger) {
+		// Stopping the WebSocket client may close its channel before the close handshake completes.
+		if (stopping && ExceptionUtils.indexOfType(t, ClosedChannelException.class) != -1)
+			return true;
 		if (t.getMessage() != null) {
 	    	if (t.getMessage().contains("Connection refused")) {
 	    		logger.error("Connection refused. Is server up?");
@@ -392,7 +403,8 @@ public class Agent {
 	    	} else if (t.getMessage().contains("503 Service Unavailable")) {
 	    		logger.error("Service unavailable");
 	    		return true;
-	    	} else if (t.getMessage().contains("403 Forbidden")) {
+			} else if (t.getMessage().contains("401 Unauthorized")
+					|| t.getMessage().contains("403 Forbidden")) {
 				logger.error("Agent token rejected by server");
 				return true;
 			} else if (t.getMessage().contains("Token already used by another agent")
