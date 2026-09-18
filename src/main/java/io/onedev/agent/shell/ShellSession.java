@@ -60,6 +60,8 @@ public abstract class ShellSession {
 		
         ptyMode = new PtyMode();
         cmdline.ptyMode(ptyMode);
+        // The browser terminal supports xterm, regardless of how the agent was started.
+        cmdline.envs().put("TERM", "xterm-256color");
 
         execution = Bootstrap.executorService.submit(new Runnable() {
 
