@@ -47,7 +47,6 @@ import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.OsInfo;
 import nl.altindag.ssl.SSLFactory;
-import oshi.SystemInfo;
 
 public class Agent {
 
@@ -293,12 +292,7 @@ public class Agent {
 			if (StringUtils.isBlank(token)) 
 				throw new ExplicitException("Property '" + AGENT_TOKEN_KEY + "' not specified");
 			
-			try {
-				cpuCount = new SystemInfo().getHardware().getProcessor().getLogicalProcessorCount();
-			} catch (Exception e) {
-				logger.debug("Error calling oshi", e);
-				cpuCount = 2;
-			}
+			cpuCount = Runtime.getRuntime().availableProcessors();
 
 			gitPath = System.getenv(GIT_PATH_KEY);
 			if (StringUtils.isBlank(gitPath))
