@@ -1,11 +1,15 @@
 package io.onedev.agent.job;
 
 import static io.onedev.k8shelper.JobHelper.BUILD_PATH;
+import static io.onedev.k8shelper.JobHelper.FINALIZATION;
+import static io.onedev.k8shelper.JobHelper.INITIALIZATION;
+import static io.onedev.k8shelper.JobHelper.PHASE_PREFIX;
+import static io.onedev.k8shelper.JobHelper.buildStepEndMessage;
+import static io.onedev.k8shelper.JobHelper.buildStepStartMessage;
 import static io.onedev.k8shelper.JobHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.KubernetesHelper.GIT_TRUST_ALL_DIRS;
 import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
 import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
-import static io.onedev.k8shelper.KubernetesHelper.formatDuration;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.stream;
@@ -16,12 +20,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import jakarta.ws.rs.client.Client;
-import jakarta.ws.rs.client.Invocation;
-import jakarta.ws.rs.client.WebTarget;
-import jakarta.ws.rs.core.Response;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.base.Splitter;
+import com.google.common.base.Throwables;
 
 import io.onedev.agent.Agent;
 import io.onedev.agent.AgentUtils;
@@ -43,43 +44,69 @@ import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.BuildImageFacade;
 import io.onedev.k8shelper.CommandFacade;
-import io.onedev.k8shelper.CompositeFacade;
+import io.onedev.k8shelper.JobHelper.StepEventKind;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
 import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.Invocation;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.Response;
 import nl.altindag.ssl.SSLFactory;
 
 public class JobUtils {
 
     private static final Logger logger = LoggerFactory.getLogger(JobUtils.class);
 
+	public static String buildPhaseMessage(String phase) {
+		if (!INITIALIZATION.equals(phase) && !FINALIZATION.equals(phase))
+			throw new IllegalArgumentException("Unknown log phase: " + phase);
+		return PHASE_PREFIX + phase;
+	}
+
+	@Nullable
+	public static String parsePhaseMessage(String message) {
+		if (message.equals(buildPhaseMessage(INITIALIZATION)))
+			return INITIALIZATION;
+		if (message.equals(buildPhaseMessage(FINALIZATION)))
+			return FINALIZATION;
+		return null;
+	}
+
+	public static StepEventKind getStepOutcome(Throwable t) {
+		return ExceptionUtils.find(t, InterruptedException.class) != null
+				|| ExceptionUtils.find(t, CancellationException.class) != null
+				? StepEventKind.CANCELLED : StepEventKind.FAILED;
+	}
+
+	/** Emit outcomes where the step position is known, without wrapping or retaining the logger. */
+	public static boolean runStep(List<Integer> position, TaskLogger logger, Callable<Boolean> task) {
+		boolean successful;
+		try {
+			logger.log(buildStepStartMessage(position));
+			successful = task.call();
+		} catch (Throwable t) {
+			var outcome = getStepOutcome(t);
+			if (outcome == StepEventKind.FAILED) {
+				var explicit = ExceptionUtils.find(t, ExplicitException.class);
+				logger.error(explicit != null ? explicit.getMessage() : Throwables.getStackTraceAsString(t));
+			}
+			logger.log(buildStepEndMessage(position, outcome));
+			if (t instanceof Error error)
+				throw error;
+			if (outcome == StepEventKind.CANCELLED)
+				throw ExceptionUtils.unchecked(t);
+			return false;
+		}
+		logger.log(buildStepEndMessage(position, successful ? StepEventKind.SUCCESSFUL : StepEventKind.FAILED));
+		return successful;
+	}
+
 	public static File getBuildDir(File baseDir, long projectId, long buildNumber, long submitSequence) {
 		return new File(baseDir, "onedev-build-" + projectId + "-" + buildNumber + "-" + submitSequence);
 	}
 
-    public static boolean runStep(CompositeFacade entry, List<Integer> position,
-								  TaskLogger logger, Callable<Boolean> task) {
-		String stepPath = entry.getPathAsString(position);
-		logger.notice("Running step \"" + stepPath + "\"...");
-		try {
-			long time = System.currentTimeMillis();
-			var successful = task.call();
-			var duration = formatDuration(System.currentTimeMillis() - time);
-			if (successful)
-				logger.success("Step \"" + stepPath + "\" is successful (" + duration + ")");
-			else
-				logger.error("Step \"" + stepPath + "\" is failed (" + duration + ")");
-			return successful;
-		} catch (Exception e) {
-			if (ExceptionUtils.find(e, InterruptedException.class) == null) {
-				logger.error(AgentUtils.getErrorMessage(e));
-				return false;
-			} else {
-				throw ExceptionUtils.unchecked(e);
-			}
-		}
-	}
     
 	private static List<String> parseDockerOptions(File hostBuildDir, String optionString) {
 		var options = new ArrayList<String>();

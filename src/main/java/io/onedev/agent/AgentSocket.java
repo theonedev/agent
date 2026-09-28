@@ -558,7 +558,7 @@ public class AgentSocket implements Runnable {
 		}
 	}
 	
-	private boolean executeShellJob(Session session, ShellJobData jobData) {
+	private boolean executeShellJob(Session session, ShellJobData jobData, TaskLogger jobLogger) {
 		File buildDir = getBuildDir(Agent.getTempDir(), jobData.getProjectId(), 
 				jobData.getBuildNumber(), jobData.getSubmitSequence());
 		File workDir = new File(buildDir, "work");
@@ -571,13 +571,12 @@ public class AgentSocket implements Runnable {
 					entry.getValue(), UTF_8);
 		}
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		var cacheProvisioners = new ArrayList<CacheProvisioner>();
+		boolean successful = false;
+		boolean initializationCompleted = false;
 		SecretMasker.push(jobData.getSecretMasker());
 		try {
-			TaskLogger jobLogger = newTaskLogger(session, jobData.getJobToken());
-
 			FileUtils.createDir(workDir);
-
-			var cacheProvisioners = new ArrayList<CacheProvisioner>();
 
 			jobLogger.log("Downloading job dependencies...");
 			
@@ -589,11 +588,12 @@ public class AgentSocket implements Runnable {
 
 			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 			var cacheConfigIndex = new AtomicInteger(1);
-			var successful = entryFacade.execute(new LeafHandler() {
+			initializationCompleted = true;
+			successful = entryFacade.execute(new LeafHandler() {
 
 				@Override
 				public boolean execute(LeafFacade facade, List<Integer> position) {
-					return runStep(entryFacade, position, jobLogger, () -> {
+					return runStep(position, jobLogger, () -> {
 						runningSteps.put(jobData.getJobToken(), facade);
 						try {
 							return doExecute(facade, position);
@@ -691,28 +691,31 @@ public class AgentSocket implements Runnable {
 
 				@Override
 				public void skip(LeafFacade facade, List<Integer> position) {
-					jobLogger.notice("Step \"" + entryFacade.getPathAsString(position) + "\" is skipped");
+					jobLogger.log(JobHelper.buildStepSkipMessage(position));
 				}
 				
 			}, new ArrayList<>());
 
-			if (successful) {
-				for (var cacheProvisioner : cacheProvisioners) 
-					cacheProvisioner.upload(buildDir, jobLogger);
-			}
-
 			return successful;
 		} finally {
-			SecretMasker.pop();
-			jobThreads.remove(jobData.getJobToken());
-						
-			synchronized (buildDir) {
-				FileUtils.deleteDir(buildDir, 5);
+			try {
+				if (initializationCompleted)
+					jobLogger.log(JobUtils.buildPhaseMessage(JobHelper.FINALIZATION));
+				if (successful) {
+					for (var cacheProvisioner : cacheProvisioners)
+						cacheProvisioner.upload(buildDir, jobLogger);
+				}
+			} finally {
+				SecretMasker.pop();
+				jobThreads.remove(jobData.getJobToken());
+				synchronized (buildDir) {
+					FileUtils.deleteDir(buildDir, 5);
+				}
 			}
 		}
 	}
 
-	private boolean executeDockerJob(Session session, DockerJobData jobData) {
+	private boolean executeDockerJob(Session session, DockerJobData jobData, TaskLogger jobLogger) {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			throw new ExplicitException("Docker executor is not supported on Windows");
 		}
@@ -727,283 +730,290 @@ public class AgentSocket implements Runnable {
 		var dockerSock = dockerSettings.getDockerSock();
 
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		var cacheProvisioners = new ArrayList<CacheProvisioner>();
+		boolean successful = false;
+		boolean initializationCompleted = false;
+		String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
+				+ jobData.getBuildNumber() + "-" + jobData.getSubmitSequence();
+		boolean networkCreated = false;
 		SecretMasker.push(jobData.getSecretMasker());
-		TaskLogger jobLogger = newTaskLogger(session, jobData.getJobToken());
 		try {
-			String network = jobData.getExecutorName() + "-" + jobData.getProjectId() + "-"
-					+ jobData.getBuildNumber() + "-" + jobData.getSubmitSequence();
 			jobLogger.log("Creating docker network '" + network + "'...");
 			
 			createNetwork(newDocker(dockerSock), network, dockerSettings.getNetworkOptions(), jobLogger);
-			try {
-				var docker = newDocker(dockerSock);
-				for (var jobService: jobData.getServices()) {
-					var registryLogins = merge(jobService.getRegistryLogins(), dockerSettings.getRegistryLogins());
-					callWithRegistryLogins(docker, registryLogins, () -> {
-						startService(docker, network, jobService, dockerSettings.getCpuLimit(),
-								dockerSettings.getMemoryLimit(), jobLogger);
-						return null;
+			networkCreated = true;
+			var docker = newDocker(dockerSock);
+			for (var jobService: jobData.getServices()) {
+				var registryLogins = merge(jobService.getRegistryLogins(), dockerSettings.getRegistryLogins());
+				callWithRegistryLogins(docker, registryLogins, () -> {
+					startService(docker, network, jobService, dockerSettings.getCpuLimit(),
+							dockerSettings.getMemoryLimit(), jobLogger);
+					return null;
+				});
+			}
+
+			File hostWorkDir = new File(hostBuildDir, "work");
+			FileUtils.createDir(hostWorkDir);
+
+			jobLogger.log("Downloading job dependencies...");
+
+			downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
+					hostWorkDir, Agent.sslFactory);
+
+			var containerBuildDirPath = BUILD_PATH;
+			var containerWorkDirPath = BUILD_PATH + "/work";
+			var containerTrustCertsFilePath = BUILD_PATH + "/trust-certs.pem";
+
+			String messageData = jobData.getJobToken() + ":" + containerWorkDirPath;
+			new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
+
+			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
+			var osIds = getOsIds(jobLogger);
+			var cacheConfigIndex = new AtomicInteger(1);
+			var pulledImages = new HashSet<String>();
+			initializationCompleted = true;
+			successful = entryFacade.execute(new LeafHandler() {
+
+				private int runStepContainer(Commandline docker, String image, String runAs,
+												@Nullable String entrypoint, List<String> arguments,
+												Map<String, String> environments, @Nullable String workingDir,
+												Map<String, String> volumeMounts, List<Integer> position,
+												boolean useTTY) {
+					String containerName = network + "-step-" + stringifyStepPosition(position);
+					jobContainerNames.put(jobData.getJobToken(), containerName);
+					try {
+						docker.args("run", "--name=" + containerName, "--network=" + network);
+						if (dockerSettings.isAlwaysPullImage() && pulledImages.add(image))
+							docker.addArgs("--pull=always");
+						docker.addArgs("--user", runAs);
+
+						if (dockerSettings.getCpuLimit() != null)
+							docker.addArgs("--cpus", dockerSettings.getCpuLimit());
+						if (dockerSettings.getMemoryLimit() != null)
+							docker.addArgs("--memory", dockerSettings.getMemoryLimit());
+						if (dockerSettings.getRunOptions() != null)
+							docker.addArgs(StringUtils.parseQuoteTokens(dockerSettings.getRunOptions()));
+
+						docker.addArgs("-v", getHostPath(hostBuildDir.getAbsolutePath(), dockerSock) + ":" + containerBuildDirPath);
+
+						for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
+							if (entry.getKey().contains(".."))
+								throw new ExplicitException("Volume mount source path should not contain '..'");
+							String hostPath = getHostPath(new File(hostWorkDir, entry.getKey()).getAbsolutePath(), dockerSock);
+							docker.addArgs("-v", hostPath + ":" + entry.getValue());
+						}
+
+						for (var cacheProvisioner : cacheProvisioners)
+							cacheProvisioner.mountVolumes(docker, hostBuildDir, path -> getHostPath(path, dockerSock));
+
+						if (entrypoint != null)
+							docker.addArgs("-w", containerWorkDirPath);
+						else if (workingDir != null)
+							docker.addArgs("-w", workingDir);
+
+						if (dockerSettings.isMountDockerSock()) {
+							if (dockerSock != null)
+								docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
+							else
+								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+						}
+
+						for (Map.Entry<String, String> entry: environments.entrySet())
+							docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
+
+						docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkDirPath);
+
+						if (useTTY)
+							docker.addArgs("-t");
+
+						if (entrypoint != null)
+							docker.addArgs("--entrypoint=" + entrypoint);
+
+						docker.addArgs(image);
+						docker.addArgs(arguments.toArray(new String[arguments.size()]));
+						docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
+						var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger),
+								null);
+						return result.getReturnCode();
+					} finally {
+						jobContainerNames.remove(jobData.getJobToken());
+					}
+				}
+
+				@Override
+				public boolean execute(LeafFacade facade, List<Integer> position) {
+					return runStep(position, jobLogger, () -> {
+						runningSteps.put(jobData.getJobToken(), facade);
+						try {
+							return doExecute(facade, position);
+						} finally {
+							runningSteps.remove(jobData.getJobToken());
+						}
 					});
 				}
 
-				File hostWorkDir = new File(hostBuildDir, "work");
-				FileUtils.createDir(hostWorkDir);
+				private boolean doExecute(LeafFacade facade, List<Integer> position) {
+					if (facade instanceof CommandFacade) {
+						CommandFacade commandFacade = ((CommandFacade) facade).replacePlaceholders(hostBuildDir);
+						if (commandFacade.getImage() == null) {
+							throw new ExplicitException("This step can only be executed by server shell "
+									+ "executor or remote shell executor");
+						}
+						var entrypointArgs = getEntrypointArgs(hostBuildDir, commandFacade, position);
+						var docker = newDocker(dockerSock);
 
-				var cacheProvisioners = new ArrayList<CacheProvisioner>();
+						var registryLogins = merge(commandFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
 
-				jobLogger.log("Downloading job dependencies...");
-
-				downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
-						hostWorkDir, Agent.sslFactory);
-				
-				var containerBuildDirPath = BUILD_PATH;
-				var containerWorkDirPath = BUILD_PATH + "/work";
-				var containerTrustCertsFilePath = BUILD_PATH + "/trust-certs.pem";
-				
-				String messageData = jobData.getJobToken() + ":" + containerWorkDirPath;
-				new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
-
-				CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
-				var osIds = getOsIds(jobLogger);
-				var cacheConfigIndex = new AtomicInteger(1);
-				var pulledImages = new HashSet<String>();
-				var successful = entryFacade.execute(new LeafHandler() {
-
-					private int runStepContainer(Commandline docker, String image, String runAs,
-													@Nullable String entrypoint, List<String> arguments,
-													Map<String, String> environments, @Nullable String workingDir,
-													Map<String, String> volumeMounts, List<Integer> position,
-													boolean useTTY) {
-						String containerName = network + "-step-" + stringifyStepPosition(position);
-						jobContainerNames.put(jobData.getJobToken(), containerName);
+						var runAs = commandFacade.getRunAs();
+						if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
+							jobLogger.log("Changing owner of build directory to container user...");
+							changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
+						}
 						try {
-							docker.args("run", "--name=" + containerName, "--network=" + network);
-							if (dockerSettings.isAlwaysPullImage() && pulledImages.add(image))
-								docker.addArgs("--pull=always");
-							docker.addArgs("--user", runAs);
-
-							if (dockerSettings.getCpuLimit() != null)
-								docker.addArgs("--cpus", dockerSettings.getCpuLimit());
-							if (dockerSettings.getMemoryLimit() != null)
-								docker.addArgs("--memory", dockerSettings.getMemoryLimit());
-							if (dockerSettings.getRunOptions() != null)
-								docker.addArgs(StringUtils.parseQuoteTokens(dockerSettings.getRunOptions()));
-
-							docker.addArgs("-v", getHostPath(hostBuildDir.getAbsolutePath(), dockerSock) + ":" + containerBuildDirPath);
-
-							for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
-								if (entry.getKey().contains(".."))
-									throw new ExplicitException("Volume mount source path should not contain '..'");
-								String hostPath = getHostPath(new File(hostWorkDir, entry.getKey()).getAbsolutePath(), dockerSock);
-								docker.addArgs("-v", hostPath + ":" + entry.getValue());
+							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
+								return runStepContainer(docker, commandFacade.getImage(), runAs,
+										"sh", entrypointArgs, commandFacade.getEnvMap(),
+										null, new HashMap<>(), position, commandFacade.isUseTTY());
+							});
+							if (exitCode != 0) {
+								jobLogger.error("Command exited with code " + exitCode);
+								return false;
 							}
-
-							for (var cacheProvisioner : cacheProvisioners) 
-								cacheProvisioner.mountVolumes(docker, hostBuildDir, path -> getHostPath(path, dockerSock));
-
-							if (entrypoint != null)
-								docker.addArgs("-w", containerWorkDirPath);
-							else if (workingDir != null)
-								docker.addArgs("-w", workingDir);
-
-							if (dockerSettings.isMountDockerSock()) {
-								if (dockerSock != null) 
-									docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
-								else 
-									docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
-							}
-
-							for (Map.Entry<String, String> entry: environments.entrySet())
-								docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
-
-							docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkDirPath);
-
-							if (useTTY)
-								docker.addArgs("-t");
-
-							if (entrypoint != null)
-								docker.addArgs("--entrypoint=" + entrypoint);
-
-							docker.addArgs(image);
-							docker.addArgs(arguments.toArray(new String[arguments.size()]));
-							docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
-							var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger),
-									null);
-							return result.getReturnCode();
 						} finally {
-							jobContainerNames.remove(jobData.getJobToken());
-						}
-					}
-
-					@Override
-					public boolean execute(LeafFacade facade, List<Integer> position) {
-						return runStep(entryFacade, position, jobLogger, () -> {
-							runningSteps.put(jobData.getJobToken(), facade);
-							try {
-								return doExecute(facade, position);
-							} finally {
-								runningSteps.remove(jobData.getJobToken());
+							if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
+								jobLogger.log("Changing owner of build directory to host user...");
+								changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
 							}
+						}
+					} else if (facade instanceof BuildImageFacade) {
+						var buildImageFacade = (BuildImageFacade) facade;
+						var registryLogins = merge(buildImageFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
+						var docker = newDocker(dockerSock);
+						callWithRegistryLogins(docker, registryLogins, () -> {
+							buildImage(docker, dockerSettings.getDockerBuilder(), buildImageFacade, hostBuildDir,
+									dockerSettings.isAlwaysPullImage(), jobLogger);
+							return null;
 						});
-					}
+					} else if (facade instanceof RunImagetoolsFacade) {
+						var runImagetoolsFacade = (RunImagetoolsFacade) facade;
+						var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
+						var docker = newDocker(dockerSock);
+						callWithRegistryLogins(docker, registryLogins, () -> {
+							runImagetools(docker, runImagetoolsFacade, hostBuildDir, jobLogger);
+							return null;
+						});
+					} else if (facade instanceof PruneBuilderCacheFacade) {
+						var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
+						var docker = newDocker(dockerSock);
+						callWithRegistryLogins(docker, new ArrayList<>(), () -> {
+							pruneBuilderCache(docker, dockerSettings.getDockerBuilder(), pruneBuilderCacheFacade,
+									hostBuildDir, jobLogger);
+							return null;
+						});
+					} else if (facade instanceof RunContainerFacade) {
+						RunContainerFacade runContainerFacade = ((RunContainerFacade) facade).replacePlaceholders(hostBuildDir);
 
-					private boolean doExecute(LeafFacade facade, List<Integer> position) {
-						if (facade instanceof CommandFacade) {
-							CommandFacade commandFacade = ((CommandFacade) facade).replacePlaceholders(hostBuildDir);
-							if (commandFacade.getImage() == null) {
-								throw new ExplicitException("This step can only be executed by server shell "
-										+ "executor or remote shell executor");
-							}
-							var entrypointArgs = getEntrypointArgs(hostBuildDir, commandFacade, position);
-							var docker = newDocker(dockerSock);
+						List<String> arguments = new ArrayList<>();
+						if (runContainerFacade.getArgs() != null)
+							arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
 
-							var registryLogins = merge(commandFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
-							
-							var runAs = commandFacade.getRunAs();
-							if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
-								jobLogger.log("Changing owner of build directory to container user...");
-								changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
-							}
-							try {
-								int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
-									return runStepContainer(docker, commandFacade.getImage(), runAs,
-											"sh", entrypointArgs, commandFacade.getEnvMap(),
-											null, new HashMap<>(), position, commandFacade.isUseTTY());
-								});
-								if (exitCode != 0) {
-									jobLogger.error("Command exited with code " + exitCode);
-									return false;
-								}
-							} finally {
-								if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
-									jobLogger.log("Changing owner of build directory to host user...");
-									changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
-								}
-							}
-						} else if (facade instanceof BuildImageFacade) {
-							var buildImageFacade = (BuildImageFacade) facade;
-							var registryLogins = merge(buildImageFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
-							var docker = newDocker(dockerSock);
-							callWithRegistryLogins(docker, registryLogins, () -> {
-								buildImage(docker, dockerSettings.getDockerBuilder(), buildImageFacade, hostBuildDir,
-										dockerSettings.isAlwaysPullImage(), jobLogger);
-								return null;
-							});
-						} else if (facade instanceof RunImagetoolsFacade) {
-							var runImagetoolsFacade = (RunImagetoolsFacade) facade;
-							var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
-							var docker = newDocker(dockerSock);
-							callWithRegistryLogins(docker, registryLogins, () -> {
-								runImagetools(docker, runImagetoolsFacade, hostBuildDir, jobLogger);
-								return null;
-							});
-						} else if (facade instanceof PruneBuilderCacheFacade) {
-							var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
-							var docker = newDocker(dockerSock);
-							callWithRegistryLogins(docker, new ArrayList<>(), () -> {
-								pruneBuilderCache(docker, dockerSettings.getDockerBuilder(), pruneBuilderCacheFacade,
-										hostBuildDir, jobLogger);
-								return null;
-							});
-						} else if (facade instanceof RunContainerFacade) {
-							RunContainerFacade runContainerFacade = ((RunContainerFacade) facade).replacePlaceholders(hostBuildDir);
-
-							List<String> arguments = new ArrayList<>();
-							if (runContainerFacade.getArgs() != null)
-								arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(runContainerFacade.getArgs())));
-
-							var docker = newDocker(dockerSock);
-							var registryLogins = merge(runContainerFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
-							var runAs = runContainerFacade.getRunAs();
-							if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
-								jobLogger.log("Changing owner of build directory to container user...");
-								changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
-							}
-							try {
-								int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
-									return runStepContainer(docker, runContainerFacade.getImage(), runAs, null, arguments,
-											runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
-											position, runContainerFacade.isUseTTY());
-								});
-								if (exitCode != 0) {
-									jobLogger.error("Container exited with code " + exitCode);
-									return false;
-								}
-							} finally {
-								if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
-									jobLogger.log("Changing owner of build directory to host user...");
-									changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
-								}
-							}
-						} else if (facade instanceof CheckoutFacade) {
-							CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
-							jobLogger.log("Checking out code...");
-
-							Commandline git = new Commandline(Agent.gitPath);
-							checkoutFacade.setupWorkingDir(git, hostWorkDir);
-
-							var infoLogger = AgentUtils.newInfoLogger(jobLogger);
-							var warningLogger = AgentUtils.newWarningLogger(jobLogger);
-
-							initRepository(git, infoLogger, warningLogger);
-
-							git.clearArgs();
-							setupGitCerts(git, Agent.getTrustCertsDir(),
-									new File(hostBuildDir, "trust-certs.pem"), 
-									containerTrustCertsFilePath, infoLogger, warningLogger);
-
-							CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-							cloneInfo.setupGitAuth(git, hostBuildDir, containerBuildDirPath, infoLogger, warningLogger);
-
-							int cloneDepth = checkoutFacade.getCloneDepth();
-
-							String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
-							String commitHash = jobData.getCommitHash();
-
-							String branch = KubernetesHelper.ref2branch(jobData.getRefName());
-							
-							cloneRepository(git, cloneUrl, cloneUrl, branch, commitHash,
-									checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
-									infoLogger, warningLogger);
-						} else if (facade instanceof SetupCacheFacade) {
-							SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-							var cacheConfig = setupCacheFacade.getCacheConfig();
-							var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig, cacheConfigIndex.getAndIncrement());
-							cacheProvisioner.download(hostBuildDir, jobLogger);
-							cacheProvisioners.add(cacheProvisioner);
-						} else if (facade instanceof ServerSideFacade) {
-							ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
-							return runServerStep(Agent.sslFactory,
-									Agent.serverUrl, jobData.getJobToken(), position,
-									serverSideFacade, hostBuildDir, jobLogger);
-						} else {
-							throw new ExplicitException("Unexpected step type: " + facade.getClass());
+						var docker = newDocker(dockerSock);
+						var registryLogins = merge(runContainerFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
+						var runAs = runContainerFacade.getRunAs();
+						if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
+							jobLogger.log("Changing owner of build directory to container user...");
+							changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
 						}
-						return true;
-					}
+						try {
+							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
+								return runStepContainer(docker, runContainerFacade.getImage(), runAs, null, arguments,
+										runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
+										position, runContainerFacade.isUseTTY());
+							});
+							if (exitCode != 0) {
+								jobLogger.error("Container exited with code " + exitCode);
+								return false;
+							}
+						} finally {
+							if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
+								jobLogger.log("Changing owner of build directory to host user...");
+								changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
+							}
+						}
+					} else if (facade instanceof CheckoutFacade) {
+						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
+						jobLogger.log("Checking out code...");
 
-					@Override
-					public void skip(LeafFacade facade, List<Integer> position) {
-						jobLogger.notice("Step \"" + entryFacade.getPathAsString(position) + "\" is skipped");
-					}
-					
-				}, new ArrayList<>());
+						Commandline git = new Commandline(Agent.gitPath);
+						checkoutFacade.setupWorkingDir(git, hostWorkDir);
 
-				if (successful) {
-					for (var cacheProvisioner : cacheProvisioners) 
-						cacheProvisioner.upload(hostBuildDir, jobLogger);
+						var infoLogger = AgentUtils.newInfoLogger(jobLogger);
+						var warningLogger = AgentUtils.newWarningLogger(jobLogger);
+
+						initRepository(git, infoLogger, warningLogger);
+
+						git.clearArgs();
+						setupGitCerts(git, Agent.getTrustCertsDir(),
+								new File(hostBuildDir, "trust-certs.pem"),
+								containerTrustCertsFilePath, infoLogger, warningLogger);
+
+						CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
+						cloneInfo.setupGitAuth(git, hostBuildDir, containerBuildDirPath, infoLogger, warningLogger);
+
+						int cloneDepth = checkoutFacade.getCloneDepth();
+
+						String cloneUrl = checkoutFacade.getCloneInfo().getCloneUrl();
+						String commitHash = jobData.getCommitHash();
+
+						String branch = KubernetesHelper.ref2branch(jobData.getRefName());
+
+						cloneRepository(git, cloneUrl, cloneUrl, branch, commitHash,
+								checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
+								infoLogger, warningLogger);
+					} else if (facade instanceof SetupCacheFacade) {
+						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
+						var cacheConfig = setupCacheFacade.getCacheConfig();
+						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig, cacheConfigIndex.getAndIncrement());
+						cacheProvisioner.download(hostBuildDir, jobLogger);
+						cacheProvisioners.add(cacheProvisioner);
+					} else if (facade instanceof ServerSideFacade) {
+						ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
+						return runServerStep(Agent.sslFactory,
+								Agent.serverUrl, jobData.getJobToken(), position,
+								serverSideFacade, hostBuildDir, jobLogger);
+					} else {
+						throw new ExplicitException("Unexpected step type: " + facade.getClass());
+					}
+					return true;
 				}
 
-				return successful;
-			} finally {
-				deleteNetwork(newDocker(dockerSock), network, jobLogger);
-			}
+				@Override
+				public void skip(LeafFacade facade, List<Integer> position) {
+					jobLogger.log(JobHelper.buildStepSkipMessage(position));
+				}
+
+			}, new ArrayList<>());
+
+			return successful;
 		} finally {
-			SecretMasker.pop();
-			jobThreads.remove(jobData.getJobToken());
-			
-			synchronized (hostBuildDir) {
-				FileUtils.deleteDir(hostBuildDir, 5);
+			try {
+				if (initializationCompleted)
+					jobLogger.log(JobUtils.buildPhaseMessage(JobHelper.FINALIZATION));
+				if (successful) {
+					for (var cacheProvisioner : cacheProvisioners)
+						cacheProvisioner.upload(hostBuildDir, jobLogger);
+				}
+			} finally {
+				try {
+					if (networkCreated)
+						deleteNetwork(newDocker(dockerSock), network, jobLogger);
+				} finally {
+					SecretMasker.pop();
+					jobThreads.remove(jobData.getJobToken());
+					synchronized (hostBuildDir) {
+						FileUtils.deleteDir(hostBuildDir, 5);
+					}
+				}
 			}
 		}
 	}
@@ -1518,7 +1528,8 @@ public class AgentSocket implements Runnable {
 			if (request instanceof LogRequest) { 
 				return (Serializable) LogRequest.readLog(new File(Agent.installDir, "logs/agent.log"));
 			} else if (request instanceof DockerJobData dockerJobData) { 
-				return executeDockerJob(session, dockerJobData);
+				var jobLogger = newTaskLogger(session, dockerJobData.getJobToken());
+				return executeDockerJob(session, dockerJobData, jobLogger);
 			} else if (request instanceof TestDockerJobData testDockerJobData) {
 				testDockerExecutor(session, testDockerJobData);
 				return true;
@@ -1528,8 +1539,9 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestShellWorkspaceData testShellWorkspaceData) {
 				testShellWorkspace(session, testShellWorkspaceData);
 				return true;
-			} else if (request instanceof ShellJobData shellJobData) { 
-				return executeShellJob(session, shellJobData);
+			} else if (request instanceof ShellJobData shellJobData) {
+				var jobLogger = newTaskLogger(session, shellJobData.getJobToken());
+				return executeShellJob(session, shellJobData, jobLogger);
 			} else if (request instanceof TestShellJobData testShellJobData) {
 				testShellExecutor(session, testShellJobData);
 				return true;

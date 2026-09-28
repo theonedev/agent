@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.apache.commons.lang3.SerializationUtils;
+import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 
 public class Message implements Serializable {
@@ -47,7 +48,7 @@ public class Message implements Serializable {
 		byte[] bytes = new byte[data.length+1];
 		bytes[0] = (byte) type.ordinal();
 		System.arraycopy(data, 0, bytes, 1, data.length);
-		session.sendBinary(ByteBuffer.wrap(bytes), org.eclipse.jetty.websocket.api.Callback.NOOP);
+		session.sendBinary(ByteBuffer.wrap(bytes), Callback.NOOP);
 	}
 	
 }
