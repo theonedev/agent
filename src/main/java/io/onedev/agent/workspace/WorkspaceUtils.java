@@ -108,7 +108,7 @@ public class WorkspaceUtils {
 
 	public static void setCommonDockerRunOptions(Commandline docker, String containerName, String runAs,
 			boolean alwaysPullImage, @Nullable String cpuLimit, @Nullable String memoryLimit) {
-		docker.args("run", "--rm", "--name=" + containerName);
+		docker.args("run", "--rm", "--stop-timeout=30", "--name=" + containerName);
 		if (alwaysPullImage)
 			docker.addArgs("--pull=always");
 		docker.addArgs("--user", runAs);

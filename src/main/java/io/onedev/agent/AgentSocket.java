@@ -782,7 +782,7 @@ public class AgentSocket implements Runnable {
 					String containerName = network + "-step-" + stringifyStepPosition(position);
 					jobContainerNames.put(jobData.getJobToken(), containerName);
 					try {
-						docker.args("run", "--name=" + containerName, "--network=" + network);
+						docker.args("run", "--stop-timeout=30", "--name=" + containerName, "--network=" + network);
 						if (dockerSettings.isAlwaysPullImage() && pulledImages.add(image))
 							docker.addArgs("--pull=always");
 						docker.addArgs("--user", runAs);

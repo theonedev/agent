@@ -340,7 +340,7 @@ public class JobUtils {
 
 		String containerName = network + "-service-" + jobService.getName();
 
-		docker.args("run", "-d", "--name=" + containerName, "--network=" + network,
+		docker.args("run", "-d", "--stop-timeout=30", "--name=" + containerName, "--network=" + network,
 				"--network-alias=" + jobService.getName(), "--user", jobService.getRunAs());
 
 		if (cpuLimit != null)
