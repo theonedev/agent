@@ -350,7 +350,7 @@ public class JobUtils {
 
 		for (var entry : jobService.getEnvs().entrySet())
 			docker.addArgs("--env", entry.getKey() + "=" + entry.getValue());
-		docker.addArgs(image);
+		docker.addArgs("--", image);
 		if (jobService.getArguments() != null) {
 			for (String token : StringUtils.parseQuoteTokens(jobService.getArguments()))
 				docker.addArgs(token);

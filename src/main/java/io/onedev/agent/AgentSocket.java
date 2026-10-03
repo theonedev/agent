@@ -829,7 +829,7 @@ public class AgentSocket implements Runnable {
 						if (entrypoint != null)
 							docker.addArgs("--entrypoint=" + entrypoint);
 
-						docker.addArgs(image);
+						docker.addArgs("--", image);
 						docker.addArgs(arguments.toArray(new String[arguments.size()]));
 						docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
 						var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger),
