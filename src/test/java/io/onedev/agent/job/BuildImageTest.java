@@ -34,8 +34,8 @@ class BuildImageTest {
 			}
 		};
 		var step = new BuildImageFacade(buildPath, dockerfile,
-				(docker, dir, out, err) -> result.addAll(docker.args()), List.of(), "linux/amd64");
-		JobUtils.buildImage(command, "test", options, step, buildDir.toFile(), true, new TaskLogger() {
+				(docker, dir, out, err) -> result.addAll(docker.args()), List.of(), "linux/amd64", options);
+		JobUtils.buildImage(command, "test", step, buildDir.toFile(), true, new TaskLogger() {
 			@Override
 			public void log(String message, String sessionId) { }
 		});
@@ -43,15 +43,18 @@ class BuildImageTest {
 	}
 
 	@Test
-	void passesAdministratorOptionsWithoutRestrictionsOrJobInterpolation() throws Exception {
+	void passesSupportedStepOptionsWithJobInterpolation() throws Exception {
 		Files.createDirectories(buildDir.resolve("work"));
-		Files.writeString(buildDir.resolve("work/options"), "--secret id=untrusted,src=/host/file");
-		var result = build("--allow security.insecure --secret id=x,src=/host/file "
-				+ "--build-arg \"MESSAGE=hello world\" --label <&onedev#work/options#onedev&>", null, null);
+		Files.writeString(buildDir.resolve("work/revision"), "revision=abc123");
+		var result = build("--no-cache --secret id=x,src=secret "
+				+ "--build-arg MESSAGE=hello --label <&onedev#work/revision#onedev&>", null, null);
 		assertEquals(List.of("buildx", "build", "--builder", "test", "--pull", "--platform", "linux/amd64",
-				"--allow", "security.insecure", "--secret", "id=x,src=/host/file", "--build-arg", "MESSAGE=hello world",
-				"--label", "<&onedev#work/options#onedev&>", buildDir.resolve("work").toString()), result);
+				"--no-cache", "--secret", "id=x,src=secret", "--build-arg", "MESSAGE=hello",
+				"--label", "revision=abc123", buildDir.resolve("work").toString()), result);
 		assertFalse(build(null, null, null).contains("--secret"));
+		assertThrows(ExplicitException.class, () -> build("--secret id=x,src=/host/file", null, null));
+		assertThrows(ExplicitException.class, () -> build("--builder other", null, null));
+		assertThrows(ExplicitException.class, () -> build("--ssh default", null, null));
 	}
 
 	@Test
@@ -125,8 +128,8 @@ class BuildImageTest {
 				docker.envs().put("BUILDX_GIT_CHECK_DIRTY", gitSetting);
 			}
 			var step = new BuildImageFacade(null, null,
-					new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null);
-			JobUtils.buildImage(docker, "test", null, step, buildDir.toFile(), false, new TaskLogger() {
+					new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null, null);
+			JobUtils.buildImage(docker, "test", step, buildDir.toFile(), false, new TaskLogger() {
 				@Override
 				public void log(String message, String sessionId) { }
 			});
@@ -135,11 +138,10 @@ class BuildImageTest {
 	}
 
 	@Test
-	void transportsOptionsSeparatelyFromProjectStep() {
-		var settings = new JobDockerSettings(false, null, null, null, null, List.of(), true, "test", null, "--no-cache");
-		var restored = org.apache.commons.lang3.SerializationUtils.clone(settings);
-		assertEquals("--no-cache", restored.getBuildOptions());
-		assertFalse(java.util.Arrays.stream(BuildImageFacade.class.getDeclaredFields())
-				.anyMatch(it -> it.getName().equals("moreOptions")));
+	void transportsOptionsWithProjectStep() {
+		var step = new BuildImageFacade(null, null,
+				new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null, "--no-cache");
+		var restored = org.apache.commons.lang3.SerializationUtils.clone(step);
+		assertEquals("--no-cache", restored.getMoreOptions());
 	}
 }

@@ -14,28 +14,19 @@ public class JobDockerSettings extends DockerSettings {
 	private final String dockerBuilder;
 
 	@Nullable
-	private final String buildOptions;
-
-	@Nullable
 	private final String networkOptions;
 
 	public JobDockerSettings(boolean mountDockerSock, @Nullable String dockerSock,
 			@Nullable String cpuLimit, @Nullable String memoryLimit, @Nullable String runOptions,
 			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage,
-			String dockerBuilder, @Nullable String networkOptions, @Nullable String buildOptions) {
+			String dockerBuilder, @Nullable String networkOptions) {
 		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage);
 		this.dockerBuilder = dockerBuilder;
 		this.networkOptions = networkOptions;
-		this.buildOptions = buildOptions;
 	}
 
 	public String getDockerBuilder() {
 		return dockerBuilder;
-	}
-
-	@Nullable
-	public String getBuildOptions() {
-		return buildOptions;
 	}
 
 	@Nullable
