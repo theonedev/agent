@@ -29,7 +29,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 
 import io.onedev.agent.Agent;
@@ -37,7 +36,6 @@ import io.onedev.agent.AgentUtils;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
@@ -46,7 +44,6 @@ import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.BuildImageFacade;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.JobHelper.StepEventKind;
-import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
 import io.onedev.k8shelper.ServiceFacade;
 import jakarta.ws.rs.client.Client;
@@ -108,24 +105,6 @@ public class JobUtils {
 	}
 
     
-	private static List<String> parseDockerOptions(File hostBuildDir, String optionString) {
-		var options = new ArrayList<String>();
-		for (var option: StringUtils.splitAndTrim(KubernetesHelper.replacePlaceholders(optionString, hostBuildDir), " ")) {
-			if (option.startsWith("-") && option.contains("=")) {
-				options.add(StringUtils.substringBefore(option, "="));
-				options.add(StringUtils.substringAfter(option, "="));
-			} else {
-				options.add(option);
-			}
-		}
-		return options;
-	}
-
-	private static void checkBuildImageCachePath(String path) {
-		if (!PathUtils.isSubPath(path))
-			throw new ExplicitException("Cache path of build image step should be a relative path not containing '..'");
-	}
-
 	private static void createBuilder(Commandline docker, String builder, TaskLogger jobLogger) {
 		docker.args("buildx", "create", "--name", builder);
 		var builderExists = new AtomicBoolean(false);
@@ -162,92 +141,8 @@ public class JobUtils {
 		if (buildImageFacade.getPlatforms() != null)
 			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildDir));
 
-		if (buildImageFacade.getMoreOptions() != null) {
-			var options = parseDockerOptions(hostBuildDir, buildImageFacade.getMoreOptions());
-			var it = options.iterator();
-			while (it.hasNext()) {
-				var option = it.next();
-				switch (option) {
-					case "--add-host":
-					case "--allow":
-					case "--build-arg":
-					case "--label":
-					case "--network":
-					case "--no-cache-filter":
-					case "--progress":
-					case "--target":
-					case "--provenance":
-						docker.addArgs(option);
-						if (it.hasNext())
-							docker.addArgs(it.next());
-						break;
-					case "--cache-from":
-					case "--cache-to":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							for (var splitted: Splitter.on(',').split(arg)) {
-								var index = splitted.indexOf('=');
-								if (index == -1)
-									checkBuildImageCachePath(splitted);
-								else if (splitted.substring(0, index).equals("dest"))
-									checkBuildImageCachePath(splitted.substring(index+1));
-							}
-							docker.addArgs(arg);
-						}
-						break;
-					case "--secret":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							for (var splitted: Splitter.on(',').split(arg)) {
-								if (splitted.startsWith("src=")) {
-									var path = splitted.substring("src=".length());
-									if (!PathUtils.isSubPath(path))
-										throw new ExplicitException("Secret source path of build image step should be a relative path not containing '..'");
-								}
-							}
-							docker.addArgs(arg);
-						}
-						break;
-					case "--build-context":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							var path = StringUtils.substringAfter(arg, "=");
-							if (!PathUtils.isSubPath(path))
-								throw new ExplicitException("Build context path of build image step should be a relative path not containing '..'");
-							docker.addArgs(arg);
-						}
-						break;
-					case "--iidfile":
-					case "--metadata-file":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var path = it.next();
-							if (!PathUtils.isSubPath(path)) {
-								if (option.equals("--iidfile"))
-									throw new ExplicitException("Image id file path of build image step should be a relative path not containing '..'");
-								else
-									throw new ExplicitException("Metadata file path of build image step should be a relative path not containing '..'");
-							}
-							docker.addArgs(path);
-						}
-						break;
-					case "--no-cache":
-					case "-q":
-					case "--quiet":
-						docker.addArgs(option);
-						break;
-					case "--builder":
-						throw new ExplicitException("--builder in more options is no longer supported. Builder can only be configured via job executor now");
-					case "--platform":
-						throw new ExplicitException("--platform in more options is no longer supported. Please specify platforms property directly");
-					default:
-						throw new ExplicitException("Option '" + option + "' is not supported for build image step");
-				}
-			}
-		}
+		if (buildImageFacade.getMoreOptions() != null)
+			docker.addArgs(StringUtils.parseQuoteTokens(replacePlaceholders(buildImageFacade.getMoreOptions(), hostBuildDir)));
 
 		var workDir = resolveBuildPath(hostBuildDir, "work");
 		var buildPath = buildImageFacade.getBuildPath() != null
@@ -278,47 +173,11 @@ public class JobUtils {
 	public static void pruneBuilderCache(Commandline docker, String builder,
 										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
 										 File hostBuildDir, TaskLogger jobLogger) {
-		// Validate after placeholder expansion and before invoking Docker. Build specs and
-		// serialized facades must not be able to override the executor's builder or endpoint.
-		var options = new ArrayList<String>();
-		if (pruneBuilderCacheFacade.getOptions() != null) {
-			var tokens = StringUtils.parseQuoteTokens(replacePlaceholders(pruneBuilderCacheFacade.getOptions(), hostBuildDir));
-			for (int i = 0; i < tokens.length; i++) {
-				var token = tokens[i];
-				var separator = token.indexOf('=');
-				var option = separator != -1 ? token.substring(0, separator) : token;
-				switch (option) {
-					case "-a":
-					case "--all":
-					case "--verbose":
-						options.add(token);
-						break;
-					case "--filter":
-					case "--keep-storage":
-					case "--max-used-space":
-					case "--min-free-space":
-					case "--reserved-space":
-					case "--timeout":
-						String value;
-						if (separator != -1)
-							value = token.substring(separator + 1);
-						else if (i + 1 < tokens.length)
-							value = tokens[++i];
-						else
-							throw new ExplicitException("Missing value for prune builder cache option '" + option + "'");
-						if (value.isEmpty() || value.startsWith("-"))
-							throw new ExplicitException("Invalid value for prune builder cache option '" + option + "'");
-						options.add(option + "=" + value);
-						break;
-					default:
-						throw new ExplicitException("Option '" + option + "' is not supported for prune builder cache step");
-				}
-			}
-		}
 		createBuilder(docker, builder, jobLogger);
 
 		docker.args("buildx", "prune", "--builder", builder, "-f");
-		docker.addArgs(options.toArray(new String[0]));
+		if (pruneBuilderCacheFacade.getOptions() != null)
+			docker.addArgs(StringUtils.parseQuoteTokens(replacePlaceholders(pruneBuilderCacheFacade.getOptions(), hostBuildDir)));
 		docker.workingDir(resolveBuildPath(hostBuildDir, "work"));
 
 		var containerNotFound = new AtomicBoolean(false);

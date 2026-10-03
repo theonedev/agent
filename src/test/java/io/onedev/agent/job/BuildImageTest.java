@@ -43,18 +43,15 @@ class BuildImageTest {
 	}
 
 	@Test
-	void passesSupportedStepOptionsWithJobInterpolation() throws Exception {
+	void passesStepOptionsWithJobInterpolation() throws Exception {
 		Files.createDirectories(buildDir.resolve("work"));
 		Files.writeString(buildDir.resolve("work/revision"), "revision=abc123");
-		var result = build("--no-cache --secret id=x,src=secret "
-				+ "--build-arg MESSAGE=hello --label <&onedev#work/revision#onedev&>", null, null);
+		var result = build("--no-cache --secret id=x,src=/host/file --ssh default "
+				+ "--build-arg \"MESSAGE=hello world\" --label <&onedev#work/revision#onedev&>", null, null);
 		assertEquals(List.of("buildx", "build", "--builder", "test", "--pull", "--platform", "linux/amd64",
-				"--no-cache", "--secret", "id=x,src=secret", "--build-arg", "MESSAGE=hello",
+				"--no-cache", "--secret", "id=x,src=/host/file", "--ssh", "default", "--build-arg", "MESSAGE=hello world",
 				"--label", "revision=abc123", buildDir.resolve("work").toString()), result);
 		assertFalse(build(null, null, null).contains("--secret"));
-		assertThrows(ExplicitException.class, () -> build("--secret id=x,src=/host/file", null, null));
-		assertThrows(ExplicitException.class, () -> build("--builder other", null, null));
-		assertThrows(ExplicitException.class, () -> build("--ssh default", null, null));
 	}
 
 	@Test
