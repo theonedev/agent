@@ -535,7 +535,7 @@ public class AgentSocket implements Runnable {
 				jobResumeData.getBuildNumber(), jobResumeData.getSubmitSequence());
 		synchronized (buildDir) {
 			if (buildDir.exists())
-				FileUtils.touchFile(new File(buildDir, "continue"));
+				JobHelper.resumeJob(buildDir);
 		}
 	}
 		
@@ -799,7 +799,7 @@ public class AgentSocket implements Runnable {
 						for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
 							if (entry.getKey().contains(".."))
 								throw new ExplicitException("Volume mount source path should not contain '..'");
-							String hostPath = getHostPath(new File(hostWorkDir, entry.getKey()).getAbsolutePath(), dockerSock);
+							String hostPath = getHostPath(JobHelper.resolveBuildPath(hostBuildDir, "work/" + entry.getKey()).getAbsolutePath(), dockerSock);
 							docker.addArgs("-v", hostPath + ":" + entry.getValue());
 						}
 

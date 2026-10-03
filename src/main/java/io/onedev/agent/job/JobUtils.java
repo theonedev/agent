@@ -1,6 +1,7 @@
 package io.onedev.agent.job;
 
 import static io.onedev.k8shelper.JobHelper.BUILD_PATH;
+import static io.onedev.k8shelper.JobHelper.resolveBuildPath;
 import static io.onedev.k8shelper.JobHelper.FINALIZATION;
 import static io.onedev.k8shelper.JobHelper.INITIALIZATION;
 import static io.onedev.k8shelper.JobHelper.PHASE_PREFIX;
@@ -35,7 +36,6 @@ import io.onedev.agent.AgentUtils;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
@@ -159,7 +159,7 @@ public class JobUtils {
 		if (buildOptions != null)
 			docker.addArgs(StringUtils.parseQuoteTokens(buildOptions));
 
-		var workDir = new File(hostBuildDir, "work");
+		var workDir = resolveBuildPath(hostBuildDir, "work");
 		var buildPath = buildImageFacade.getBuildPath() != null
 				? replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir) : ".";
 		docker.addArgs(BuildImageFacade.resolvePath(hostBuildDir, buildPath).getAbsolutePath());
@@ -195,7 +195,7 @@ public class JobUtils {
 			var options = parseDockerOptions(hostBuildDir, pruneBuilderCacheFacade.getOptions());
 			docker.addArgs(options.toArray(new String[0]));
 		}
-		docker.workingDir(new File(hostBuildDir, "work"));
+		docker.workingDir(resolveBuildPath(hostBuildDir, "work"));
 
 		var containerNotFound = new AtomicBoolean(false);
 		var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), new LineConsumer(UTF_8.name()) {
@@ -221,15 +221,16 @@ public class JobUtils {
 		while (it.hasNext()) {
 			var option = it.next();
 			docker.addArgs(option);
-			if ((option.startsWith("--file") || option.startsWith("-f")) && it.hasNext()) {
+			if ((option.equals("--file") || option.equals("-f")) && it.hasNext()) {
 				var path = it.next();
-				if (!PathUtils.isSubPath(path))
-					throw new ExplicitException("Source descriptor path of imagetools step should be a relative path not containing '..'");
+				BuildImageFacade.resolvePath(hostBuildDir, path);
 				docker.addArgs(path);
+			} else if (option.startsWith("-f") && option.length() > 2) {
+				BuildImageFacade.resolvePath(hostBuildDir, option.substring(2));
 			}
 		}
 
-		docker.workingDir(new File(hostBuildDir, "work"));
+		docker.workingDir(resolveBuildPath(hostBuildDir, "work"));
 		docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger)).checkReturnCode();
 	}
 
@@ -382,9 +383,9 @@ public class JobUtils {
 		 * Use different file for different step although steps are executed sequentially, as otherwise
 		 * we will encounter odd issues on Mac running successive command steps
 		 */
-		var commandDir = new File(hostBuildDir, "command");
+		var commandDir = resolveBuildPath(hostBuildDir, "command");
 		FileUtils.createDir(commandDir);
-		File stepScriptFile = new File(commandDir, "step-" + stringifyStepPosition(stepPosition)
+		File stepScriptFile = resolveBuildPath(hostBuildDir, "command/step-" + stringifyStepPosition(stepPosition)
 				+ commandFacade.getScriptExtension());
 		FileUtils.writeFile(stepScriptFile,
 				commandFacade.normalizeCommands(replacePlaceholders(commandFacade.getCommands(), hostBuildDir)));
