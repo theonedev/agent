@@ -20,9 +20,13 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -33,6 +37,7 @@ import com.google.common.base.Throwables;
 
 import io.onedev.agent.Agent;
 import io.onedev.agent.AgentUtils;
+import io.onedev.agent.DockerSettings;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
@@ -43,6 +48,7 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.BuildImageFacade;
+import io.onedev.k8shelper.CacheProvisioner;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.JobHelper.StepEventKind;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
@@ -219,6 +225,74 @@ public class JobUtils {
 		} finally {
 			client.close();
 		}
+	}
+
+	/** Job-scoped inputs shared by command and container steps. Collections remain live across steps. */
+	public record StepContainerContext(DockerSettings settings, String network, File hostBuildDir,
+			List<CacheProvisioner> cacheProvisioners, Set<String> pulledImages,
+			Function<String, String> hostPathResolver, Supplier<Commandline> dockerSupplier,
+			TaskLogger jobLogger) {
+	}
+
+	public static int runStepContainer(StepContainerContext context, Commandline docker, String containerName,
+			String image, String runAs, @Nullable String entrypoint, List<String> arguments,
+			Map<String, String> environments, @Nullable String workingDir,
+			Map<String, String> volumeMounts, boolean useTTY) {
+		var settings = context.settings();
+		var hostBuildDir = context.hostBuildDir();
+		var hostPathResolver = context.hostPathResolver();
+		var containerWorkDirPath = BUILD_PATH + "/work";
+		var jobLogger = context.jobLogger();
+
+		docker.args("run", "--stop-timeout=30", "--name=" + containerName, "--network=" + context.network());
+		if (settings.isAlwaysPullImage() && context.pulledImages().add(image))
+			docker.addArgs("--pull=always");
+		docker.addArgs("--user", runAs);
+
+		if (settings.getCpuLimit() != null)
+			docker.addArgs("--cpus", settings.getCpuLimit());
+		if (settings.getMemoryLimit() != null)
+			docker.addArgs("--memory", settings.getMemoryLimit());
+		docker.addArgs(DockerRunOptions.parse(settings.getRunOptions(), hostBuildDir));
+
+		docker.addArgs("-v", hostPathResolver.apply(hostBuildDir.getAbsolutePath()) + ":" + BUILD_PATH);
+		for (var entry : volumeMounts.entrySet()) {
+			if (entry.getKey().contains(".."))
+				throw new ExplicitException("Volume mount source path should not contain '..'");
+			var hostPath = hostPathResolver.apply(resolveBuildPath(hostBuildDir, "work/" + entry.getKey()).getAbsolutePath());
+			docker.addArgs("-v", hostPath + ":" + entry.getValue());
+		}
+
+		for (var cacheProvisioner : context.cacheProvisioners())
+			cacheProvisioner.mountVolumes(docker, hostBuildDir, hostPathResolver);
+
+		if (entrypoint != null)
+			docker.addArgs("-w", containerWorkDirPath);
+		else if (workingDir != null)
+			docker.addArgs("-w", workingDir);
+
+		if (settings.isMountDockerSock()) {
+			var dockerSock = settings.getDockerSock();
+			if (dockerSock != null)
+				docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
+			else
+				docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+		}
+
+		for (var entry : environments.entrySet())
+			docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
+		docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkDirPath);
+
+		if (useTTY)
+			docker.addArgs("-t");
+		if (entrypoint != null)
+			docker.addArgs("--entrypoint=" + entrypoint);
+
+		docker.addArgs("--", image);
+		docker.addArgs(arguments.toArray(new String[0]));
+		docker.processKiller(AgentUtils.newDockerKiller(context.dockerSupplier().get(), containerName, jobLogger));
+		return docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger), null)
+				.getReturnCode();
 	}
 
 	public static void startService(Commandline docker, String network, ServiceFacade jobService,

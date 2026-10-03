@@ -86,7 +86,6 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Splitter;
 
 import io.onedev.agent.job.DockerJobData;
-import io.onedev.agent.job.DockerRunOptions;
 import io.onedev.agent.job.JobResumeData;
 import io.onedev.agent.job.JobUtils;
 import io.onedev.agent.job.LogRequest;
@@ -769,7 +768,9 @@ public class AgentSocket implements Runnable {
 			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 			var osIds = getOsIds(jobLogger);
 			var cacheConfigIndex = new AtomicInteger(1);
-			var pulledImages = new HashSet<String>();
+			var stepContainerContext = new JobUtils.StepContainerContext(dockerSettings, network, hostBuildDir,
+					cacheProvisioners, new HashSet<>(), path -> getHostPath(path, dockerSock),
+					() -> newDocker(dockerSock), jobLogger);
 			initializationCompleted = true;
 			successful = entryFacade.execute(new LeafHandler() {
 
@@ -781,58 +782,8 @@ public class AgentSocket implements Runnable {
 					String containerName = network + "-step-" + stringifyStepPosition(position);
 					jobContainerNames.put(jobData.getJobToken(), containerName);
 					try {
-						docker.args("run", "--stop-timeout=30", "--name=" + containerName, "--network=" + network);
-						if (dockerSettings.isAlwaysPullImage() && pulledImages.add(image))
-							docker.addArgs("--pull=always");
-						docker.addArgs("--user", runAs);
-
-						if (dockerSettings.getCpuLimit() != null)
-							docker.addArgs("--cpus", dockerSettings.getCpuLimit());
-						if (dockerSettings.getMemoryLimit() != null)
-							docker.addArgs("--memory", dockerSettings.getMemoryLimit());
-						docker.addArgs(DockerRunOptions.parse(dockerSettings.getRunOptions(), hostBuildDir));
-
-						docker.addArgs("-v", getHostPath(hostBuildDir.getAbsolutePath(), dockerSock) + ":" + containerBuildDirPath);
-
-						for (Map.Entry<String, String> entry: volumeMounts.entrySet()) {
-							if (entry.getKey().contains(".."))
-								throw new ExplicitException("Volume mount source path should not contain '..'");
-							String hostPath = getHostPath(JobHelper.resolveBuildPath(hostBuildDir, "work/" + entry.getKey()).getAbsolutePath(), dockerSock);
-							docker.addArgs("-v", hostPath + ":" + entry.getValue());
-						}
-
-						for (var cacheProvisioner : cacheProvisioners)
-							cacheProvisioner.mountVolumes(docker, hostBuildDir, path -> getHostPath(path, dockerSock));
-
-						if (entrypoint != null)
-							docker.addArgs("-w", containerWorkDirPath);
-						else if (workingDir != null)
-							docker.addArgs("-w", workingDir);
-
-						if (dockerSettings.isMountDockerSock()) {
-							if (dockerSock != null)
-								docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
-							else
-								docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
-						}
-
-						for (Map.Entry<String, String> entry: environments.entrySet())
-							docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
-
-						docker.addArgs("-e", "ONEDEV_WORKDIR=" + containerWorkDirPath);
-
-						if (useTTY)
-							docker.addArgs("-t");
-
-						if (entrypoint != null)
-							docker.addArgs("--entrypoint=" + entrypoint);
-
-						docker.addArgs("--", image);
-						docker.addArgs(arguments.toArray(new String[arguments.size()]));
-						docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, jobLogger));
-						var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger),
-								null);
-						return result.getReturnCode();
+						return JobUtils.runStepContainer(stepContainerContext, docker, containerName, image, runAs,
+								entrypoint, arguments, environments, workingDir, volumeMounts, useTTY);
 					} finally {
 						jobContainerNames.remove(jobData.getJobToken());
 					}
