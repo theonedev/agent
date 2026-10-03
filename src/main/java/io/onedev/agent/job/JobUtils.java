@@ -221,12 +221,18 @@ public class JobUtils {
 		while (it.hasNext()) {
 			var option = it.next();
 			docker.addArgs(option);
-			if ((option.equals("--file") || option.equals("-f")) && it.hasNext()) {
+			if ((option.equals("--file") || option.equals("-f") || option.equals("--metadata-file"))
+					&& it.hasNext()) {
 				var path = it.next();
 				BuildImageFacade.resolvePath(hostBuildDir, path);
 				docker.addArgs(path);
-			} else if (option.startsWith("-f") && option.length() > 2) {
-				BuildImageFacade.resolvePath(hostBuildDir, option.substring(2));
+			} else if (option.startsWith("-") && !option.startsWith("--") && option.length() > 2) {
+				// Value-taking short options consume the rest of the token. Reject
+				// boolean flag clusters such as -Dfpath, which can hide a file read.
+				if (option.charAt(1) == 'f')
+					BuildImageFacade.resolvePath(hostBuildDir, option.substring(2));
+				else if (option.charAt(1) != 't' && option.charAt(1) != 'p')
+					throw new ExplicitException("Specify each imagetools short option separately: " + option);
 			}
 		}
 
