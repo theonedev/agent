@@ -223,7 +223,7 @@ public class AgentUtils {
 			throw ExceptionUtils.unchecked(e);
 		} finally {
 			docker.envs().remove("DOCKER_CONFIG");
-			FileUtils.deleteDir(tempConfigDir);
+			FileUtils.deletePath(tempConfigDir);
 		}										
 	}	
 
@@ -259,7 +259,7 @@ public class AgentUtils {
 				docker.args("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
 				docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
 			} finally {
-				FileUtils.deleteDir(testDir);
+				FileUtils.deletePath(testDir);
 			}
 			return null;
 		});
@@ -470,7 +470,7 @@ public class AgentUtils {
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		} finally {
-			FileUtils.deleteDir(testDir);
+			FileUtils.deletePath(testDir);
 		}
 	}
 

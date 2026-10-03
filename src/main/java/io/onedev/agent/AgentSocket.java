@@ -709,7 +709,7 @@ public class AgentSocket implements Runnable {
 				SecretMasker.pop();
 				jobThreads.remove(jobData.getJobToken());
 				synchronized (buildDir) {
-					FileUtils.deleteDir(buildDir, 5);
+					FileUtils.deletePath(buildDir, 5);
 				}
 			}
 		}
@@ -1011,7 +1011,7 @@ public class AgentSocket implements Runnable {
 					SecretMasker.pop();
 					jobThreads.remove(jobData.getJobToken());
 					synchronized (hostBuildDir) {
-						FileUtils.deleteDir(hostBuildDir, 5);
+						FileUtils.deletePath(hostBuildDir, 5);
 					}
 				}
 			}
@@ -1173,7 +1173,7 @@ public class AgentSocket implements Runnable {
 
 			var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
 			if (containerReadyFile.exists())
-				FileUtils.deleteFile(containerReadyFile);
+				FileUtils.deletePath(containerReadyFile);
 
 			var runAs = dockerSettings.getRunAs();
 			var docker = newDocker(dockerSock);
@@ -1493,7 +1493,7 @@ public class AgentSocket implements Runnable {
 	private void deleteWorkspace(WorkspaceDeleteRequest request) {
 		var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
 		if (workspaceDir.exists())
-			FileUtils.deleteDir(workspaceDir, 5);
+			FileUtils.deletePath(workspaceDir, 5);
 	}
 
 	private static File getWorkspaceDir(Long projectId, Long workspaceNumber) {

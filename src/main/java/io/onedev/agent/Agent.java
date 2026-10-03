@@ -169,10 +169,7 @@ public class Agent {
 				logger.info("Cleaning temp directory...");
 				for (var child: tempDir.listFiles()) {
 					try {
-						if (child.isFile())
-							FileUtils.deleteFile(child);
-						else
-							FileUtils.deleteDir(child);
+						FileUtils.deletePath(child);
 					} catch (Exception e) {
 						String errorMessage = "Unable to delete '" + child.getAbsolutePath() + "'";
 						if (child.getName().startsWith("onedev-build"))
@@ -202,7 +199,7 @@ public class Agent {
 
 					if (!dir.getName().equals(version))
 						// Doesn't match the current version, delete it
-						FileUtils.deleteDir(dir);
+						FileUtils.deletePath(dir);
 				}
 			}
 
