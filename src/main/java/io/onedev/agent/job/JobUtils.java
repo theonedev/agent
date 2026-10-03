@@ -278,13 +278,47 @@ public class JobUtils {
 	public static void pruneBuilderCache(Commandline docker, String builder,
 										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
 										 File hostBuildDir, TaskLogger jobLogger) {
+		// Validate after placeholder expansion and before invoking Docker. Build specs and
+		// serialized facades must not be able to override the executor's builder or endpoint.
+		var options = new ArrayList<String>();
+		if (pruneBuilderCacheFacade.getOptions() != null) {
+			var tokens = StringUtils.parseQuoteTokens(replacePlaceholders(pruneBuilderCacheFacade.getOptions(), hostBuildDir));
+			for (int i = 0; i < tokens.length; i++) {
+				var token = tokens[i];
+				var separator = token.indexOf('=');
+				var option = separator != -1 ? token.substring(0, separator) : token;
+				switch (option) {
+					case "-a":
+					case "--all":
+					case "--verbose":
+						options.add(token);
+						break;
+					case "--filter":
+					case "--keep-storage":
+					case "--max-used-space":
+					case "--min-free-space":
+					case "--reserved-space":
+					case "--timeout":
+						String value;
+						if (separator != -1)
+							value = token.substring(separator + 1);
+						else if (i + 1 < tokens.length)
+							value = tokens[++i];
+						else
+							throw new ExplicitException("Missing value for prune builder cache option '" + option + "'");
+						if (value.isEmpty() || value.startsWith("-"))
+							throw new ExplicitException("Invalid value for prune builder cache option '" + option + "'");
+						options.add(option + "=" + value);
+						break;
+					default:
+						throw new ExplicitException("Option '" + option + "' is not supported for prune builder cache step");
+				}
+			}
+		}
 		createBuilder(docker, builder, jobLogger);
 
 		docker.args("buildx", "prune", "--builder", builder, "-f");
-		if (pruneBuilderCacheFacade.getOptions() != null) {
-			var options = parseDockerOptions(hostBuildDir, pruneBuilderCacheFacade.getOptions());
-			docker.addArgs(options.toArray(new String[0]));
-		}
+		docker.addArgs(options.toArray(new String[0]));
 		docker.workingDir(resolveBuildPath(hostBuildDir, "work"));
 
 		var containerNotFound = new AtomicBoolean(false);
