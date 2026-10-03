@@ -213,10 +213,29 @@ public class JobUtils {
 			result.checkReturnCode();
 	}
 
+	private static void checkImagetoolsReference(String reference) {
+		if (reference.startsWith("oci-layout://"))
+			throw new ExplicitException("Local OCI layouts are not supported by imagetools steps");
+	}
+
+	private static void checkImagetoolsDescriptor(File hostBuildDir, String path) {
+		var file = BuildImageFacade.resolvePath(hostBuildDir, path);
+		try {
+			// Buildx accepts an image reference in these files, not just descriptor JSON.
+			checkImagetoolsReference(FileUtils.readFileToString(file, UTF_8));
+		} catch (IOException e) {
+			throw new ExplicitException("Unable to read imagetools descriptor: " + path, e);
+		}
+	}
+
 	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
 									 File hostBuildDir, TaskLogger jobLogger) {
 		docker.args("buildx", "imagetools");
 		var options = parseDockerOptions(hostBuildDir, runImagetoolsFacade.getArguments());
+		// Local layouts also read index/blob files and write destinations outside the
+		// descriptor/metadata paths checked below. Do not expose that host-side access.
+		for (var option: options)
+			checkImagetoolsReference(option.startsWith("-t") ? option.substring(2) : option);
 		var it = options.iterator();
 		while (it.hasNext()) {
 			var option = it.next();
@@ -224,13 +243,16 @@ public class JobUtils {
 			if ((option.equals("--file") || option.equals("-f") || option.equals("--metadata-file"))
 					&& it.hasNext()) {
 				var path = it.next();
-				BuildImageFacade.resolvePath(hostBuildDir, path);
+				if (option.equals("--metadata-file"))
+					BuildImageFacade.resolvePath(hostBuildDir, path);
+				else
+					checkImagetoolsDescriptor(hostBuildDir, path);
 				docker.addArgs(path);
 			} else if (option.startsWith("-") && !option.startsWith("--") && option.length() > 2) {
 				// Value-taking short options consume the rest of the token. Reject
 				// boolean flag clusters such as -Dfpath, which can hide a file read.
 				if (option.charAt(1) == 'f')
-					BuildImageFacade.resolvePath(hostBuildDir, option.substring(2));
+					checkImagetoolsDescriptor(hostBuildDir, option.substring(2));
 				else if (option.charAt(1) != 't' && option.charAt(1) != 'p')
 					throw new ExplicitException("Specify each imagetools short option separately: " + option);
 			}

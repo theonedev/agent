@@ -67,6 +67,34 @@ class ImagetoolsTest {
 	}
 
 	@Test
+	void rejectsLocalLayoutSourcesAndDestinations() throws Exception {
+		var work = Files.createDirectory(buildDir.resolve("work"));
+		var outside = Files.createDirectory(buildDir.resolve("outside"));
+		Files.createSymbolicLink(work.resolve("layout"), outside);
+		Files.writeString(work.resolve("reference"), "oci-layout://layout:latest");
+		for (var arguments: List.of("inspect --raw oci-layout://layout:latest",
+				"create --dry-run oci-layout://layout:latest",
+				"create -toci-layout://layout:copy example/image:tag",
+				"create -t oci-layout://layout:copy example/image:tag",
+				"create --tag=oci-layout://layout:copy example/image:tag",
+				"create --append --tag oci-layout://layout:copy example/image:tag",
+				"inspect --raw oci-layout:///outside:latest",
+				"inspect --raw <&onedev#work/reference#onedev&>")) {
+			assertThrows(ExplicitException.class, () -> run(arguments), arguments);
+		}
+		assertArrayEquals(new String[0], outside.toFile().list());
+	}
+
+	@Test
+	void rejectsLocalLayoutReferencesReadFromDescriptorFiles() throws Exception {
+		var work = Files.createDirectory(buildDir.resolve("work"));
+		Files.writeString(work.resolve("descriptor"), "oci-layout://layout:latest");
+		for (var option: List.of("--file ", "--file=", "-f ", "-f", "-f=")) {
+			assertThrows(ExplicitException.class, () -> run("create --dry-run " + option + "descriptor"), option);
+		}
+	}
+
+	@Test
 	void preservesValidDescriptorMetadataAndOtherArguments() throws Exception {
 		var work = Files.createDirectory(buildDir.resolve("work"));
 		Files.writeString(work.resolve("descriptor"), "{}");
@@ -76,5 +104,10 @@ class ImagetoolsTest {
 				run("create -D -f descriptor --metadata-file=output/result.json -texample/image:tag -plinux/amd64"));
 		assertEquals(List.of("buildx", "imagetools", "create", "-fdescriptor", "--dry-run"),
 				run("create -fdescriptor --dry-run"));
+		Files.writeString(work.resolve("descriptor"), "example/image:tag");
+		assertEquals(List.of("buildx", "imagetools", "create", "--file", "descriptor", "--dry-run"),
+				run("create --file=descriptor --dry-run"));
+		Files.writeString(work.resolve("descriptor"), "{\"annotations\":{\"description\":\"oci-layout://example\"}}");
+		assertDoesNotThrow(() -> run("create -f descriptor --dry-run"));
 	}
 }
