@@ -890,7 +890,7 @@ public class AgentSocket implements Runnable {
 						var registryLogins = merge(buildImageFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
 						var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, registryLogins, () -> {
-							buildImage(docker, dockerSettings.getDockerBuilder(), buildImageFacade, hostBuildDir,
+							buildImage(docker, dockerSettings.getDockerBuilder(), dockerSettings.getBuildOptions(), buildImageFacade, hostBuildDir,
 									dockerSettings.isAlwaysPullImage(), jobLogger);
 							return null;
 						});

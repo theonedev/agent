@@ -28,7 +28,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 
 import io.onedev.agent.Agent;
@@ -121,11 +120,6 @@ public class JobUtils {
 		return options;
 	}
 
-	private static void checkBuildImageCachePath(String path) {
-		if (!PathUtils.isSubPath(path))
-			throw new ExplicitException("Cache path of build image step should be a relative path not containing '..'");
-	}
-
 	private static void createBuilder(Commandline docker, String builder, TaskLogger jobLogger) {
 		docker.args("buildx", "create", "--name", builder);
 		var builderExists = new AtomicBoolean(false);
@@ -148,7 +142,8 @@ public class JobUtils {
 			result.checkReturnCode();
 	}
 
-	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
+	public static void buildImage(Commandline docker, String builder, @Nullable String buildOptions,
+								  BuildImageFacade buildImageFacade,
 								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
@@ -158,108 +153,28 @@ public class JobUtils {
 		if (buildImageFacade.getPlatforms() != null)
 			docker.addArgs("--platform", replacePlaceholders(buildImageFacade.getPlatforms(), hostBuildDir));
 
-		if (buildImageFacade.getMoreOptions() != null) {
-			var options = parseDockerOptions(hostBuildDir, buildImageFacade.getMoreOptions());
-			var it = options.iterator();
-			while (it.hasNext()) {
-				var option = it.next();
-				switch (option) {
-					case "--add-host":
-					case "--allow":
-					case "--build-arg":
-					case "--label":
-					case "--network":
-					case "--no-cache-filter":
-					case "--progress":
-					case "--target":
-					case "--provenance":
-						docker.addArgs(option);
-						if (it.hasNext())
-							docker.addArgs(it.next());
-						break;
-					case "--cache-from":
-					case "--cache-to":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							for (var splitted: Splitter.on(',').split(arg)) {
-								var index = splitted.indexOf('=');
-								if (index == -1)
-									checkBuildImageCachePath(splitted);
-								else if (splitted.substring(0, index).equals("dest"))
-									checkBuildImageCachePath(splitted.substring(index+1));
-							}
-							docker.addArgs(arg);
-						}
-						break;
-					case "--secret":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							for (var splitted: Splitter.on(',').split(arg)) {
-								if (splitted.startsWith("src=")) {
-									var path = splitted.substring("src=".length());
-									if (!PathUtils.isSubPath(path))
-										throw new ExplicitException("Secret source path of build image step should be a relative path not containing '..'");
-								}
-							}
-							docker.addArgs(arg);
-						}
-						break;
-					case "--build-context":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var arg = it.next();
-							var path = StringUtils.substringAfter(arg, "=");
-							if (!PathUtils.isSubPath(path))
-								throw new ExplicitException("Build context path of build image step should be a relative path not containing '..'");
-							docker.addArgs(arg);
-						}
-						break;
-					case "--iidfile":
-					case "--metadata-file":
-						docker.addArgs(option);
-						if (it.hasNext()) {
-							var path = it.next();
-							if (!PathUtils.isSubPath(path)) {
-								if (option.equals("--iidfile"))
-									throw new ExplicitException("Image id file path of build image step should be a relative path not containing '..'");
-								else
-									throw new ExplicitException("Metadata file path of build image step should be a relative path not containing '..'");
-							}
-							docker.addArgs(path);
-						}
-						break;
-					case "--no-cache":
-					case "-q":
-					case "--quiet":
-						docker.addArgs(option);
-						break;
-					case "--builder":
-						throw new ExplicitException("--builder in more options is no longer supported. Builder can only be configured via job executor now");
-					case "--platform":
-						throw new ExplicitException("--platform in more options is no longer supported. Please specify platforms property directly");
-					default:
-						throw new ExplicitException("Option '" + option + "' is not supported for build image step");
-				}
-			}
-		}
+		// These options are administrator-controlled. Never interpolate job files into them.
+		if (buildOptions != null)
+			docker.addArgs(StringUtils.parseQuoteTokens(buildOptions));
 
 		var workDir = new File(hostBuildDir, "work");
-		if (buildImageFacade.getBuildPath() != null) {
-			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir);
-			if (!PathUtils.isSubPath(buildPath))
-				throw new ExplicitException("Build path of build image step should be a relative path not containing '..'");
-			docker.addArgs(buildPath);
-		} else {
-			docker.addArgs(".");
-		}
+		var buildPath = buildImageFacade.getBuildPath() != null
+				? replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir) : ".";
+		docker.addArgs(BuildImageFacade.resolvePath(hostBuildDir, buildPath).getAbsolutePath());
+		BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/.dockerignore");
 
+		var dockerFile = buildImageFacade.getDockerfile() != null
+				? replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir) : buildPath + "/Dockerfile";
+		BuildImageFacade.resolvePath(hostBuildDir, dockerFile);
+		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".dockerignore");
+		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".rego");
 		if (buildImageFacade.getDockerfile() != null) {
-			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir);
-			if (!PathUtils.isSubPath(dockerFile))
-				throw new ExplicitException("Dockerfile of build image step should be a relative path not containing '..'");
-			docker.addArgs("-f", dockerFile);
+			docker.addArgs("-f", BuildImageFacade.resolvePath(hostBuildDir, dockerFile).getAbsolutePath());
+		} else {
+			// Buildx falls back to a lowercase default Dockerfile.
+			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile");
+			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile.dockerignore");
+			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile.rego");
 		}
 
 		docker.workingDir(workDir);
