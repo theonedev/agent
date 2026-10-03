@@ -36,6 +36,7 @@ import io.onedev.agent.AgentUtils;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
@@ -130,15 +131,13 @@ public class JobUtils {
 	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
 								  File hostBuildDir, boolean pullAlways, boolean imageBuildEnabled,
 								  String executorName, TaskLogger jobLogger) {
-		if (!imageBuildEnabled)
+		if (!imageBuildEnabled) {
 			throw new ExplicitException("Image build is disabled in executor '" + executorName
-					+ "'. Enable Buildx Image Build in executor Security Settings to allow this step");
+					+ "'. Enable Buildx Image Build in executor Security Settings to allow this step");					
+		}
+
 		createBuilder(docker, builder, jobLogger);
 
-		// Git inspection can follow workspace-controlled symlinks or execute fsmonitor hooks on the host.
-		docker.envs().put("BUILDX_GIT_INFO", "false");
-		docker.envs().put("BUILDX_GIT_LABELS", "false");
-		docker.envs().put("BUILDX_GIT_CHECK_DIRTY", "false");
 		docker.args("buildx", "build", "--builder", builder);
 		if (pullAlways)
 			docker.addArgs("--pull");
@@ -148,45 +147,47 @@ public class JobUtils {
 		if (buildImageFacade.getMoreOptions() != null)
 			docker.addArgs(StringUtils.parseQuoteTokens(replacePlaceholders(buildImageFacade.getMoreOptions(), hostBuildDir)));
 
-		var workDir = resolveBuildPath(hostBuildDir, "work");
-		var buildPath = buildImageFacade.getBuildPath() != null
-				? replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir) : ".";
-		docker.addArgs(BuildImageFacade.resolvePath(hostBuildDir, buildPath).getAbsolutePath());
-		BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/.dockerignore");
+		// No need to perform unauthorized host file access check here as this step should only be executed by trust projects
+		
+		var workDir = new File(hostBuildDir, "work");
+		if (buildImageFacade.getBuildPath() != null) {
+			String buildPath = replacePlaceholders(buildImageFacade.getBuildPath(), hostBuildDir);
+			if (!PathUtils.isSubPath(buildPath))
+				throw new ExplicitException("Build path of build image step should be a relative path not containing '..'");
 
-		var dockerFile = buildImageFacade.getDockerfile() != null
-				? replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir) : buildPath + "/Dockerfile";
-		var dockerFilePath = BuildImageFacade.resolvePath(hostBuildDir, dockerFile);
-		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".dockerignore");
-		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".rego");
-		if (buildImageFacade.getDockerfile() != null)
-			docker.addArgs("-f", dockerFilePath.getAbsolutePath());
-		if (dockerFilePath.getName().equals("Dockerfile")) {
-			// Buildx also falls back to lowercase when Dockerfile is explicitly specified.
-			var lowercaseDockerFile = new File(dockerFile).toPath().normalize()
-					.resolveSibling("dockerfile").toString().replace(File.separatorChar, '/');
-			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile);
-			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile + ".dockerignore");
-			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile + ".rego");
+			docker.addArgs(buildPath);
+		} else {
+			docker.addArgs(".");
+		}
+
+		if (buildImageFacade.getDockerfile() != null) {
+			String dockerFile = replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir);
+			if (!PathUtils.isSubPath(dockerFile))
+				throw new ExplicitException("Dockerfile of build image step should be a relative path not containing '..'");
+
+			docker.addArgs("-f", dockerFile);
 		}
 
 		docker.workingDir(workDir);
-		buildImageFacade.getOutput().execute(docker, hostBuildDir, AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
+		buildImageFacade.getOutput().execute(docker, hostBuildDir, AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));		
 	}
 
 	public static void pruneBuilderCache(Commandline docker, String builder,
 										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
 										 File hostBuildDir, boolean builderCachePruneEnabled,
 										 String executorName, TaskLogger jobLogger) {
-		if (!builderCachePruneEnabled)
+		if (!builderCachePruneEnabled) {
 			throw new ExplicitException("Builder cache prune is disabled in executor '" + executorName
 					+ "'. Enable Builder Cache Prune in executor Security Settings to allow this step");
+		}
+
 		createBuilder(docker, builder, jobLogger);
 
+		// No need to perform unauthorized host file access check here as this step should only be executed by trust projects
 		docker.args("buildx", "prune", "--builder", builder, "-f");
 		if (pruneBuilderCacheFacade.getOptions() != null)
 			docker.addArgs(StringUtils.parseQuoteTokens(replacePlaceholders(pruneBuilderCacheFacade.getOptions(), hostBuildDir)));
-		docker.workingDir(resolveBuildPath(hostBuildDir, "work"));
+		docker.workingDir(new File(hostBuildDir, "work"));
 
 		var containerNotFound = new AtomicBoolean(false);
 		var result = docker.execute(AgentUtils.newInfoLogger(jobLogger), new LineConsumer(UTF_8.name()) {

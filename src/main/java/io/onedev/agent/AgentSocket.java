@@ -86,6 +86,7 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Splitter;
 
 import io.onedev.agent.job.DockerJobData;
+import io.onedev.agent.job.DockerRunOptions;
 import io.onedev.agent.job.JobResumeData;
 import io.onedev.agent.job.JobUtils;
 import io.onedev.agent.job.LogRequest;
@@ -789,8 +790,7 @@ public class AgentSocket implements Runnable {
 							docker.addArgs("--cpus", dockerSettings.getCpuLimit());
 						if (dockerSettings.getMemoryLimit() != null)
 							docker.addArgs("--memory", dockerSettings.getMemoryLimit());
-						if (dockerSettings.getRunOptions() != null)
-							docker.addArgs(StringUtils.parseQuoteTokens(dockerSettings.getRunOptions()));
+						docker.addArgs(DockerRunOptions.parse(dockerSettings.getRunOptions(), hostBuildDir));
 
 						docker.addArgs("-v", getHostPath(hostBuildDir.getAbsolutePath(), dockerSock) + ":" + containerBuildDirPath);
 
