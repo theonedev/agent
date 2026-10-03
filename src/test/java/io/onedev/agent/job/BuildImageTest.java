@@ -81,6 +81,57 @@ class BuildImageTest {
 	}
 
 	@Test
+	@EnabledOnOs({OS.LINUX, OS.MAC})
+	void rejectsSymlinkedExplicitDockerfileFallbacks() throws Exception {
+		Files.createDirectories(buildDir.resolve("work/context"));
+		var recipes = Files.createDirectory(buildDir.resolve("work/recipes"));
+		var outside = Files.writeString(buildDir.resolve("outside"), "outside workspace");
+		for (var name : List.of("dockerfile", "dockerfile.dockerignore", "dockerfile.rego")) {
+			if (!name.equals("dockerfile"))
+				Files.writeString(recipes.resolve("dockerfile"), "FROM scratch\n");
+			var link = Files.createSymbolicLink(recipes.resolve(name), outside);
+			assertThrows(ExplicitException.class,
+					() -> build(null, "context", "recipes/./Dockerfile"), name);
+			Files.delete(link);
+			Files.deleteIfExists(recipes.resolve("dockerfile"));
+		}
+	}
+
+	@Test
+	@EnabledOnOs({OS.LINUX, OS.MAC})
+	void allowsSafeFallbackAndDoesNotCheckUnrelatedLowercaseFiles() throws Exception {
+		var recipes = Files.createDirectories(buildDir.resolve("work/recipes"));
+		Files.writeString(recipes.resolve("dockerfile"), "FROM scratch\n");
+		assertDoesNotThrow(() -> build(null, null, "recipes/Dockerfile"));
+		Files.writeString(recipes.resolve("custom"), "FROM scratch\n");
+		Files.createSymbolicLink(recipes.resolve("dockerfile.rego"), buildDir.resolve("outside"));
+		assertDoesNotThrow(() -> build(null, null, "recipes/custom"));
+	}
+
+	@Test
+	@EnabledOnOs({OS.LINUX, OS.MAC})
+	void disablesGitDirtyChecksInBuildProcess() throws Exception {
+		Files.createDirectories(buildDir.resolve("work"));
+		var executable = Files.writeString(buildDir.resolve("docker"), "#!/bin/sh\n"
+				+ "if [ \"$1\" = buildx ] && [ \"$2\" = build ]; then\n"
+				+ "  printf '%s' \"$BUILDX_GIT_CHECK_DIRTY\" > \"$0.env\"\n"
+				+ "fi\n");
+		assertTrue(executable.toFile().setExecutable(true));
+		for (var dirtyCheck : new String[] {null, "true", "1"}) {
+			var docker = new Commandline(executable.toString());
+			if (dirtyCheck != null)
+				docker.envs().put("BUILDX_GIT_CHECK_DIRTY", dirtyCheck);
+			var step = new BuildImageFacade(null, null,
+					new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null);
+			JobUtils.buildImage(docker, "test", null, step, buildDir.toFile(), false, new TaskLogger() {
+				@Override
+				public void log(String message, String sessionId) { }
+			});
+			assertEquals("false", Files.readString(buildDir.resolve("docker.env")));
+		}
+	}
+
+	@Test
 	void transportsOptionsSeparatelyFromProjectStep() {
 		var settings = new JobDockerSettings(false, null, null, null, null, List.of(), true, "test", null, "--no-cache");
 		var restored = org.apache.commons.lang3.SerializationUtils.clone(settings);

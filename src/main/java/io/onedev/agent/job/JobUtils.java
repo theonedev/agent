@@ -147,6 +147,8 @@ public class JobUtils {
 								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
+		// Git dirty checks can execute workspace-controlled fsmonitor hooks on the host.
+		docker.envs().put("BUILDX_GIT_CHECK_DIRTY", "false");
 		docker.args("buildx", "build", "--builder", builder);
 		if (pullAlways)
 			docker.addArgs("--pull");
@@ -165,16 +167,18 @@ public class JobUtils {
 
 		var dockerFile = buildImageFacade.getDockerfile() != null
 				? replacePlaceholders(buildImageFacade.getDockerfile(), hostBuildDir) : buildPath + "/Dockerfile";
-		BuildImageFacade.resolvePath(hostBuildDir, dockerFile);
+		var dockerFilePath = BuildImageFacade.resolvePath(hostBuildDir, dockerFile);
 		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".dockerignore");
 		BuildImageFacade.resolvePath(hostBuildDir, dockerFile + ".rego");
-		if (buildImageFacade.getDockerfile() != null) {
-			docker.addArgs("-f", BuildImageFacade.resolvePath(hostBuildDir, dockerFile).getAbsolutePath());
-		} else {
-			// Buildx falls back to a lowercase default Dockerfile.
-			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile");
-			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile.dockerignore");
-			BuildImageFacade.resolvePath(hostBuildDir, buildPath + "/dockerfile.rego");
+		if (buildImageFacade.getDockerfile() != null)
+			docker.addArgs("-f", dockerFilePath.getAbsolutePath());
+		if (dockerFilePath.getName().equals("Dockerfile")) {
+			// Buildx also falls back to lowercase when Dockerfile is explicitly specified.
+			var lowercaseDockerFile = new File(dockerFile).toPath().normalize()
+					.resolveSibling("dockerfile").toString().replace(File.separatorChar, '/');
+			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile);
+			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile + ".dockerignore");
+			BuildImageFacade.resolvePath(hostBuildDir, lowercaseDockerFile + ".rego");
 		}
 
 		docker.workingDir(workDir);
