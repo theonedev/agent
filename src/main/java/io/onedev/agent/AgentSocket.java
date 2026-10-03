@@ -889,7 +889,7 @@ public class AgentSocket implements Runnable {
 						var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, registryLogins, () -> {
 							buildImage(docker, dockerSettings.getDockerBuilder(), buildImageFacade, hostBuildDir,
-									dockerSettings.isAlwaysPullImage(), jobLogger);
+									dockerSettings.isAlwaysPullImage(), dockerSettings.isImageBuildEnabled(), jobData.getExecutorName(), jobLogger);
 							return null;
 						});
 					} else if (facade instanceof PruneBuilderCacheFacade) {
@@ -897,7 +897,7 @@ public class AgentSocket implements Runnable {
 						var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, new ArrayList<>(), () -> {
 							pruneBuilderCache(docker, dockerSettings.getDockerBuilder(), pruneBuilderCacheFacade,
-									hostBuildDir, jobLogger);
+									hostBuildDir, dockerSettings.isBuilderCachePruneEnabled(), jobData.getExecutorName(), jobLogger);
 							return null;
 						});
 					} else if (facade instanceof RunContainerFacade) {

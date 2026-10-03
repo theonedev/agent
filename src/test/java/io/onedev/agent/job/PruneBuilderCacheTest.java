@@ -32,7 +32,7 @@ class PruneBuilderCacheTest {
 			}
 		};
 		JobUtils.pruneBuilderCache(docker, "authorized-builder", new PruneBuilderCacheFacade(options),
-				buildDir.toFile(), new TaskLogger() {
+				buildDir.toFile(), true, "test-executor", new TaskLogger() {
 			@Override
 			public void log(String message, String sessionId) { }
 		});

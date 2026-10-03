@@ -128,7 +128,11 @@ public class JobUtils {
 	}
 
 	public static void buildImage(Commandline docker, String builder, BuildImageFacade buildImageFacade,
-								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
+								  File hostBuildDir, boolean pullAlways, boolean imageBuildEnabled,
+								  String executorName, TaskLogger jobLogger) {
+		if (!imageBuildEnabled)
+			throw new ExplicitException("Image build is disabled in executor '" + executorName
+					+ "'. Enable Buildx Image Build in executor Security Settings to allow this step");
 		createBuilder(docker, builder, jobLogger);
 
 		// Git inspection can follow workspace-controlled symlinks or execute fsmonitor hooks on the host.
@@ -172,7 +176,11 @@ public class JobUtils {
 
 	public static void pruneBuilderCache(Commandline docker, String builder,
 										 PruneBuilderCacheFacade pruneBuilderCacheFacade,
-										 File hostBuildDir, TaskLogger jobLogger) {
+										 File hostBuildDir, boolean builderCachePruneEnabled,
+										 String executorName, TaskLogger jobLogger) {
+		if (!builderCachePruneEnabled)
+			throw new ExplicitException("Builder cache prune is disabled in executor '" + executorName
+					+ "'. Enable Builder Cache Prune in executor Security Settings to allow this step");
 		createBuilder(docker, builder, jobLogger);
 
 		docker.args("buildx", "prune", "--builder", builder, "-f");

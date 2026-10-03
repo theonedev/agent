@@ -35,7 +35,7 @@ class BuildImageTest {
 		};
 		var step = new BuildImageFacade(buildPath, dockerfile,
 				(docker, dir, out, err) -> result.addAll(docker.args()), List.of(), "linux/amd64", options);
-		JobUtils.buildImage(command, "test", step, buildDir.toFile(), true, new TaskLogger() {
+		JobUtils.buildImage(command, "test", step, buildDir.toFile(), true, true, "test-executor", new TaskLogger() {
 			@Override
 			public void log(String message, String sessionId) { }
 		});
@@ -126,7 +126,7 @@ class BuildImageTest {
 			}
 			var step = new BuildImageFacade(null, null,
 					new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null, null);
-			JobUtils.buildImage(docker, "test", step, buildDir.toFile(), false, new TaskLogger() {
+			JobUtils.buildImage(docker, "test", step, buildDir.toFile(), false, true, "test-executor", new TaskLogger() {
 				@Override
 				public void log(String message, String sessionId) { }
 			});
