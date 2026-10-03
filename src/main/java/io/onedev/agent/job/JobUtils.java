@@ -146,7 +146,9 @@ public class JobUtils {
 								  File hostBuildDir, boolean pullAlways, TaskLogger jobLogger) {
 		createBuilder(docker, builder, jobLogger);
 
-		// Git dirty checks can execute workspace-controlled fsmonitor hooks on the host.
+		// Git inspection can follow workspace-controlled symlinks or execute fsmonitor hooks on the host.
+		docker.envs().put("BUILDX_GIT_INFO", "false");
+		docker.envs().put("BUILDX_GIT_LABELS", "false");
 		docker.envs().put("BUILDX_GIT_CHECK_DIRTY", "false");
 		docker.args("buildx", "build", "--builder", builder);
 		if (pullAlways)

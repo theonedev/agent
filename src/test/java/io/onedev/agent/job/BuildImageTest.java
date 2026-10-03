@@ -110,24 +110,27 @@ class BuildImageTest {
 
 	@Test
 	@EnabledOnOs({OS.LINUX, OS.MAC})
-	void disablesGitDirtyChecksInBuildProcess() throws Exception {
+	void disablesGitInspectionInBuildProcess() throws Exception {
 		Files.createDirectories(buildDir.resolve("work"));
 		var executable = Files.writeString(buildDir.resolve("docker"), "#!/bin/sh\n"
 				+ "if [ \"$1\" = buildx ] && [ \"$2\" = build ]; then\n"
-				+ "  printf '%s' \"$BUILDX_GIT_CHECK_DIRTY\" > \"$0.env\"\n"
+				+ "  printf '%s\\n' \"$BUILDX_GIT_INFO\" \"$BUILDX_GIT_LABELS\" \"$BUILDX_GIT_CHECK_DIRTY\" > \"$0.env\"\n"
 				+ "fi\n");
 		assertTrue(executable.toFile().setExecutable(true));
-		for (var dirtyCheck : new String[] {null, "true", "1"}) {
+		for (var gitSetting : new String[] {null, "true", "1", "full"}) {
 			var docker = new Commandline(executable.toString());
-			if (dirtyCheck != null)
-				docker.envs().put("BUILDX_GIT_CHECK_DIRTY", dirtyCheck);
+			if (gitSetting != null) {
+				docker.envs().put("BUILDX_GIT_INFO", gitSetting);
+				docker.envs().put("BUILDX_GIT_LABELS", gitSetting);
+				docker.envs().put("BUILDX_GIT_CHECK_DIRTY", gitSetting);
+			}
 			var step = new BuildImageFacade(null, null,
 					new BuildImageFacade.RegistryOutput("test:latest"), List.of(), null);
 			JobUtils.buildImage(docker, "test", null, step, buildDir.toFile(), false, new TaskLogger() {
 				@Override
 				public void log(String message, String sessionId) { }
 			});
-			assertEquals("false", Files.readString(buildDir.resolve("docker.env")));
+			assertEquals(List.of("false", "false", "false"), Files.readAllLines(buildDir.resolve("docker.env")));
 		}
 	}
 
