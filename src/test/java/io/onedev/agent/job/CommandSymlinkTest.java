@@ -14,8 +14,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.k8shelper.CommandFacade;
-import io.onedev.k8shelper.RunImagetoolsFacade;
-import io.onedev.commons.utils.command.Commandline;
 
 @EnabledOnOs({OS.LINUX, OS.MAC})
 class CommandSymlinkTest {
@@ -44,20 +42,18 @@ class CommandSymlinkTest {
 		JobUtils.getEntrypointArgs(build.toFile(), command, List.of(0));
 		assertTrue(Files.readString(script).contains("echo test"));
 	}
+
 	@Test
-	void imagetoolsCannotReadSymlinkedDescriptors() throws Exception {
+	void containerCommandCannotReadSymlinkedHostPlaceholders() throws Exception {
 		var build = Files.createDirectory(temp.resolve("build"));
 		var work = Files.createDirectory(build.resolve("work"));
-		var outside = Files.createDirectory(temp.resolve("outside"));
-		Files.createSymbolicLink(work.resolve("link"), outside);
-		Files.createSymbolicLink(work.resolve("dangling"), outside.resolve("missing"));
-		for (var path: List.of("link/descriptor.json", "dangling")) {
-			for (var option: List.of("--file ", "--file=", "-f ", "-f", "-f=")) {
-				var step = new RunImagetoolsFacade("create " + option + path, List.of());
-				assertThrows(ExplicitException.class, () -> JobUtils.runImagetools(
-						new Commandline("unused"), step, build.toFile(), null));
-			}
-		}
+		var outside = Files.writeString(temp.resolve("outside"), "host-only-secret");
+		Files.createSymbolicLink(work.resolve("reference"), outside);
+		var command = new CommandFacade("1dev/buildx:1.0.0", "0:0", List.of(), Map.of(), false,
+				"docker buildx imagetools inspect <&onedev#work/reference#onedev&>");
+		assertThrows(ExplicitException.class,
+				() -> JobUtils.getEntrypointArgs(build.toFile(), command, List.of(0)));
+		assertFalse(Files.exists(build.resolve("command/step-0" + command.getScriptExtension())));
 	}
 
 }

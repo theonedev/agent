@@ -14,7 +14,6 @@ import static io.onedev.agent.job.JobUtils.deleteNetwork;
 import static io.onedev.agent.job.JobUtils.getBuildDir;
 import static io.onedev.agent.job.JobUtils.getEntrypointArgs;
 import static io.onedev.agent.job.JobUtils.pruneBuilderCache;
-import static io.onedev.agent.job.JobUtils.runImagetools;
 import static io.onedev.agent.job.JobUtils.runStep;
 import static io.onedev.agent.job.JobUtils.startService;
 import static io.onedev.agent.workspace.WorkspaceUtils.awaitContainerReady;
@@ -143,7 +142,6 @@ import io.onedev.k8shelper.LeafFacade;
 import io.onedev.k8shelper.LeafHandler;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
 import io.onedev.k8shelper.RunContainerFacade;
-import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServerSideFacade;
 import io.onedev.k8shelper.SetupCacheFacade;
 import io.onedev.k8shelper.UserDataFacade;
@@ -640,7 +638,7 @@ public class AgentSocket implements Runnable {
 							return false;
 						}
 					} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade
-							|| facade instanceof RunImagetoolsFacade || facade instanceof PruneBuilderCacheFacade) {
+							|| facade instanceof PruneBuilderCacheFacade) {
 						throw new ExplicitException("This step can only be executed by server docker executor and remote docker executor");
 					} else if (facade instanceof CheckoutFacade) {
 						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
@@ -892,14 +890,6 @@ public class AgentSocket implements Runnable {
 						callWithRegistryLogins(docker, registryLogins, () -> {
 							buildImage(docker, dockerSettings.getDockerBuilder(), dockerSettings.getBuildOptions(), buildImageFacade, hostBuildDir,
 									dockerSettings.isAlwaysPullImage(), jobLogger);
-							return null;
-						});
-					} else if (facade instanceof RunImagetoolsFacade) {
-						var runImagetoolsFacade = (RunImagetoolsFacade) facade;
-						var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
-						var docker = newDocker(dockerSock);
-						callWithRegistryLogins(docker, registryLogins, () -> {
-							runImagetools(docker, runImagetoolsFacade, hostBuildDir, jobLogger);
 							return null;
 						});
 					} else if (facade instanceof PruneBuilderCacheFacade) {
