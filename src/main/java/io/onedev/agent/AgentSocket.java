@@ -1351,8 +1351,14 @@ public class AgentSocket implements Runnable {
 	}
 
 	private FileData readWorkspaceFileData(WorkspaceFileDataRequest request) {
-		var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
-		return WorkspaceUtils.readFileData(workspaceDir, request.getPath());
+		if (request.isDocker()) {
+			var containerName = getWorkspaceContainerName(request.getProvisionerName(), request.getProjectId(), request.getWorkspaceNumber());
+			return WorkspaceUtils.readFileData(newDocker(request.getDockerSock()), containerName,
+					WORKSPACE_PATH + "/work", request.getPath());
+		} else {
+			var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
+			return WorkspaceUtils.readFileData(workspaceDir, request.getPath());
+		}
 	}
 
 	public static void houseKeeper() {

@@ -20,11 +20,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
-import jakarta.ws.rs.client.Client;
-import jakarta.ws.rs.client.Invocation;
-import jakarta.ws.rs.client.WebTarget;
-import jakarta.ws.rs.core.Response;
-
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +36,10 @@ import io.onedev.k8shelper.CacheProvisioner;
 import io.onedev.k8shelper.ScriptConfig;
 import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.Invocation;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.Response;
 import nl.altindag.ssl.SSLFactory;
 
 public class WorkspaceUtils {
@@ -104,6 +103,18 @@ public class WorkspaceUtils {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+	}
+
+	@Nullable
+	public static FileData readFileData(Commandline docker, String containerName, String containerWorkDirPath, String path) {
+		// Read inside the container so workspace symlinks cannot expose host files, even if
+		// replaced during the read. Pass the path directly to cat to avoid shell interpretation.
+		docker.addArgs("exec", containerName, "cat", "--", containerWorkDirPath + "/" + path);
+		var stdout = new ByteArrayOutputStream();
+		var stderr = new ByteArrayOutputStream();
+		if (docker.execute(stdout, stderr).getReturnCode() != 0)
+			return null;
+		return new FileData(path, stdout.toByteArray(), stdout.size());
 	}
 
 	public static void setCommonDockerRunOptions(Commandline docker, String containerName, String runAs,
