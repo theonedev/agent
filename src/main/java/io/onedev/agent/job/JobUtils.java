@@ -139,8 +139,8 @@ public class JobUtils {
 								  File hostBuildDir, boolean pullAlways, boolean imageBuildEnabled,
 								  String executorName, TaskLogger jobLogger) {
 		if (!imageBuildEnabled) {
-			throw new ExplicitException("Image build is disabled in executor '" + executorName
-					+ "'. Enable Buildx Image Build in executor Security Settings to allow this step");					
+			throw new ExplicitException("Buildx image build is disabled in executor '" + executorName
+					+ "'. Enable it in executor Security Settings to allow this step, or use Kaniko image build step instead");					
 		}
 
 		createBuilder(docker, builder, jobLogger);
@@ -183,7 +183,7 @@ public class JobUtils {
 									 File hostBuildDir, boolean imagetoolsEnabled, String executorName, TaskLogger jobLogger) {
 		if (!imagetoolsEnabled) {
 			throw new ExplicitException("Buildx image tools is disabled in executor '" + executorName
-					+ "'. Enable Buildx Image Tools in executor Security Settings to allow this step");
+					+ "'. Enable it in executor Security Settings to allow this step");
 		}
 
 		// No need to perform unauthorized host file access check here as this step should only be executed by trust projects
@@ -199,7 +199,7 @@ public class JobUtils {
 										 String executorName, TaskLogger jobLogger) {
 		if (!builderCachePruneEnabled) {
 			throw new ExplicitException("Builder cache prune is disabled in executor '" + executorName
-					+ "'. Enable Builder Cache Prune in executor Security Settings to allow this step");
+					+ "'. Enable it in executor Security Settings to allow this step");
 		}
 
 		createBuilder(docker, builder, jobLogger);
