@@ -52,6 +52,7 @@ import io.onedev.k8shelper.CacheProvisioner;
 import io.onedev.k8shelper.CommandFacade;
 import io.onedev.k8shelper.JobHelper.StepEventKind;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
+import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
 import jakarta.ws.rs.client.Client;
 import jakarta.ws.rs.client.Invocation;
@@ -176,6 +177,20 @@ public class JobUtils {
 
 		docker.workingDir(workDir);
 		buildImageFacade.getOutput().execute(docker, hostBuildDir, AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));		
+	}
+
+	public static void runImagetools(Commandline docker, RunImagetoolsFacade runImagetoolsFacade,
+									 File hostBuildDir, boolean imagetoolsEnabled, String executorName, TaskLogger jobLogger) {
+		if (!imagetoolsEnabled) {
+			throw new ExplicitException("Buildx image tools is disabled in executor '" + executorName
+					+ "'. Enable Buildx Image Tools in executor Security Settings to allow this step");
+		}
+
+		// No need to perform unauthorized host file access check here as this step should only be executed by trust projects
+		docker.args("buildx", "imagetools");
+		docker.addArgs(StringUtils.parseQuoteTokens(replacePlaceholders(runImagetoolsFacade.getArguments(), hostBuildDir)));
+		docker.workingDir(new File(hostBuildDir, "work"));
+		docker.execute(AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger)).checkReturnCode();
 	}
 
 	public static void pruneBuilderCache(Commandline docker, String builder,

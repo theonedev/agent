@@ -17,6 +17,8 @@ public class JobDockerSettings extends DockerSettings {
 
 	private final boolean builderCachePruneEnabled;
 
+	private final boolean imagetoolsEnabled;
+
 	@Nullable
 	private final String networkOptions;
 
@@ -24,12 +26,13 @@ public class JobDockerSettings extends DockerSettings {
 			@Nullable String cpuLimit, @Nullable String memoryLimit, @Nullable String runOptions,
 			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage,
 			String dockerBuilder, @Nullable String networkOptions,
-			boolean imageBuildEnabled, boolean builderCachePruneEnabled) {
+			boolean imageBuildEnabled, boolean builderCachePruneEnabled, boolean imagetoolsEnabled) {
 		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage);
 		this.dockerBuilder = dockerBuilder;
 		this.networkOptions = networkOptions;
 		this.imageBuildEnabled = imageBuildEnabled;
 		this.builderCachePruneEnabled = builderCachePruneEnabled;
+		this.imagetoolsEnabled = imagetoolsEnabled;
 	}
 
 	public String getDockerBuilder() {
@@ -42,6 +45,10 @@ public class JobDockerSettings extends DockerSettings {
 
 	public boolean isBuilderCachePruneEnabled() {
 		return builderCachePruneEnabled;
+	}
+
+	public boolean isImagetoolsEnabled() {
+		return imagetoolsEnabled;
 	}
 
 	@Nullable
