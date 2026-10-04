@@ -14,7 +14,6 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 
@@ -76,7 +75,7 @@ class FileDataTest {
 	}
 
 	@Test
-	void localPreviewRejectsTraversalAndSymlinksOutsideWorkspace() throws Exception {
+	void localPreviewAllowsPathsAndSymlinksOutsideWorkspace() throws Exception {
 		var workspace = Files.createDirectory(temp.resolve("workspace"));
 		var work = Files.createDirectory(workspace.resolve("work"));
 		var outside = Files.createDirectory(temp.resolve("workspace-other"));
@@ -84,8 +83,11 @@ class FileDataTest {
 		Files.createSymbolicLink(work.resolve("file-link"), secret);
 		Files.createSymbolicLink(work.resolve("dir-link"), outside);
 		Files.createSymbolicLink(work.resolve("missing-link"), outside.resolve("missing"));
+		// Shell workspaces already have host access, so local previews use normal filesystem resolution.
 		for (var path : List.of("../../workspace-other/secret", "file-link", "dir-link/secret")) {
-			assertThrows(ExplicitException.class, () -> WorkspaceUtils.readFileData(workspace.toFile(), path), path);
+			var data = WorkspaceUtils.readFileData(workspace.toFile(), path);
+			assertNotNull(data, path);
+			assertEquals("host secret", new String(data.getContent(), StandardCharsets.UTF_8), path);
 		}
 		assertNull(WorkspaceUtils.readFileData(workspace.toFile(), "missing-link"));
 	}
