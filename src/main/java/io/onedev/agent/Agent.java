@@ -131,7 +131,7 @@ public class Agent {
 		}));
 		
 		try {
-			wrapperManagerClass = Class.forName("org.tanukisoftware.wrapper.WrapperManager");
+			wrapperManagerClass = Class.forName("io.onedev.wrapper.WrapperManager");
 		} catch (ClassNotFoundException e) {
 		}
 		
