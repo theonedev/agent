@@ -551,6 +551,9 @@ public class AgentSocket implements Runnable {
 
 		while (!stopped) {
 			thread.interrupt();
+			// A failed heartbeat send may invoke this callback on the heartbeat thread itself.
+			if (Thread.currentThread() == thread)
+				break;
 			try {
 				Thread.sleep(1000); 
 			} catch (InterruptedException e) {
