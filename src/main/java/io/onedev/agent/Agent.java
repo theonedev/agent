@@ -130,9 +130,13 @@ public class Agent {
 			}
 		}));
 		
-		try {
-			wrapperManagerClass = Class.forName("io.onedev.wrapper.WrapperManager");
-		} catch (ClassNotFoundException e) {
+		// Existing agents update application jars without replacing their JSW installation.
+		for (var className : new String[] {"io.onedev.wrapper.WrapperManager", "org.tanukisoftware.wrapper.WrapperManager"}) {
+			try {
+				wrapperManagerClass = Class.forName(className);
+				break;
+			} catch (ClassNotFoundException e) {
+			}
 		}
 		
 		try {
