@@ -434,7 +434,7 @@ public class AgentUtils {
 
 		if (bestDestinationPath == null) {
 			throw new ExplicitException("No container mount found containing path '" + containerPathString
-					+ "': please make sure to use bind mount to launch OneDev server/agent");
+					+ "': please make sure to use bind mount to launch the server/agent");
 		}
 
 		return bestSourcePath.resolve(bestDestinationPath.relativize(containerPath)).toString();
