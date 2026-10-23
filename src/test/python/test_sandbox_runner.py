@@ -4,6 +4,7 @@ import csv
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -289,12 +290,16 @@ class RunnerTest(unittest.TestCase):
         config['strategy'] = 'UPLOAD_IF_CHANGED'
         self.runner.setup_cache(config)
 
+        # Make changes newer than cache setup without depending on filesystem timestamp precision.
+        changed_at = self.runner.caches[0]['provisioned'] + 2
         outside.write_text('changed target')
+        os.utime(outside, (changed_at, changed_at))
         self.runner.upload_caches()
         self.assertEqual(self.worker.uploads, [])
 
         link.unlink()
         link.symlink_to('../missing')
+        os.utime(link, (changed_at, changed_at), follow_symlinks=False)
         self.runner.upload_caches()
         self.assertEqual(self.worker.uploads, [{'link': '../missing'}])
 
