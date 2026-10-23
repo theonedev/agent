@@ -75,6 +75,8 @@ public class Agent {
 	
 	public static final String DOCKER_PATH_KEY = "dockerPath";
 
+	public static final String SBX_PATH_KEY = "sbxPath";
+
 	private static final Pattern LIB_VERSION_PATTERN = Pattern.compile("\\d+(\\.\\d+)*");
 	
 	public static File installDir;
@@ -94,6 +96,8 @@ public class Agent {
 	public static String gitPath;
 	
 	public static String dockerPath;
+
+	public static String sbxPath;
 	
 	public static volatile boolean reconnect;
 	
@@ -314,6 +318,14 @@ public class Agent {
 				dockerPath = agentProps.getProperty(DOCKER_PATH_KEY);
 			if (StringUtils.isBlank(dockerPath)) 
 				dockerPath = "docker";
+
+			sbxPath = System.getenv(SBX_PATH_KEY);
+			if (StringUtils.isBlank(sbxPath))
+				sbxPath = System.getProperty(SBX_PATH_KEY);
+			if (StringUtils.isBlank(sbxPath))
+				sbxPath = agentProps.getProperty(SBX_PATH_KEY);
+			if (StringUtils.isBlank(sbxPath))
+				sbxPath = "sbx";
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
 

@@ -91,6 +91,9 @@ import io.onedev.agent.job.JobResumeData;
 import io.onedev.agent.job.JobUtils;
 import io.onedev.agent.job.LogRequest;
 import io.onedev.agent.job.ShellJobData;
+import io.onedev.agent.job.SandboxJob;
+import io.onedev.agent.job.SandboxJobData;
+import io.onedev.agent.job.TestSandboxJobData;
 import io.onedev.agent.job.TestDockerJobData;
 import io.onedev.agent.job.TestShellJobData;
 import io.onedev.agent.shell.JobShellInputRequest;
@@ -156,6 +159,10 @@ public class AgentSocket implements Runnable {
 	private static final Logger logger = LoggerFactory.getLogger(AgentSocket.class);
 	
 	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
+
+	private static final Map<String, SandboxJob> sandboxJobs = new ConcurrentHashMap<>();
+
+	private static final Map<File, SandboxJob> sandboxBuilds = new ConcurrentHashMap<>();
 
 	private static final Map<String, JobShellSession> jobShellSessions = new ConcurrentHashMap<>();
 
@@ -369,7 +376,17 @@ public class AgentSocket implements Runnable {
 					String sessionId = jobShellOpenData.getSessionId();
 					jobToken = jobShellOpenData.getJobToken();
 
-					if (jobShellOpenData.isRunInContainer()) {
+					switch (jobShellOpenData.getMode()) {
+					case SANDBOX -> {
+						var sandbox = sandboxJobs.get(jobToken);
+						if (sandbox != null) {
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session,
+									sandbox.openShell()));
+						} else {
+							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Sandbox not running")));
+						}
+					}
+					case CONTAINER -> {
 						String containerName = jobContainerNames.get(jobToken);
 						if (containerName != null) {
 							Commandline docker = newDocker(jobShellOpenData.getDockerSock());
@@ -385,7 +402,8 @@ public class AgentSocket implements Runnable {
 						} else {
 							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Container not running")));
 						}
-					} else {
+					}
+					case HOST -> {
 						File buildDir = getBuildDir(Agent.getTempDir(), jobShellOpenData.getProjectId(),
 								jobShellOpenData.getBuildNumber(), jobShellOpenData.getSubmitSequence());
 						if (buildDir.exists()) {
@@ -404,6 +422,7 @@ public class AgentSocket implements Runnable {
 						} else {
 							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
 						}
+					}
 					}
 					break;
 				case JOB_SHELL_TERMINATE:
@@ -510,8 +529,8 @@ public class AgentSocket implements Runnable {
 			shellSession.exit();
 		
 		logger.info("Cancelling running jobs...");
-		for (var jobThread: jobThreads.values())
-			jobThread.interrupt();
+		for (var jobToken: jobThreads.keySet())
+			cancelJob(jobToken);
 
 		logger.info("Stopping workspaces...");
 		for (var task: workspaceProvisionTasks.values()) {
@@ -524,8 +543,9 @@ public class AgentSocket implements Runnable {
 		}
 	}
 	
-	private void cancelJob(String jobToken) {
-		Thread thread = jobThreads.get(jobToken);
+	private static void cancelJob(String jobToken) {
+		// Cancel once: housekeeping or another request must not interrupt final cleanup.
+		Thread thread = jobThreads.remove(jobToken);
 		if (thread != null)
 			thread.interrupt();
 	}
@@ -533,6 +553,22 @@ public class AgentSocket implements Runnable {
 	private void resumeJob(JobResumeData jobResumeData) {
 		File buildDir = getBuildDir(Agent.getTempDir(), jobResumeData.getProjectId(), 
 				jobResumeData.getBuildNumber(), jobResumeData.getSubmitSequence());
+		var sandbox = sandboxBuilds.get(buildDir);
+		if (sandbox != null) {
+			Bootstrap.executorService.execute(() -> {
+				try {
+					sandbox.resume(new TaskLogger() {
+						@Override
+						public void log(String message, String sessionId) {
+							logger.info(message);
+						}
+					});
+				} catch (Exception e) {
+					logger.error("Unable to resume sandbox job", e);
+				}
+			});
+			return;
+		}
 		synchronized (buildDir) {
 			if (buildDir.exists())
 				JobHelper.resumeJob(buildDir);
@@ -561,6 +597,21 @@ public class AgentSocket implements Runnable {
 		}
 	}
 	
+	private boolean executeSandboxJob(SandboxJobData data, TaskLogger jobLogger) {
+		var sandbox = new SandboxJob(Agent.sbxPath, data.getSettings());
+		var buildDir = getBuildDir(Agent.getTempDir(), data.getProjectId(), data.getBuildNumber(), data.getSubmitSequence());
+		jobThreads.put(data.getJobToken(), Thread.currentThread());
+		sandboxJobs.put(data.getJobToken(), sandbox);
+		sandboxBuilds.put(buildDir, sandbox);
+		try {
+			return sandbox.run(data, data.getServices(), Agent.getTrustCertsDir(), Agent.attributes, jobLogger);
+		} finally {
+			sandboxBuilds.remove(buildDir);
+			sandboxJobs.remove(data.getJobToken());
+			jobThreads.remove(data.getJobToken());
+		}
+	}
+
 	private boolean executeShellJob(Session session, ShellJobData jobData, TaskLogger jobLogger) {
 		File buildDir = getBuildDir(Agent.getTempDir(), jobData.getProjectId(), 
 				jobData.getBuildNumber(), jobData.getSubmitSequence());
@@ -729,7 +780,7 @@ public class AgentSocket implements Runnable {
 
 		for (Map.Entry<String, String> entry: Agent.attributes.entrySet())
 			FileUtils.writeFile(new File(hostAttributesDir, entry.getKey()), entry.getValue(), UTF_8);
-		var dockerSettings = jobData.getDockerSettings();
+		var dockerSettings = jobData.getSettings();
 		var dockerSock = dockerSettings.getDockerSock();
 
 		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
@@ -1416,13 +1467,9 @@ public class AgentSocket implements Runnable {
 					it.remove();
 			}
 
-			for (var it = jobThreads.entrySet().iterator(); it.hasNext(); ) {
-				var entry = it.next();
-				var jobToken = entry.getKey();
-				if (!runningJobTokens.contains(jobToken)) {
-					entry.getValue().interrupt();
-					it.remove();
-				}
+			for (var jobToken: jobThreads.keySet()) {
+				if (!runningJobTokens.contains(jobToken))
+					cancelJob(jobToken);
 			}
 
 			for (var it = jobShellSessions.entrySet().iterator(); it.hasNext(); ) {
@@ -1500,6 +1547,17 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestShellWorkspaceData testShellWorkspaceData) {
 				testShellWorkspace(session, testShellWorkspaceData);
 				return true;
+			} else if (request instanceof SandboxJobData sandboxJobData) {
+				return executeSandboxJob(sandboxJobData, newTaskLogger(session, sandboxJobData.getJobToken()));
+			} else if (request instanceof TestSandboxJobData testSandboxJobData) {
+				jobThreads.put(testSandboxJobData.getToken(), Thread.currentThread());
+				try {
+					new SandboxJob(Agent.sbxPath, testSandboxJobData.getSettings()).test(testSandboxJobData.getImage(), Agent.getTrustCertsDir(),
+							newTaskLogger(session, testSandboxJobData.getToken()));
+					return true;
+				} finally {
+					jobThreads.remove(testSandboxJobData.getToken());
+				}
 			} else if (request instanceof ShellJobData shellJobData) {
 				var jobLogger = newTaskLogger(session, shellJobData.getJobToken());
 				return executeShellJob(session, shellJobData, jobLogger);

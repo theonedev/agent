@@ -9,27 +9,27 @@ import io.onedev.k8shelper.ServiceFacade;
 public class DockerJobData extends ShellJobData {
 
 	private static final long serialVersionUID = 1L;
-	
+
 	private final List<ServiceFacade> services;
 
-	private final JobDockerSettings dockerSettings;
+	private final JobDockerSettings settings;
 
 	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, Long submitSequence,
 						 List<Action> actions, SecretMasker secretMasker, List<ServiceFacade> services, 
-						 JobDockerSettings dockerSettings) {
+						 JobDockerSettings settings) {
 		super(jobToken, executorName, projectPath, projectId, refName, commitHash,
 				buildNumber, submitSequence, actions, secretMasker);
 		this.services = services;
-		this.dockerSettings = dockerSettings;
+		this.settings = settings;
 	}
 
 	public List<ServiceFacade> getServices() {
 		return services;
 	}
 
-	public JobDockerSettings getDockerSettings() {
-		return dockerSettings;
+	public JobDockerSettings getSettings() {
+		return settings;
 	}
 
 }

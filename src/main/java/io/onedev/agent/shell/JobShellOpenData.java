@@ -8,7 +8,11 @@ public class JobShellOpenData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
-	private final boolean runInContainer;
+	public enum Mode {
+		HOST, CONTAINER, SANDBOX
+	}
+
+	private final Mode mode;
 
 	private final String jobToken;
 
@@ -22,9 +26,9 @@ public class JobShellOpenData implements Serializable {
 
 	private final String dockerSock;
 
-	public JobShellOpenData(boolean runInContainer, String jobToken, String sessionId, 
+	public JobShellOpenData(Mode mode, String jobToken, String sessionId,
 			long projectId, long buildNumber, long submitSequence, @Nullable String dockerSock) {
-		this.runInContainer = runInContainer;
+		this.mode = mode;
 		this.jobToken = jobToken;
 		this.sessionId = sessionId;
 		this.projectId = projectId;
@@ -33,8 +37,8 @@ public class JobShellOpenData implements Serializable {
 		this.dockerSock = dockerSock;
 	}
 
-	public boolean isRunInContainer() {
-		return runInContainer;
+	public Mode getMode() {
+		return mode;
 	}
 
 	public String getJobToken() {
