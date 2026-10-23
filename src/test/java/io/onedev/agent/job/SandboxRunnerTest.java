@@ -14,6 +14,7 @@ class SandboxRunnerTest {
 
 	@Test
 	void pythonRunnerSuite() {
+		// Keep runner events printed by tests from being interpreted by the enclosing build.
 		new Commandline(System.getProperty("onedev.python.executable", "python3"))
 				.workingDir(new File(System.getProperty("basedir", ".")))
 				.addArgs("-B", "src/test/python/test_sandbox_runner.py", "--verbose")
@@ -21,12 +22,12 @@ class SandboxRunnerTest {
 				.execute(new LineConsumer("UTF-8") {
 					@Override
 					public void consume(String line) {
-						System.out.println(line);
+						System.out.println("[SandboxRunnerTest] " + line);
 					}
 				}, new LineConsumer("UTF-8") {
 					@Override
 					public void consume(String line) {
-						System.err.println(line);
+						System.err.println("[SandboxRunnerTest] " + line);
 					}
 				}).checkReturnCode();
 	}
