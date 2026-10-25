@@ -116,10 +116,8 @@ public class SandboxJobController {
 			logger.log("Creating sandbox '" + name + "'...");
 			attempted = true;
 			SandboxUtils.createSandbox(executable, name, settings, List.of(), logger);
-			newSbxExecCommand("-i", name, "sh", "-c",
-					"set -e; if [ \"$(id -u)\" = 0 ]; then mkdir -p \"$1\"; "
-					+ "else sudo -n -- mkdir -p \"$1\"; sudo -n -- chown -R -h -P \"$(id -u):$(id -g)\" \"$1\"; fi; "
-					+ "tar -xf - -C \"$1\"", "sh", BUILD_DIR)
+			SandboxUtils.initializeDirectory(executable, name, BUILD_DIR, newSandboxKiller(logger), logger);
+			newSbxExecCommand("-i", name, "tar", "-xf", "-", "-C", BUILD_DIR)
 					.processKiller(newSandboxKiller(logger))
 					.execute(newInfoLogger(logger), newWarningLogger(logger), new ByteArrayInputStream(archive))
 					.checkReturnCode();
@@ -192,8 +190,12 @@ public class SandboxJobController {
 	public void resume(TaskLogger logger) {
 		if (ready) {
 			newSbxExecCommand(name, "sh", "-c",
-					"if [ \"$(id -u)\" = 0 ]; then exec touch \"$1\"; else exec sudo -n -- touch \"$1\"; fi",
-					"sh", BUILD_DIR + "/continue")
+					"user=$(id -u); if [ \"$user\" = 0 ] || [ \"$(stat -c %u \"$1\")\" = \"$user\" ]; "
+						+ "then exec touch \"$2\"; else sudo -n -- touch \"$2\" || { code=$?; "
+						+ "echo 'Unable to resume sandbox job using sudo. Ensure sudo is installed in the template image "
+						+ "and its default user has passwordless sudo access; OneDev will not prompt for a password.' >&2; "
+						+ "exit \"$code\"; }; fi",
+					"sh", BUILD_DIR, BUILD_DIR + "/continue")
 					.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
 	}
@@ -201,14 +203,19 @@ public class SandboxJobController {
 	public Commandline openShell() {
 		if (!ready)
 			throw new ExplicitException("Sandbox not running");
-		// Enter the privileged dispatcher before accessing a build directory currently owned
-		// by a container. It restores this identity when opening a shell outside a container.
+		// Elevate only while another user owns the build directory. The dispatcher restores
+		// the template identity when opening a shell outside a container.
 		return newSbxExecCommand("-it", "-e", "ONEDEV_WORKDIR=" + BUILD_DIR + "/work", name, "python3", "-c", """
 				import os, sys
 				args = [sys.executable, *sys.argv[1:], str(os.geteuid()), str(os.getegid()), ','.join(map(str, os.getgroups()))]
-				if os.geteuid() != 0:
+				if os.geteuid() != 0 and os.stat(sys.argv[2]).st_uid != os.geteuid():
 				    args = ['sudo', '-n', '--', 'env', *[k + '=' + v for k, v in os.environ.items()], *args]
-				os.execvp(args[0], args)
+				try:
+				    os.execvp(args[0], args)
+				except FileNotFoundError:
+				    if args[0] == 'sudo':
+				        sys.exit('Unable to open build terminal: sudo is not installed in the sandbox. Install sudo in the template image and grant its default user passwordless sudo access.')
+				    raise
 				""", BUILD_DIR + "/sandbox-job.py", BUILD_DIR, "--shell");
 	}
 

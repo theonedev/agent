@@ -68,10 +68,22 @@ class JobPrivileges:
         payload = dict(config=self.job.config, state=JobState.capture(self.job).to_dict(), env=dict(os.environ),
                        operation=operation, args=args, kwargs=kwargs)
         with tempfile.NamedTemporaryFile(prefix="onedev-operation-", dir="/tmp") as result:
-            subprocess.run(["sudo", "-n", "--", sys.executable, "-u", str(self.entrypoint),
-                            str(self.job.root), "--operation", result.name],
-                           input=json.dumps(payload), text=True, cwd="/",
-                           check=True, stderr=subprocess.STDOUT)
+            try:
+                subprocess.run(["sudo", "-n", "--", sys.executable, "-u", str(self.entrypoint),
+                                str(self.job.root), "--operation", result.name],
+                               input=json.dumps(payload), text=True, cwd="/",
+                               check=True, stderr=subprocess.STDOUT)
+            except FileNotFoundError:
+                raise RuntimeError("Unable to start privileged sandbox operation '%s': sudo is not installed. "
+                                   "Install sudo in the template image and grant its default user passwordless sudo access."
+                                   % operation) from None
+            except subprocess.CalledProcessError:
+                # Operation failures normally arrive in the response. Keep any diagnostic
+                # from sudo or an unexpectedly terminated helper above this context.
+                raise RuntimeError("Unable to run privileged sandbox operation '%s'. "
+                                   "Ensure the template user has passwordless sudo access for this operation; "
+                                   "OneDev will not prompt for a password. See the error above for details."
+                                   % operation) from None
             response = json.loads(result.read())
         JobState.from_dict(response["state"]).apply(self.job)
         if response.get("error"):

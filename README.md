@@ -4,8 +4,15 @@ The agent selects the sandbox executable using `sbxPath`, checked in the
 environment, JVM system properties, then `conf/agent.properties`, falling back
 to `sbx` on `PATH`. This follows the same precedence as `dockerPath`.
 
-Sandbox jobs run their setup, shell commands, cache operations, and interactive
-shells as root inside the VM. Step containers still use their configured `runAs`.
+Sandbox jobs run shell commands as the template image's default user. The agent
+initializes `/onedev-build` as root via `sbx exec --user root`, assigns it to the
+template user, and extracts the runtime as that user without requiring sudo.
+Non-root template users need passwordless sudo for containers, services, and
+protected absolute caches. Opening a build terminal or resuming a paused job
+needs sudo only when the non-root template user does not own `/onedev-build`.
+OneDev invokes sudo non-interactively: missing sudo, denied access, or a password
+requirement fails the operation with an error instead of prompting for input.
+Step containers use their configured `runAs`.
 While a step container is running, the build terminal opens inside that container
 using its configured user and the command step's interpreter (`sh` for a Run
 Container step). Otherwise, the terminal opens the sandbox's Bash shell.

@@ -45,7 +45,7 @@ def open_shell(root, identity=None):
         target = json.loads(safe_path(root, "shell.json").read_text())
     except FileNotFoundError:
         os.chdir(root / "work")
-        if identity is not None:
+        if identity is not None and os.geteuid() == 0:
             uid, gid, groups = identity
             os.setgroups(groups)
             os.setgid(gid)

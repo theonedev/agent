@@ -29,6 +29,7 @@ import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
+import io.onedev.commons.utils.command.ProcessTreeKiller;
 import io.onedev.k8shelper.ScriptConfig;
 import io.onedev.k8shelper.WorkspaceHelper;
 
@@ -113,12 +114,7 @@ public class SandboxWorkspaceController {
 			SandboxUtils.stopSandbox(executable, data.sandboxName(), logger);
 			SandboxUtils.allowAllNetworkAccess(executable, data.sandboxName(), logger);
 		}
-		// Use the image's default user for workspace operations. Only directory initialization
-		// needs root; transfer existing root-owned workspaces when they are first resumed.
-		var owner = readCommandOutput(buildSbxExecCommand("id", "-u")) + ":" + readCommandOutput(buildSbxExecCommand("id", "-g"));
-		runCommand(buildSbxCommand("exec", "--user", "root", data.sandboxName(), "sh", "-c",
-				"mkdir -p " + WORKSPACE_PATH + " && if [ \"$(stat -c %u:%g " + WORKSPACE_PATH
-				+ ")\" != \"$1\" ]; then chown -R -h -P \"$1\" " + WORKSPACE_PATH + "; fi", "sh", owner));
+		SandboxUtils.initializeDirectory(executable, data.sandboxName(), WORKSPACE_PATH, new ProcessTreeKiller(), logger);
 		// Only replace session credentials and lifecycle markers.
 		runCommand(buildSbxExecCommand("sh", "-c", "mkdir -p " + WORKSPACE_PATH + "; rm -rf " + WORKSPACE_PATH
 				+ "/trust-certs; rm -f " + WORKSPACE_PATH + "/trust-certs.pem " + WORKSPACE_PATH

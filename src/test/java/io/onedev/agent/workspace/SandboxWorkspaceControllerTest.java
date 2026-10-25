@@ -157,7 +157,7 @@ class SandboxWorkspaceControllerTest {
 		var privilegedCalls = calls.lines().filter(it -> it.startsWith("exec --user root ")).toList();
 		assertEquals(1, privilegedCalls.size());
 		assertTrue(privilegedCalls.get(0).contains("chown -R -h -P"));
-		assertTrue(privilegedCalls.get(0).endsWith("sh 1234:5678"));
+		assertTrue(privilegedCalls.get(0).endsWith("sh /onedev-workspace 1234:5678"));
 		assertFalse(calls.contains(temp.toString()));
 		assertTrue(calls.indexOf("touch /onedev-workspace/.shutdown") < calls.indexOf("\nstop workspace-1-2"));
 		var extracted = Files.createTempDirectory(temp, "configuration");

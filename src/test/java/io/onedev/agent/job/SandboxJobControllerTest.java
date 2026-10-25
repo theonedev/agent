@@ -66,7 +66,16 @@ class SandboxJobControllerTest {
 				  ( %s ) && touch exists ;;
 				exec)
 				  shift
-				  [ "$1" != --user ] || exit 97
+				  case "$*" in
+				    *' id -u') echo 1234; exit 0 ;;
+				    *' id -g') echo 5678; exit 0 ;;
+				  esac
+				  if [ "$1" = --user ]; then
+				    [ "$2" = root ] && [ "$4" = sh ] && [ "$5" = -c ] || exit 97
+				    [ "$8" = /onedev-build ] && [ "$9" = 1234:5678 ] || exit 97
+				    touch initialized; exit 0
+				  fi
+				  [ -f initialized ] || exit 97
 				  if [ "$1" = -i ]; then %s; else
 				    case "$*" in *'/continue') touch resumed ;; *) %s ;; esac
 				  fi ;;
@@ -93,7 +102,7 @@ class SandboxJobControllerTest {
 				services, new SandboxSettings(null, null, null, true, true, "http://server", null, null, List.of())));
 		assertTrue(sandbox.runJob(remoteData, remoteData.getServices(), null, Map.of(), logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(6, calls.size());
+		assertEquals(9, calls.size());
 		var kitPath = Path.of(Files.readString(temp.resolve("kit-path")).trim());
 		assertEquals("create --name build-sandbox-12-34-2 --pull always --skills off --cpus 2 --memory 2g " + kitPath, calls.get(0));
 		assertFalse(Files.exists(kitPath));
@@ -106,11 +115,16 @@ class SandboxJobControllerTest {
 		assertFalse(kit.has("extends"));
 		assertFalse(kit.has("setup"));
 		assertEquals("policy allow network --sandbox build-sandbox-12-34-2 --protocol tcp,udp **", calls.get(1));
-		assertTrue(calls.get(2).startsWith("exec -i build-sandbox-12-34-2 "));
-		assertTrue(calls.get(2).contains("sudo -n -- chown"));
-		assertEquals("exec build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(3));
-		assertEquals("ls --quiet", calls.get(4));
-		assertEquals("rm --force build-sandbox-12-34-2", calls.get(5));
+		assertEquals("exec build-sandbox-12-34-2 id -u", calls.get(2));
+		assertEquals("exec build-sandbox-12-34-2 id -g", calls.get(3));
+		assertTrue(calls.get(4).startsWith("exec --user root build-sandbox-12-34-2 sh -c mkdir -p "));
+		assertTrue(calls.get(4).contains("chown -R -h -P"));
+		assertTrue(calls.get(4).endsWith("sh /onedev-build 1234:5678"));
+		assertEquals("exec -i build-sandbox-12-34-2 tar -xf - -C /onedev-build", calls.get(5));
+		assertEquals("exec build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(6));
+		assertEquals("ls --quiet", calls.get(7));
+		assertEquals("rm --force build-sandbox-12-34-2", calls.get(8));
+		assertFalse(calls.stream().anyMatch(it -> it.contains("sudo")));
 		assertTrue(Files.size(temp.resolve("payload.tar")) > 0);
 		var extracted = Files.createTempDirectory(temp, "manifest");
 		try (var input = new FileInputStream(temp.resolve("payload.tar").toFile())) {
@@ -197,9 +211,9 @@ class SandboxJobControllerTest {
 	void deletesAfterFailedPreparation() throws Exception {
 		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "cat > payload.tar; exit 6", "exit 0").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(5, calls.size());
-		assertEquals("ls --quiet", calls.get(3));
-		assertTrue(calls.get(4).matches("rm --force sandbox-test-[a-f0-9]{8}"));
+		assertEquals(8, calls.size());
+		assertEquals("ls --quiet", calls.get(6));
+		assertTrue(calls.get(7).matches("rm --force sandbox-test-[a-f0-9]{8}"));
 		assertFalse(Files.exists(temp.resolve("exists")));
 	}
 

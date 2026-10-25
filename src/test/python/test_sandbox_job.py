@@ -461,10 +461,24 @@ class SandboxJobTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Docker transport failed'):
                 self.runner.container(dict(image='tool'), '1-2')
         self.assertFalse((self.root / 'shell.json').exists())
-        with patch.object(runner.subprocess, 'run') as inspect, patch.object(runner.os, 'execvp') as execute:
-            runner.open_shell(self.root)
-            execute.assert_called_once_with('bash', ['bash'])
-            inspect.assert_not_called()
+        for current_uid, identity in ((1000, None), (1000, (1000, 1001, [1001, 1002])),
+                                      (0, (1000, 1001, [1001, 1002]))):
+            with self.subTest(current_uid=current_uid, identity=identity), \
+                    patch.object(runner.os, 'geteuid', return_value=current_uid), \
+                    patch.object(runner.os, 'setgroups') as setgroups, \
+                    patch.object(runner.os, 'setgid') as setgid, patch.object(runner.os, 'setuid') as setuid, \
+                    patch.object(runner.subprocess, 'run') as inspect, patch.object(runner.os, 'execvp') as execute:
+                runner.open_shell(self.root, identity)
+                execute.assert_called_once_with('bash', ['bash'])
+                inspect.assert_not_called()
+                if current_uid == 0:
+                    setgroups.assert_called_once_with([1001, 1002])
+                    setgid.assert_called_once_with(1001)
+                    setuid.assert_called_once_with(1000)
+                else:
+                    setgroups.assert_not_called()
+                    setgid.assert_not_called()
+                    setuid.assert_not_called()
 
     def service(self, **extra):
         return dict(name='database', image='postgres:17', runAs='999:999',

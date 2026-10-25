@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
@@ -31,6 +32,7 @@ import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.commons.utils.command.ProcessKiller;
 
 /** Host-side sandbox commands and payload packaging shared by jobs and workspaces. */
 public class SandboxUtils {
@@ -125,6 +127,25 @@ public class SandboxUtils {
 			// sbx persists the kit configuration for subsequent starts.
 			FileUtils.deletePath(kitDir);
 		}
+	}
+
+	/** Initialize a runtime directory as root and assign it to the template's default user. */
+	public static void initializeDirectory(String executable, String name, String directory,
+			ProcessKiller processKiller, TaskLogger logger) {
+		var owner = new StringJoiner(":");
+		for (var option : List.of("-u", "-g")) {
+			var stdout = new ByteArrayOutputStream();
+			new Commandline(executable).addArgs("exec", name, "id", option)
+					.processKiller(processKiller)
+					.execute(stdout, newWarningLogger(logger)).checkReturnCode();
+			owner.add(stdout.toString(UTF_8).trim());
+		}
+		// Also transfer existing root-owned workspaces when they are first resumed.
+		new Commandline(executable).addArgs("exec", "--user", "root", name, "sh", "-c",
+				"mkdir -p \"$1\" && if [ \"$(stat -c %u:%g \"$1\")\" != \"$2\" ]; then "
+					+ "chown -R -h -P \"$2\" \"$1\"; fi", "sh", directory, owner.toString())
+				.processKiller(processKiller)
+				.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 	}
 
 	public static void allowAllNetworkAccess(String executable, String name, TaskLogger logger) {
