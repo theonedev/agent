@@ -179,6 +179,9 @@ class SandboxWorkspaceTest(unittest.TestCase):
             runner.download_user_data()
             self.assertEqual('old', user_file.read_text())
             user_file.write_text('new')
+            # Make the change newer than provisioning regardless of filesystem timestamp precision.
+            changed_at = runner.provisioned + 2
+            os.utime(user_file, (changed_at, changed_at))
             runner.upload_user_data()
         self.assertEqual(1, len(uploads))
         with tarfile.open(fileobj=io.BytesIO(uploads[0])) as archive:
