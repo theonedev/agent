@@ -6,7 +6,7 @@ import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.k8shelper.Action;
 import io.onedev.k8shelper.ServiceFacade;
 
-public class DockerJobData extends ShellJobData {
+public class DockerJobData extends JobData {
 
 	private static final long serialVersionUID = 1L;
 

@@ -1,4 +1,4 @@
-package io.onedev.agent.job;
+package io.onedev.agent;
 
 import java.io.File;
 
@@ -10,24 +10,24 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
 
 @EnabledOnOs({OS.LINUX, OS.MAC})
-class SandboxRunnerTest {
+class SandboxPythonTest {
 
 	@Test
-	void pythonRunnerSuite() {
+	void pythonSuites() {
 		// Keep runner events printed by tests from being interpreted by the enclosing build.
 		new Commandline(System.getProperty("onedev.python.executable", "python3"))
 				.workingDir(new File(System.getProperty("basedir", ".")))
-				.addArgs("-B", "src/test/python/test_sandbox_runner.py", "--verbose")
+				.addArgs("-B", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "test_sandbox*.py", "--verbose")
 				.timeout(60)
 				.execute(new LineConsumer("UTF-8") {
 					@Override
 					public void consume(String line) {
-						System.out.println("[SandboxRunnerTest] " + line);
+						System.out.println("[SandboxPythonTest] " + line);
 					}
 				}, new LineConsumer("UTF-8") {
 					@Override
 					public void consume(String line) {
-						System.err.println("[SandboxRunnerTest] " + line);
+						System.err.println("[SandboxPythonTest] " + line);
 					}
 				}).checkReturnCode();
 	}

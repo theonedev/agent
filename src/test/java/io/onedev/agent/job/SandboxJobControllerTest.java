@@ -1,5 +1,7 @@
 package io.onedev.agent.job;
 
+import static io.onedev.agent.AgentUtils.newInfoLogger;
+import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.FileInputStream;
@@ -21,6 +23,7 @@ import io.onedev.agent.SandboxSettings;
 import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.commons.utils.TarUtils;
 import io.onedev.commons.utils.TaskLogger;
+import io.onedev.commons.utils.command.Commandline;
 import io.onedev.k8shelper.Action;
 import io.onedev.k8shelper.BuildImageFacade;
 import io.onedev.k8shelper.CommandFacade;
@@ -33,7 +36,7 @@ import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
 
 @EnabledOnOs({OS.LINUX, OS.MAC})
-class SandboxJobTest {
+class SandboxJobControllerTest {
 
 	@TempDir
 	Path temp;
@@ -44,11 +47,11 @@ class SandboxJobTest {
 		}
 	};
 
-	private SandboxJob sandbox(String create, String execute) throws Exception {
+	private SandboxJobController sandbox(String create, String execute) throws Exception {
 		return sandbox(create, "cat > payload.tar", execute);
 	}
 
-	private SandboxJob sandbox(String create, String prepare, String execute) throws Exception {
+	private SandboxJobController sandbox(String create, String prepare, String execute) throws Exception {
 		var executable = temp.resolve("sbx");
 		Files.writeString(executable, """
 				#!/bin/sh
@@ -56,6 +59,9 @@ class SandboxJobTest {
 				printf '%%s\\n' "$*" >> calls
 				case "$1" in
 				create)
+				  for arg do kit="$arg"; done
+				  cat "$kit/spec.yaml" > kit.json || exit 98
+				  printf '%%s\\n' "$kit" > kit-path
 				  printf '%%s\\n' "$3" > sandbox-name
 				  ( %s ) && touch exists ;;
 				exec)
@@ -69,26 +75,36 @@ class SandboxJobTest {
 				esac
 				""".formatted(create, prepare, execute));
 		executable.toFile().setExecutable(true);
-		return new SandboxJob(executable.toString(), new SandboxSettings("custom-template", 2, "2g", true, true,
-				"http://configured-server", "0.5", "512m", null, "--subnet 172.28.0.0/16", List.of()));
+		return new SandboxJobController(executable.toString(), new SandboxSettings("custom-template", 2, "2g", true, true,
+				"http://configured-server", null, "--subnet 172.28.0.0/16", List.of()));
 	}
 
 	@Test
-	void createsMountlessShellAndDeletesAfterSuccess() throws Exception {
+	void createsMountlessKitWithoutStartupHooksAndDeletesAfterSuccess() throws Exception {
 		var sandbox = sandbox("exit 0", "exit 0");
 		var services = List.of(new ServiceFacade("database", "postgres:17", "999:999", "-c 'max_connections=50'",
 				Map.of("POSTGRES_PASSWORD", "secret"), "pg_isready",
 				List.of(new RegistryLoginFacade("registry.example", "user", "password"))));
 		var remoteData = org.apache.commons.lang3.SerializationUtils.clone(new SandboxJobData("token", "sandbox",
 				"project", 12L, "refs/heads/main", "commit", 34L, 2L, List.of(), SecretMasker.create(List.of(), "***"),
-				services, new SandboxSettings(null, null, null, true, true, "http://server", null, null, null, null, List.of())));
-		assertTrue(sandbox.run(remoteData, remoteData.getServices(), null, Map.of(), logger));
+				services, new SandboxSettings(null, null, null, true, true, "http://server", null, null, List.of())));
+		assertTrue(sandbox.runJob(remoteData, remoteData.getServices(), null, Map.of(), logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
 		assertEquals(5, calls.size());
-		assertEquals("create --name build-sandbox-12-34-2 --pull always --template custom-template --cpus 2 --memory 2g shell", calls.get(0));
+		var kitPath = Path.of(Files.readString(temp.resolve("kit-path")).trim());
+		assertEquals("create --name build-sandbox-12-34-2 --pull always --skills off --cpus 2 --memory 2g " + kitPath, calls.get(0));
+		assertFalse(Files.exists(kitPath));
+		var kit = new ObjectMapper().readTree(temp.resolve("kit.json").toFile());
+		assertEquals("2", kit.path("schemaVersion").asText());
+		assertEquals("sandbox", kit.path("kind").asText());
+		assertEquals("custom-template", kit.path("sandbox").path("image").asText());
+		assertEquals("bash", kit.path("sandbox").path("entrypoint").get(0).asText());
+		assertEquals("-l", kit.path("sandbox").path("command").get(0).asText());
+		assertFalse(kit.has("extends"));
+		assertFalse(kit.has("setup"));
 		assertTrue(calls.get(1).startsWith("exec --user root -i build-sandbox-12-34-2 "));
 		assertFalse(calls.get(1).contains("sudo"));
-		assertEquals("exec --user root build-sandbox-12-34-2 python3 -u /onedev-build/runner.py /onedev-build", calls.get(2));
+		assertEquals("exec --user root build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(2));
 		assertEquals("ls --quiet", calls.get(3));
 		assertEquals("rm --force build-sandbox-12-34-2", calls.get(4));
 		assertTrue(Files.size(temp.resolve("payload.tar")) > 0);
@@ -96,9 +112,15 @@ class SandboxJobTest {
 		try (var input = new FileInputStream(temp.resolve("payload.tar").toFile())) {
 			TarUtils.untar(input, extracted.toFile(), false);
 		}
+		// Load from the actual payload, with no source tree or PYTHONPATH available.
+		new Commandline(System.getProperty("onedev.python.executable", "python3"))
+				.workingDir(extracted.toFile())
+				.addArgs("-I", "-B", "-c", "import runpy, sys; sys.path.insert(0, '.'); runpy.run_path('sandbox-job.py')")
+				.timeout(10)
+				.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		var manifest = new ObjectMapper().readTree(extracted.resolve("job.json").toFile());
-		assertEquals("0.5", manifest.get("cpuLimit").asText());
-		assertEquals("512m", manifest.get("memoryLimit").asText());
+		assertFalse(manifest.has("cpuLimit"));
+		assertFalse(manifest.has("memoryLimit"));
 		assertEquals("--subnet 172.28.0.0/16", manifest.get("networkOptions").asText());
 		var service = manifest.get("services").get(0);
 		assertEquals("database", service.get("name").asText());
@@ -117,7 +139,7 @@ class SandboxJobTest {
 		var trustCerts = Files.createDirectory(temp.resolve("trust-certs"));
 		Files.writeString(trustCerts.resolve("server.pem"), "test certificate");
 		for (var image : new String[] {null, "alpine"}) {
-			sandbox.test(image, trustCerts.toFile(), logger);
+			sandbox.testSandbox(image, trustCerts.toFile(), logger);
 			var extracted = Files.createTempDirectory(temp, "manifest");
 			try (var input = new FileInputStream(temp.resolve("payload.tar").toFile())) {
 				TarUtils.untar(input, extracted.toFile(), false);
@@ -128,8 +150,8 @@ class SandboxJobTest {
 			assertEquals("http://configured-server", manifest.get("serverUrl").asText());
 			assertFalse(manifest.get("token").asText().isBlank());
 			assertTrue(manifest.get("alwaysPullContainerImage").asBoolean());
-			assertEquals("0.5", manifest.get("cpuLimit").asText());
-			assertEquals("512m", manifest.get("memoryLimit").asText());
+			assertFalse(manifest.has("cpuLimit"));
+			assertFalse(manifest.has("memoryLimit"));
 			assertTrue(manifest.get("registryLogins").isArray());
 			assertEquals("test certificate", Files.readString(extracted.resolve("trust-certs/server.pem")));
 		}
@@ -138,7 +160,7 @@ class SandboxJobTest {
 	@Test
 	void skipsDeletionWhenCreationFailsBeforeSandboxExists() throws Exception {
 		var messages = new java.util.ArrayList<String>();
-		var failure = assertThrows(RuntimeException.class, () -> sandbox("exit 4", "exit 0").test(null, null, new TaskLogger() {
+		var failure = assertThrows(RuntimeException.class, () -> sandbox("exit 4", "exit 0").testSandbox(null, null, new TaskLogger() {
 			@Override
 			public void log(String message, String sessionId) {
 				messages.add(message);
@@ -149,13 +171,14 @@ class SandboxJobTest {
 		assertTrue(calls.get(0).startsWith("create --name sandbox-test-"));
 		assertEquals("ls --quiet", calls.get(1));
 		assertTrue(failure.getMessage().contains("exit code: 4"));
+		assertFalse(Files.exists(Path.of(Files.readString(temp.resolve("kit-path")).trim())));
 		assertEquals(0, failure.getSuppressed().length);
 		assertFalse(messages.stream().anyMatch(it -> it.startsWith("Deleting sandbox") || it.startsWith("Unable to delete sandbox")));
 	}
 
 	@Test
 	void deletesSandboxLeftByFailedCreation() throws Exception {
-		var failure = assertThrows(RuntimeException.class, () -> sandbox("touch exists; exit 4", "exit 0").test(null, null, logger));
+		var failure = assertThrows(RuntimeException.class, () -> sandbox("touch exists; exit 4", "exit 0").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
 		assertEquals(3, calls.size());
 		assertEquals("ls --quiet", calls.get(1));
@@ -166,7 +189,7 @@ class SandboxJobTest {
 
 	@Test
 	void deletesAfterFailedPreparation() throws Exception {
-		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "cat > payload.tar; exit 6", "exit 0").test(null, null, logger));
+		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "cat > payload.tar; exit 6", "exit 0").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
 		assertEquals(4, calls.size());
 		assertEquals("ls --quiet", calls.get(2));
@@ -176,7 +199,7 @@ class SandboxJobTest {
 
 	@Test
 	void deletesAfterFailedJob() throws Exception {
-		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "exit 5").test(null, null, logger));
+		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "exit 5").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
 		assertTrue(calls.get(calls.size() - 1).matches("rm --force sandbox-test-[a-f0-9]{8}"));
 	}
@@ -189,7 +212,7 @@ class SandboxJobTest {
 		var messages = new java.util.concurrent.CopyOnWriteArrayList<String>();
 		var thread = new Thread(() -> {
 			try {
-				sandbox.test(null, null, new TaskLogger() {
+				sandbox.testSandbox(null, null, new TaskLogger() {
 					@Override
 					public void log(String message, String sessionId) {
 						messages.add(message);
@@ -210,7 +233,7 @@ class SandboxJobTest {
 			assertFalse(shell.envs().containsKey("SSH_AUTH_SOCK"));
 			assertEquals(List.of("exec", "--user", "root", "-it", "-w", "/onedev-build/work", "-e", "ONEDEV_WORKDIR=/onedev-build/work"),
 					shell.args().subList(0, 8));
-			assertEquals(List.of("python3", "/onedev-build/runner.py", "/onedev-build", "--shell"),
+			assertEquals(List.of("python3", "/onedev-build/sandbox-job.py", "/onedev-build", "--shell"),
 					shell.args().subList(9, 13));
 			sandbox.resume(logger);
 			assertTrue(Files.exists(temp.resolve("resumed")));
@@ -235,7 +258,7 @@ class SandboxJobTest {
 	void completedStepsAreNotReportedAsTransportFailures() throws Exception {
 		var messages = new java.util.ArrayList<String>();
 		sandbox("exit 0", "echo '##onedev-step:START:step-0'; echo '##onedev-step:SUCCESSFUL:step-0'")
-				.test(null, null, new TaskLogger() {
+				.testSandbox(null, null, new TaskLogger() {
 					@Override
 					public void log(String message, String sessionId) {
 						messages.add(message);
@@ -249,7 +272,7 @@ class SandboxJobTest {
 		var command = new CommandFacade(null, null, List.of(), Map.of("VALUE", "a'b\nnext"), false, "echo $VALUE");
 		var nested = new Action("command", command, ExecuteCondition.ALWAYS, true);
 		var composite = new Action("group", new CompositeFacade(List.of(nested)), ExecuteCondition.NEVER, false);
-		var manifest = SandboxJob.actions(List.of(composite));
+		var manifest = SandboxJobController.actions(List.of(composite));
 		assertEquals("NEVER", manifest.get(0).get("condition"));
 		@SuppressWarnings("unchecked")
 		var children = (List<Map<String, Object>>) manifest.get(0).get("actions");
@@ -270,7 +293,7 @@ class SandboxJobTest {
 				new PruneBuilderCacheFacade("--filter 'until=24h'"));
 		var actions = steps.stream().map(step -> new Action("step", step, ExecuteCondition.SUCCESSFUL, false)).toList();
 		var mapper = new ObjectMapper();
-		var manifest = mapper.readTree(mapper.writeValueAsBytes(SandboxJob.actions(actions)));
+		var manifest = mapper.readTree(mapper.writeValueAsBytes(SandboxJobController.actions(actions)));
 		assertEquals("command", manifest.get(0).get("type").asText());
 		assertEquals("123:456", manifest.get(0).get("runAs").asText());
 		assertTrue(manifest.get(0).get("useTTY").asBoolean());

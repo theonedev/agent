@@ -14,12 +14,35 @@ Sandbox jobs support build-spec services when using
 `docker/sandbox-templates:shell-docker` or a custom template based on it.
 Services start inside the sandbox and pass their readiness checks before steps
 run. Shell and container steps can connect using the service name as the host.
-Service registry logins override executor logins, and executor container CPU
-and memory limits apply to services as well. Services and their network are
-removed with the sandbox when the job completes, fails, or is cancelled.
+Service registry logins override executor logins. The executor's CPUs and Memory
+settings apply to the entire sandbox, including its steps and services. Services
+and their network are removed with the sandbox when the job completes, fails, or
+is cancelled.
 
 Container steps automatically mount the sandbox's Docker socket at
 `/var/run/docker.sock` to support Docker operations inside the container.
+
+Sandbox jobs and new workspaces use a local OneDev sandbox kit with no startup
+package refresh and disable shared host skills with `--skills off`. This requires
+sbx with v2 kit and `--skills` support and local kits enabled. The kit uses the
+configured template, defaulting to
+`docker/sandbox-templates:shell-docker`. Package installation scripts should run
+`apt-get update` explicitly before `apt-get install`. OneDev does not inspect
+package commands or wait for package-manager processes. Existing workspaces keep
+their original kit and skills-sharing mode until recreated.
+The OneDev kit does not inherit the built-in shell kit's credential bindings;
+supply credentials through OneDev's job/workspace configuration and user data.
+
+Sandbox workspaces run checkout, setup and teardown commands, and terminals as
+the template image's default user. The workspace directory is initialized with
+that user's ownership. Use `sudo` in setup commands when installing system
+packages if the template permits it.
+
+Sandbox workspace ports are declared when the sandbox is created. Workspaces
+with exposed ports require `sbx env create` support: OneDev uses an environment
+file to allocate host ports automatically on `0.0.0.0`. Later activations keep
+the original exposed ports and read their current host-port mappings. Changes
+to a workspace spec's exposed ports apply to new sandboxes only.
 
 Run `./dev.sh build` to compile the agent and create `target/sandbox`. Configure
 `target/sandbox/conf/agent.properties` with the server URL and agent token, then
@@ -43,9 +66,10 @@ as `./dev.sh clean package`. Structural hot loading requires a JetBrains Runtime
 with `AllowEnhancedClassRedefinition`; other JVMs can reload method-body changes.
 
 Run the tests with `mvn test`. On Linux and macOS this also runs the Python sandbox
-runner suite against a local mock OneDev API. It requires Python 3.9 or newer,
+job and workspace suites against a local mock OneDev API. They require Python 3.9 or newer,
 Git, and `sh`; no running OneDev server or Docker Sandbox is needed. Python test
 failures fail the Maven build. To use a different Python executable, pass
 `-Donedev.python.executable=/path/to/python3`.
 
-Run only the runner suite with `mvn test -Dtest=SandboxRunnerTest`.
+Run only the Python suites with `mvn test -Dtest=SandboxPythonTest`. This discovers
+all `test_sandbox*.py` files under `src/test/python`.

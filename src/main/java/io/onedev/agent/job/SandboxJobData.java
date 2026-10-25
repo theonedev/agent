@@ -7,7 +7,7 @@ import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.k8shelper.Action;
 import io.onedev.k8shelper.ServiceFacade;
 
-public class SandboxJobData extends ShellJobData {
+public class SandboxJobData extends JobData {
 
 	private static final long serialVersionUID = 1L;
 

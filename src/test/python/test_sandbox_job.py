@@ -17,10 +17,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-source = Path(__file__).resolve().parents[2] / 'main/java/io/onedev/agent/job/sandbox_runner.py'
-if not source.exists():
-    source = Path(__file__).with_name('sandbox_runner.py')
-spec = importlib.util.spec_from_file_location('sandbox_runner', source)
+AGENT = Path(__file__).resolve().parents[2] / 'main/java/io/onedev/agent'
+sys.path.insert(0, str(AGENT))
+import sandbox
+
+spec = importlib.util.spec_from_file_location('sandbox_job', AGENT / 'job/sandbox-job.py')
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
@@ -90,11 +91,11 @@ class Worker(BaseHTTPRequestHandler):
         body = io.BytesIO(self.rfile.read(int(self.headers['Content-Length'])))
         if path.endswith('/run-server-step'):
             assert params['resultFormat'] == ['json']
-            position = [runner.read_int(body) for _ in range(runner.read_int(body))]
+            position = [sandbox.read_int(body) for _ in range(sandbox.read_int(body))]
             placeholders = {}
-            for _ in range(runner.read_int(body)):
-                key = runner.read_exact(body, runner.read_int(body)).decode()
-                placeholders[key] = runner.read_exact(body, runner.read_int(body)).decode()
+            for _ in range(sandbox.read_int(body)):
+                key = sandbox.read_exact(body, sandbox.read_int(body)).decode()
+                placeholders[key] = sandbox.read_exact(body, sandbox.read_int(body)).decode()
             with tarfile.open(fileobj=body) as tar:
                 files = {member.name: tar.extractfile(member).read() for member in tar if member.isfile()}
             self.server.steps.append((position, placeholders, files))
@@ -108,17 +109,10 @@ class Worker(BaseHTTPRequestHandler):
             self.reply()
 
 
-class RunnerTest(unittest.TestCase):
+class SandboxJobTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='onedev sandbox ')
         self.root = Path(self.temp.name)
-        self.proc = self.root / 'proc'
-        self.proc.mkdir()
-        wait_for_packages = runner.wait_for_package_initialization
-        initialization = patch.object(runner, 'wait_for_package_initialization',
-                                      side_effect=lambda: wait_for_packages(self.proc))
-        initialization.start()
-        self.addCleanup(initialization.stop)
         self.worker = ThreadingHTTPServer(('127.0.0.1', 0), Worker)
         self.worker.requests, self.worker.steps, self.worker.uploads = [], [], []
         self.worker.cache = b'\x02'
@@ -126,7 +120,7 @@ class RunnerTest(unittest.TestCase):
         self.thread.start()
         self.job = dict(token='job-secret', serverUrl='http://127.0.0.1:%d' % self.worker.server_port,
                         refName='refs/heads/main', commitHash='', attributes={'os': 'linux'})
-        self.runner = runner.Runner(self.root, self.job)
+        self.runner = runner.JobRunner(self.root, self.job)
 
     def tearDown(self):
         self.worker.shutdown()
@@ -148,8 +142,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_executor_test_connects_to_server_without_running_job(self):
         self.job['test'] = True
-        self.job.update(cpuLimit='0.5', memoryLimit='512m', runOptions='--env TEST=value',
-                        alwaysPullContainerImage=False)
+        self.job.update(runOptions='--env TEST=value', alwaysPullContainerImage=False)
         for image, code in ((None, 0), ('', 0), ('alpine', 0), ('alpine', 9)):
             with self.subTest(image=image, code=code), patch.object(runner.subprocess, 'call', return_value=code) as call, \
                     patch.object(self.runner, 'change_owner'):
@@ -165,8 +158,8 @@ class RunnerTest(unittest.TestCase):
                     self.assertEqual(args[:2], ['docker', 'run'])
                     self.assertEqual(args[-4:], ['--', image, '-c', 'echo hello from container'])
                     self.assertEqual(args[args.index('--entrypoint') + 1], 'sh')
-                    self.assertEqual(args[args.index('--cpus') + 1], '0.5')
-                    self.assertEqual(args[args.index('--memory') + 1], '512m')
+                    self.assertNotIn('--cpus', args)
+                    self.assertNotIn('--memory', args)
                     self.assertIn('TEST=value', args)
                     self.assertNotIn('--pull=always', args)
                     self.assertIn(str(self.root) + ':' + str(self.root), args)
@@ -183,41 +176,10 @@ class RunnerTest(unittest.TestCase):
 
     def test_executor_test_fails_when_server_is_unreachable(self):
         self.job['test'] = True
-        with patch.object(runner.urllib.request, 'urlopen',
-                          side_effect=runner.urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused'))):
+        with patch.object(sandbox.urllib.request, 'urlopen',
+                          side_effect=sandbox.urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused'))):
             with self.assertRaisesRegex(RuntimeError, 'Unable to reach OneDev from sandbox: .*Connection refused'):
                 self.run_job([])
-
-    def test_only_command_steps_wait_for_package_initialization_without_a_separate_timeout(self):
-        apt = self.proc / '126'
-        apt.mkdir()
-        (apt / 'stat').write_text('126 (apt-get) S 1 0 0')
-        background = self.proc / '127'
-        background.mkdir()
-        (background / 'stat').write_text('127 (unrelated) S 1 0 0')
-        self.worker.cache = b'\x00' + archive({'file': b'cached'})
-        elapsed = 0
-
-        def sleep(seconds):
-            nonlocal elapsed
-            self.assertEqual((self.runner.work / 'dependency.txt').read_bytes(), b'dependency')
-            self.assertEqual((self.runner.work / 'cache/file').read_bytes(), b'cached')
-            self.assertFalse((self.runner.work / 'started').exists())
-            elapsed += seconds
-            if elapsed == 600:
-                # A dead package process awaiting reaping must not block jobs.
-                (apt / 'stat').write_text('126 (apt-get) Z 1 0 0')
-
-        with patch.object(runner.time, 'sleep', side_effect=sleep):
-            success, output = self.run_job([self.cache(), command('touch started')])
-        self.assertTrue(success, output)
-        self.assertEqual(elapsed, 600)
-        self.assertTrue((self.runner.work / 'started').exists())
-        self.assertEqual(output.count('Waiting for sandbox package initialization'), 1)
-        self.assertLess(output.index('Downloading job dependencies'),
-                        output.index('Waiting for sandbox package initialization'))
-        self.assertLess(output.index('##onedev-step:START:step-1'),
-                        output.index('Waiting for sandbox package initialization'))
 
     def test_nested_conditions_optional_failures_and_skipped_steps(self):
         success, output = self.run_job([
@@ -266,7 +228,7 @@ class RunnerTest(unittest.TestCase):
         for name, target in links.items():
             (source / name).symlink_to(target)
         body = io.BytesIO()
-        runner.pack(body, source, ['**'], [], cache=True)
+        sandbox.pack(body, source, ['**'], [], cache=True)
         self.worker.cache = b'\x01' + body.getvalue()
 
         # Restoring again must replace existing links without following them.
@@ -325,7 +287,7 @@ class RunnerTest(unittest.TestCase):
                     tar.addfile(info, io.BytesIO(b'changed'))
                 body.seek(0)
                 with self.assertRaisesRegex(ValueError, 'Symbolic link is not allowed'):
-                    runner.unpack(body, target, allow_external_symlinks=True)
+                    sandbox.unpack(body, target, allow_external_symlinks=True)
                 self.assertEqual(secret.read_text(), 'keep')
 
     def test_cache_restore_replaces_leaf_symlinks_without_writing_to_targets(self):
@@ -334,7 +296,7 @@ class RunnerTest(unittest.TestCase):
         target = self.root / 'restore'
         target.mkdir()
         (target / 'file').symlink_to(outside)
-        runner.unpack(io.BytesIO(archive({'file': b'cached'})), target, allow_external_symlinks=True)
+        sandbox.unpack(io.BytesIO(archive({'file': b'cached'})), target, allow_external_symlinks=True)
         self.assertFalse((target / 'file').is_symlink())
         self.assertEqual((target / 'file').read_bytes(), b'cached')
         self.assertEqual(outside.read_text(), 'keep')
@@ -354,7 +316,7 @@ class RunnerTest(unittest.TestCase):
                     tar.addfile(info)
                 body.seek(0)
                 with self.assertRaises(ValueError):
-                    runner.unpack(body, self.root / 'restore', allow_external_symlinks=True)
+                    sandbox.unpack(body, self.root / 'restore', allow_external_symlinks=True)
                 self.assertEqual(outside.read_text(), 'keep')
 
     def test_dependency_restore_keeps_external_symlink_restriction(self):
@@ -365,7 +327,7 @@ class RunnerTest(unittest.TestCase):
             tar.addfile(info)
         body.seek(0)
         with self.assertRaisesRegex(ValueError, 'Archive link escapes target'):
-            runner.unpack(body, self.runner.work)
+            sandbox.unpack(body, self.runner.work)
 
     def test_exact_cache_hit_does_not_upload(self):
         self.worker.cache = b'\x00' + archive({'file': b'cached'})
@@ -431,9 +393,9 @@ class RunnerTest(unittest.TestCase):
         (self.runner.work / 'link').symlink_to(outside)
         for path in ('../outside', '/tmp/outside', 'link/file'):
             with self.assertRaises(ValueError):
-                runner.safe_path(self.runner.work, path)
+                sandbox.safe_path(self.runner.work, path)
         with self.assertRaises(ValueError):
-            runner.unpack(io.BytesIO(archive({'../escape': b'x'})), self.runner.work)
+            sandbox.unpack(io.BytesIO(archive({'../escape': b'x'})), self.runner.work)
 
     def test_pause_resume(self):
         step = command('sh "$ONEDEV_WORKDIR/../pause.sh"; touch resumed')
@@ -528,7 +490,7 @@ class RunnerTest(unittest.TestCase):
             'NetworkSettings': {'Networks': {'onedev': {'IPAddress': '172.18.0.2'}}}}]))
 
     def test_services_wait_for_readiness_and_share_network_with_all_container_steps(self):
-        self.job.update(cpuLimit='0.5', memoryLimit='512m', networkOptions='--subnet 172.18.0.0/16 --label "description=job services"',
+        self.job.update(networkOptions='--subnet 172.18.0.0/16 --label "description=job services"',
                         registryLogins=[dict(registryUrl='registry.example', userName='default', password='default')],
                         services=[self.service(registryLogins=[
                             dict(registryUrl='registry.example', userName='service', password='secret')])])
@@ -546,8 +508,8 @@ class RunnerTest(unittest.TestCase):
                 self.assertIn('--pull=always', args)
             if args[0] == 'run':
                 self.assertEqual(args[args.index('--network') + 1], 'onedev')
-                self.assertEqual(args[args.index('--cpus') + 1], '0.5')
-                self.assertEqual(args[args.index('--memory') + 1], '512m')
+                self.assertNotIn('--cpus', args)
+                self.assertNotIn('--memory', args)
                 self.assertIn('NO_PROXY=localhost,database', args)
                 self.assertIn('no_proxy=localhost,database', args)
             if '--rm' in args:
@@ -634,8 +596,6 @@ class RunnerTest(unittest.TestCase):
             docker.assert_not_called()
 
     def test_run_container_accepts_vm_file_options_and_mounts_absolute_caches(self):
-        self.job['cpuLimit'] = '0.5'
-        self.job['memoryLimit'] = '512m'
         self.job['runOptions'] = '--env-file /tmp/environment --cidfile /tmp/container-id -v /tmp/shared:/shared --privileged'
         self.runner.caches = [{'entries': [{'path': '/tmp/cache'}, {'path': 'relative-cache'}]}]
         step = dict(image='tool', runAs='0:0', args='--file "a b"', workingDir='/output',
@@ -643,8 +603,8 @@ class RunnerTest(unittest.TestCase):
         with patch.object(self.runner, 'docker', return_value=True) as docker, patch.object(self.runner, 'change_owner'):
             self.assertTrue(self.runner.container(step, '1-2'))
         args = docker.call_args.args[0]
-        self.assertEqual(args[args.index('--cpus') + 1], '0.5')
-        self.assertEqual(args[args.index('--memory') + 1], '512m')
+        self.assertNotIn('--cpus', args)
+        self.assertNotIn('--memory', args)
         self.assertEqual(args[args.index('--env-file') + 1], '/tmp/environment')
         self.assertIn('/tmp/shared:/shared', args)
         self.assertIn('/tmp/cache:/tmp/cache', args)
@@ -724,9 +684,9 @@ class RunnerTest(unittest.TestCase):
 
     def test_ant_patterns(self):
         for name in ('report.xml', 'nested/report.xml', 'a/b/report.xml'):
-            self.assertTrue(runner.matches(name, '**/*.xml'))
-        self.assertFalse(runner.matches('nested/report.xml', '*.xml'))
-        self.assertTrue(runner.matches('cache/sub/file', 'cache/'))
+            self.assertTrue(sandbox.matches(name, '**/*.xml'))
+        self.assertFalse(sandbox.matches('nested/report.xml', '*.xml'))
+        self.assertTrue(sandbox.matches('cache/sub/file', 'cache/'))
 
 
 if __name__ == '__main__':

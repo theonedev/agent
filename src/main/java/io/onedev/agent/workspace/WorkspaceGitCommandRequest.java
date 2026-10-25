@@ -6,14 +6,14 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Sent server → agent via {@link io.onedev.agent.WebsocketUtils#call} to
- * execute a git command in the workspace container. Response is a
+ * execute a git command in the workspace. Response is a
  * {@link GitExecutionResult}.
  */
 public class WorkspaceGitCommandRequest implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
-	private final boolean docker;
+	private final ProvisionMode provisionMode;
 
 	private final String provisionerName;
 
@@ -27,9 +27,9 @@ public class WorkspaceGitCommandRequest implements Serializable {
 
 	private final String[] gitArgs;
 
-	public WorkspaceGitCommandRequest(String provisionerName, String workspaceToken, Long projectId, 
-				Long workspaceNumber, @Nullable String dockerSock, String[] gitArgs) {
-		this.docker = true;
+	public WorkspaceGitCommandRequest(ProvisionMode provisionMode, @Nullable String provisionerName, String workspaceToken,
+			Long projectId, Long workspaceNumber, @Nullable String dockerSock, String[] gitArgs) {
+		this.provisionMode = provisionMode;
 		this.provisionerName = provisionerName;
 		this.workspaceToken = workspaceToken;
 		this.projectId = projectId;
@@ -38,18 +38,8 @@ public class WorkspaceGitCommandRequest implements Serializable {
 		this.gitArgs = gitArgs;
 	}
 
-	public WorkspaceGitCommandRequest(String workspaceToken, Long projectId, Long workspaceNumber, String[] gitArgs) {
-		this.docker = false;
-		this.provisionerName = null;
-		this.workspaceToken = workspaceToken;
-		this.projectId = projectId;
-		this.workspaceNumber = workspaceNumber;
-		this.dockerSock = null;
-		this.gitArgs = gitArgs;
-	}
-
-	public boolean isDocker() {
-		return docker;
+	public ProvisionMode getProvisionMode() {
+		return provisionMode;
 	}
 
 	@Nullable

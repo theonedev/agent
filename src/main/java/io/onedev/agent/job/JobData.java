@@ -6,7 +6,7 @@ import java.util.List;
 import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.k8shelper.Action;
 
-public class ShellJobData implements Serializable {
+public abstract class JobData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 	
@@ -30,7 +30,7 @@ public class ShellJobData implements Serializable {
 
 	private final SecretMasker secretMasker;
 	
-	public ShellJobData(String jobToken, String executorName, String projectPath, Long projectId,
+	protected JobData(String jobToken, String executorName, String projectPath, Long projectId,
 						String refName, String commitHash, Long buildNumber, Long submitSequence, 
 						List<Action> actions, SecretMasker secretMasker) {
 		this.jobToken = jobToken;

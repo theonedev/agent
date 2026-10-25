@@ -3,8 +3,9 @@ package io.onedev.agent.job;
 import org.jspecify.annotations.Nullable;
 
 import io.onedev.agent.SandboxSettings;
+import io.onedev.agent.TestData;
 
-public class TestSandboxJobData extends TestShellJobData {
+public class TestSandboxJobData extends TestData {
 
 	private static final long serialVersionUID = 1L;
 

@@ -21,35 +21,25 @@ public class WorkspaceFileDataRequest implements Serializable {
 
 	private final String path;
 
-	private final boolean docker;
+	private final ProvisionMode provisionMode;
 
 	private final String provisionerName;
 
 	private final String dockerSock;
 
-	public WorkspaceFileDataRequest(String workspaceToken, Long projectId, Long workspaceNumber, String path) {
+	public WorkspaceFileDataRequest(ProvisionMode provisionMode, @Nullable String provisionerName, String workspaceToken,
+			Long projectId, Long workspaceNumber, @Nullable String dockerSock, String path) {
 		this.workspaceToken = workspaceToken;
 		this.projectId = projectId;
 		this.workspaceNumber = workspaceNumber;
 		this.path = path;
-		this.docker = false;
-		this.provisionerName = null;
-		this.dockerSock = null;
-	}
-
-	public WorkspaceFileDataRequest(String provisionerName, String workspaceToken, Long projectId,
-			Long workspaceNumber, @Nullable String dockerSock, String path) {
-		this.workspaceToken = workspaceToken;
-		this.projectId = projectId;
-		this.workspaceNumber = workspaceNumber;
-		this.path = path;
-		this.docker = true;
+		this.provisionMode = provisionMode;
 		this.provisionerName = provisionerName;
 		this.dockerSock = dockerSock;
 	}
 
-	public boolean isDocker() {
-		return docker;
+	public ProvisionMode getProvisionMode() {
+		return provisionMode;
 	}
 
 	@Nullable

@@ -87,15 +87,15 @@ import org.slf4j.LoggerFactory;
 import com.google.common.base.Splitter;
 
 import io.onedev.agent.job.DockerJobData;
+import io.onedev.agent.job.HostJobData;
 import io.onedev.agent.job.JobResumeData;
 import io.onedev.agent.job.JobUtils;
 import io.onedev.agent.job.LogRequest;
-import io.onedev.agent.job.ShellJobData;
-import io.onedev.agent.job.SandboxJob;
+import io.onedev.agent.job.SandboxJobController;
 import io.onedev.agent.job.SandboxJobData;
 import io.onedev.agent.job.TestSandboxJobData;
 import io.onedev.agent.job.TestDockerJobData;
-import io.onedev.agent.job.TestShellJobData;
+import io.onedev.agent.job.TestHostJobData;
 import io.onedev.agent.shell.JobShellInputRequest;
 import io.onedev.agent.shell.JobShellOpenData;
 import io.onedev.agent.shell.JobShellOutputRequest;
@@ -110,10 +110,14 @@ import io.onedev.agent.workspace.DockerProvisionedShellOpenData;
 import io.onedev.agent.workspace.FileData;
 import io.onedev.agent.workspace.GitExecutionResult;
 import io.onedev.agent.workspace.ProvisionDockerWorkspaceData;
+import io.onedev.agent.workspace.ProvisionSandboxWorkspaceData;
 import io.onedev.agent.workspace.ProvisionShellWorkspaceData;
+import io.onedev.agent.workspace.SandboxProvisionedShellOpenData;
+import io.onedev.agent.workspace.SandboxWorkspaceController;
 import io.onedev.agent.workspace.ShellProvisionedShellOpenData;
 import io.onedev.agent.workspace.StopWorkspaceRequest;
 import io.onedev.agent.workspace.TestDockerWorkspaceData;
+import io.onedev.agent.workspace.TestSandboxWorkspaceData;
 import io.onedev.agent.workspace.TestShellWorkspaceData;
 import io.onedev.agent.workspace.WorkspaceAwaitRequest;
 import io.onedev.agent.workspace.WorkspaceDeleteRequest;
@@ -160,9 +164,11 @@ public class AgentSocket implements Runnable {
 	
 	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
 
-	private static final Map<String, SandboxJob> sandboxJobs = new ConcurrentHashMap<>();
+	private static final Map<String, SandboxWorkspaceController> sandboxWorkspaces = new ConcurrentHashMap<>();
 
-	private static final Map<File, SandboxJob> sandboxBuilds = new ConcurrentHashMap<>();
+	private static final Map<String, SandboxJobController> sandboxJobs = new ConcurrentHashMap<>();
+
+	private static final Map<File, SandboxJobController> sandboxBuilds = new ConcurrentHashMap<>();
 
 	private static final Map<String, JobShellSession> jobShellSessions = new ConcurrentHashMap<>();
 
@@ -363,10 +369,6 @@ public class AgentSocket implements Runnable {
 					String jobToken = new String(messageData, UTF_8);
 					cancelJob(jobToken);
 					break;
-				case DELETE_WORKSPACE:
-					WorkspaceDeleteRequest deleteRequest = SerializationUtils.deserialize(messageData);
-					deleteWorkspace(deleteRequest);
-					break;
 				case RESUME_JOB:
 					JobResumeData jobResumeData = SerializationUtils.deserialize(messageData);
 					resumeJob(jobResumeData);
@@ -446,7 +448,15 @@ public class AgentSocket implements Runnable {
 				case WORKSPACE_SHELL_OPEN:
 					WorkspaceShellOpenData shellOpenData = SerializationUtils.deserialize(messageData);
 					var shellId = shellOpenData.getShellId();
-					if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
+					if (shellOpenData instanceof SandboxProvisionedShellOpenData) {
+						var token = shellOpenData.getToken();
+						var sandbox = sandboxWorkspaces.get(token);
+						if (sandbox == null)
+							throw new ExplicitException("Sandbox workspace not running");
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session,
+								sandbox.openShell(shellId, shellOpenData.getShellExecutable()),
+								() -> sandbox.closeShell(shellId)));
+					} else if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
 						var containerName = getWorkspaceContainerName(
 								dockerProvisionedShellOpenData.getProvisionerName(),
 								dockerProvisionedShellOpenData.getProjectId(),
@@ -598,13 +608,13 @@ public class AgentSocket implements Runnable {
 	}
 	
 	private boolean executeSandboxJob(SandboxJobData data, TaskLogger jobLogger) {
-		var sandbox = new SandboxJob(Agent.sbxPath, data.getSettings());
+		var controller = new SandboxJobController(Agent.sbxPath, data.getSettings());
 		var buildDir = getBuildDir(Agent.getTempDir(), data.getProjectId(), data.getBuildNumber(), data.getSubmitSequence());
 		jobThreads.put(data.getJobToken(), Thread.currentThread());
-		sandboxJobs.put(data.getJobToken(), sandbox);
-		sandboxBuilds.put(buildDir, sandbox);
+		sandboxJobs.put(data.getJobToken(), controller);
+		sandboxBuilds.put(buildDir, controller);
 		try {
-			return sandbox.run(data, data.getServices(), Agent.getTrustCertsDir(), Agent.attributes, jobLogger);
+			return controller.runJob(data, data.getServices(), Agent.getTrustCertsDir(), Agent.attributes, jobLogger);
 		} finally {
 			sandboxBuilds.remove(buildDir);
 			sandboxJobs.remove(data.getJobToken());
@@ -612,7 +622,7 @@ public class AgentSocket implements Runnable {
 		}
 	}
 
-	private boolean executeShellJob(Session session, ShellJobData jobData, TaskLogger jobLogger) {
+	private boolean executeHostJob(Session session, HostJobData jobData, TaskLogger jobLogger) {
 		File buildDir = getBuildDir(Agent.getTempDir(), jobData.getProjectId(), 
 				jobData.getBuildNumber(), jobData.getSubmitSequence());
 		File workDir = new File(buildDir, "work");
@@ -693,9 +703,6 @@ public class AgentSocket implements Runnable {
 							jobLogger.error("Command exited with code " + result.getReturnCode());
 							return false;
 						}
-					} else if (facade instanceof BuildImageFacade || facade instanceof RunContainerFacade
-							|| facade instanceof RunImagetoolsFacade || facade instanceof PruneBuilderCacheFacade) {
-						throw new ExplicitException("This step can only be executed by server docker executor and remote docker executor");
 					} else if (facade instanceof CheckoutFacade) {
 						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
 						jobLogger.log("Checking out code...");
@@ -726,7 +733,7 @@ public class AgentSocket implements Runnable {
 						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
 						for (var path: setupCacheFacade.getCacheConfig().getPaths()) {
 							if (FilenameUtils.getPrefixLength(path) > 0)
-								throw new ExplicitException("Shell executor does not allow absolute cache path: " + path);
+								throw new ExplicitException("Host executor does not allow absolute cache path: " + path);
 						}
 						var cacheConfig = setupCacheFacade.getCacheConfig();
 						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig, cacheConfigIndex.getAndIncrement());
@@ -861,8 +868,8 @@ public class AgentSocket implements Runnable {
 					if (facade instanceof CommandFacade) {
 						CommandFacade commandFacade = ((CommandFacade) facade).replacePlaceholders(hostBuildDir);
 						if (commandFacade.getImage() == null) {
-							throw new ExplicitException("This step can only be executed by server shell "
-									+ "executor or remote shell executor");
+							throw new ExplicitException("This step can only be executed by server host "
+									+ "executor or remote host executor");
 						}
 						var entrypointArgs = getEntrypointArgs(hostBuildDir, commandFacade, position);
 						var docker = newDocker(dockerSock);
@@ -1035,7 +1042,7 @@ public class AgentSocket implements Runnable {
 		}
 	}
 
-	private void testShellExecutor(Session session, TestShellJobData jobData) {
+	private void testHostExecutor(Session session, TestHostJobData jobData) {
 		Client client = buildRestClient(Agent.sslFactory);
 		jobThreads.put(jobData.getToken(), Thread.currentThread());
 		try {
@@ -1123,6 +1130,49 @@ public class AgentSocket implements Runnable {
 		return "workspace-" + provisionerName + "-" + projectId + "-" + workspaceNumber;
 	}
 	
+	private WorkspaceProvisioned provisionSandboxWorkspace(Session session, ProvisionSandboxWorkspaceData data) {
+		var ready = new java.util.concurrent.CompletableFuture<WorkspaceProvisioned>();
+		var task = new AwaitableFutureTask<Void>(() -> {
+			var controller = new SandboxWorkspaceController(Agent.sbxPath, data, newTaskLogger(session, data.token()));
+			try {
+				var provisioned = controller.provisionWorkspace(Agent.getTrustCertsDir(), Agent.ipAddress);
+				sandboxWorkspaces.put(data.token(), controller);
+				ready.complete(provisioned);
+				controller.awaitRunner();
+				return null;
+			} catch (Throwable e) {
+				ready.completeExceptionally(e);
+				throw e;
+			} finally {
+				sandboxWorkspaces.remove(data.token());
+			}
+		}) {
+			@Override
+			protected void done() {
+				super.done();
+				if (isCancelled())
+					ready.completeExceptionally(new java.util.concurrent.CancellationException());
+			}
+		};
+		// Register before scheduling so stop/housekeeping also cancels tasks not yet started.
+		workspaceServeTasks.put(data.token(), task);
+		try {
+			Bootstrap.executorService.execute(task);
+			return ready.get();
+		} catch (InterruptedException | ExecutionException e) {
+			task.cancel(true);
+			task.await();
+			throw new RuntimeException(e);
+		}
+	}
+
+	private SandboxWorkspaceController getSandboxWorkspace(String token) {
+		var sandbox = sandboxWorkspaces.get(token);
+		if (sandbox == null)
+			throw new ExplicitException("Sandbox workspace not running");
+		return sandbox;
+	}
+
 	private WorkspaceProvisioned provisionDockerWorkspace(Session session, ProvisionDockerWorkspaceData data) {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			throw new ExplicitException("Docker workspace is not supported on Windows");
@@ -1331,7 +1381,7 @@ public class AgentSocket implements Runnable {
 			for (var cacheConfig : data.getCacheConfigs()) {
 				for (var path : cacheConfig.getPaths()) {
 					if (FilenameUtils.getPrefixLength(path) > 0)
-						throw new ExplicitException("Shell provisioner does not allow absolute cache path: " + path);
+						throw new ExplicitException("Host provisioner does not allow absolute cache path: " + path);
 				}	
 				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
 						"~api/worker/workspace-cache", data.getWorkspaceToken(),
@@ -1392,27 +1442,29 @@ public class AgentSocket implements Runnable {
 	}
 
 	private GitExecutionResult executeWorkspaceGit(WorkspaceGitCommandRequest request) {
-		if (request.isDocker()) {
-			var containerName = getWorkspaceContainerName(request.getProvisionerName(), request.getProjectId(), request.getWorkspaceNumber());
-			if (containerName == null)
-				throw new ExplicitException("Workspace container not running");
-			return WorkspaceUtils.executeGit(request.getDockerSock(), containerName, request.getGitArgs());
-		} else {
-			return WorkspaceUtils.executeGit(
+		return switch (request.getProvisionMode()) {
+			case DOCKER -> {
+				var containerName = getWorkspaceContainerName(request.getProvisionerName(), request.getProjectId(), request.getWorkspaceNumber());
+				yield WorkspaceUtils.executeGit(request.getDockerSock(), containerName, request.getGitArgs());
+			}
+			case HOST -> WorkspaceUtils.executeGit(
 					new File(getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber()), "work"),
 					request.getGitArgs());
-		}
+			case SANDBOX -> getSandboxWorkspace(request.getWorkspaceToken()).executeGit(request.getGitArgs());
+		};
 	}
 
 	private FileData readWorkspaceFileData(WorkspaceFileDataRequest request) {
-		if (request.isDocker()) {
-			var containerName = getWorkspaceContainerName(request.getProvisionerName(), request.getProjectId(), request.getWorkspaceNumber());
-			return WorkspaceUtils.readFileData(newDocker(request.getDockerSock()), containerName,
-					WORKSPACE_PATH + "/work", request.getPath());
-		} else {
-			var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
-			return WorkspaceUtils.readFileData(workspaceDir, request.getPath());
-		}
+		return switch (request.getProvisionMode()) {
+			case DOCKER -> {
+				var containerName = getWorkspaceContainerName(request.getProvisionerName(), request.getProjectId(), request.getWorkspaceNumber());
+				yield WorkspaceUtils.readFileData(newDocker(request.getDockerSock()), containerName,
+						WORKSPACE_PATH + "/work", request.getPath());
+			}
+			case HOST -> WorkspaceUtils.readFileData(
+					getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber()), request.getPath());
+			case SANDBOX -> getSandboxWorkspace(request.getWorkspaceToken()).readFile(request.getPath());
+		};
 	}
 
 	public static void houseKeeper() {
@@ -1499,9 +1551,21 @@ public class AgentSocket implements Runnable {
 	}
 
 	private void deleteWorkspace(WorkspaceDeleteRequest request) {
-		var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
-		if (workspaceDir.exists())
-			FileUtils.deletePath(workspaceDir, 5);
+		switch (request.getProvisionMode()) {
+			case HOST, DOCKER -> {
+				var workspaceDir = getWorkspaceDir(request.getProjectId(), request.getWorkspaceNumber());
+				if (workspaceDir.exists())
+					FileUtils.deletePath(workspaceDir, 5);
+			}
+			case SANDBOX -> SandboxWorkspaceController.deleteSandbox(Agent.sbxPath,
+					SandboxWorkspaceController.getSandboxName(request.getProjectId(), request.getWorkspaceNumber()),
+					new TaskLogger() {
+						@Override
+						public void log(String message, String sessionId) {
+							logger.info(message);
+						}
+					});
+		}
 	}
 
 	private static File getWorkspaceDir(Long projectId, Long workspaceNumber) {
@@ -1544,6 +1608,15 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestDockerWorkspaceData testDockerWorkspaceData) {
 				testDockerWorkspace(session, testDockerWorkspaceData);
 				return true;
+			} else if (request instanceof TestSandboxWorkspaceData sandboxTest) {
+				jobThreads.put(sandboxTest.getToken(), Thread.currentThread());
+				try {
+					SandboxWorkspaceController.testSandbox(Agent.sbxPath, sandboxTest.getSettings(), Agent.getTrustCertsDir(),
+							newTaskLogger(session, sandboxTest.getToken()));
+					return true;
+				} finally {
+					jobThreads.remove(sandboxTest.getToken());
+				}
 			} else if (request instanceof TestShellWorkspaceData testShellWorkspaceData) {
 				testShellWorkspace(session, testShellWorkspaceData);
 				return true;
@@ -1552,18 +1625,20 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof TestSandboxJobData testSandboxJobData) {
 				jobThreads.put(testSandboxJobData.getToken(), Thread.currentThread());
 				try {
-					new SandboxJob(Agent.sbxPath, testSandboxJobData.getSettings()).test(testSandboxJobData.getImage(), Agent.getTrustCertsDir(),
+					new SandboxJobController(Agent.sbxPath, testSandboxJobData.getSettings()).testSandbox(testSandboxJobData.getImage(), Agent.getTrustCertsDir(),
 							newTaskLogger(session, testSandboxJobData.getToken()));
 					return true;
 				} finally {
 					jobThreads.remove(testSandboxJobData.getToken());
 				}
-			} else if (request instanceof ShellJobData shellJobData) {
-				var jobLogger = newTaskLogger(session, shellJobData.getJobToken());
-				return executeShellJob(session, shellJobData, jobLogger);
-			} else if (request instanceof TestShellJobData testShellJobData) {
-				testShellExecutor(session, testShellJobData);
+			} else if (request instanceof HostJobData hostJobData) {
+				var jobLogger = newTaskLogger(session, hostJobData.getJobToken());
+				return executeHostJob(session, hostJobData, jobLogger);
+			} else if (request instanceof TestHostJobData testHostJobData) {
+				testHostExecutor(session, testHostJobData);
 				return true;
+			} else if (request instanceof ProvisionSandboxWorkspaceData sandboxData) {
+				return provisionSandboxWorkspace(session, sandboxData);
 			} else if (request instanceof ProvisionDockerWorkspaceData provisionWorkspaceData) {
 				return provisionDockerWorkspace(session, provisionWorkspaceData);
 			} else if (request instanceof ProvisionShellWorkspaceData provisionWorkspaceData) {
@@ -1579,6 +1654,9 @@ public class AgentSocket implements Runnable {
 				return executeWorkspaceGit(gitRequest);
 			} else if (request instanceof WorkspaceFileDataRequest fileDataRequest) {
 				return readWorkspaceFileData(fileDataRequest);
+			} else if (request instanceof WorkspaceDeleteRequest deleteRequest) {
+				deleteWorkspace(deleteRequest);
+				return null;
 			} else { 
 				throw new ExplicitException("Unknown request: " + request.getClass());
 			}

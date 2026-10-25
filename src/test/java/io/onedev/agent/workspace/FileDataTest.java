@@ -67,11 +67,12 @@ class FileDataTest {
 	@Test
 	void remoteDockerRequestRetainsContainerSelection() {
 		var request = SerializationUtils.clone(new WorkspaceFileDataRequest(
-				"docker-provisioner", "token", 1L, 2L, "/docker.sock", "file"));
-		assertTrue(request.isDocker());
+				ProvisionMode.DOCKER, "docker-provisioner", "token", 1L, 2L, "/docker.sock", "file"));
+		assertEquals(ProvisionMode.DOCKER, request.getProvisionMode());
 		assertEquals("docker-provisioner", request.getProvisionerName());
 		assertEquals("/docker.sock", request.getDockerSock());
-		assertFalse(new WorkspaceFileDataRequest("token", 1L, 2L, "file").isDocker());
+		assertEquals(ProvisionMode.HOST,
+				new WorkspaceFileDataRequest(ProvisionMode.HOST, null, "token", 1L, 2L, null, "file").getProvisionMode());
 	}
 
 	@Test

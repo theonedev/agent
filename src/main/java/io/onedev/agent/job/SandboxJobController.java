@@ -2,30 +2,24 @@ package io.onedev.agent.job;
 
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
+import static org.apache.commons.compress.archivers.tar.TarArchiveEntry.DEFAULT_FILE_MODE;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
-import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.jspecify.annotations.Nullable;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import io.onedev.agent.SandboxSettings;
+import io.onedev.agent.SandboxUtils;
 import io.onedev.commons.bootstrap.SecretMasker;
 import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
@@ -46,7 +40,7 @@ import io.onedev.k8shelper.ServiceFacade;
 import io.onedev.k8shelper.SetupCacheFacade;
 
 /** Only lifecycle and transport run on the host. The runner owns the entire job in the sandbox. */
-public class SandboxJob {
+public class SandboxJobController {
 
 	public static final String BUILD_DIR = "/onedev-build";
 
@@ -58,33 +52,27 @@ public class SandboxJob {
 
 	private volatile boolean ready;
 
-	public SandboxJob(String executable, SandboxSettings settings) {
+	public SandboxJobController(String executable, SandboxSettings settings) {
 		this.executable = executable;
 		this.settings = settings;
 	}
 
-	private Commandline newSbxCommand(String... args) {
-		return new Commandline(executable).addArgs(args);
-	}
-
 	private Commandline newSbxExecCommand(String... args) {
-		return newSbxCommand("exec", "--user", "root").addArgs(args);
+		return new Commandline(executable).addArgs("exec", "--user", "root").addArgs(args);
 	}
 
 	private ProcessKiller newSandboxKiller(TaskLogger logger) {
 		return (process, executionId) -> {
 			try {
-				logger.log("Stopping sandbox '" + name + "'...");
-				newSbxCommand("stop", name).timeout(120)
-						.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+				SandboxUtils.stopSandbox(executable, name, logger);
 			} finally {
 				new ProcessTreeKiller().kill(process, executionId);
 			}
 		};
 	}
 
-	public boolean run(ShellJobData data, List<ServiceFacade> services, File trustCertsDir,
-			Map<String, String> attributes, TaskLogger logger) {
+	public boolean runJob(JobData data, List<ServiceFacade> services, File trustCertsDir,
+						  Map<String, String> attributes, TaskLogger logger) {
 		name = "build-" + data.getExecutorName() + "-" + data.getProjectId() + "-"
 				+ data.getBuildNumber() + "-" + data.getSubmitSequence();
 		var manifest = new HashMap<String, Object>();
@@ -97,13 +85,13 @@ public class SandboxJob {
 		manifest.put("actions", actions(data.getActions()));
 		SecretMasker.push(data.getSecretMasker());
 		try {
-			return run(manifest, trustCertsDir, logger);
+			return runJob(manifest, trustCertsDir, logger);
 		} finally {
 			SecretMasker.pop();
 		}
 	}
 
-	public void test(@Nullable String image, File trustCertsDir, TaskLogger logger) {
+	public void testSandbox(@Nullable String image, File trustCertsDir, TaskLogger logger) {
 		var token = UUID.randomUUID().toString();
 		name = "sandbox-test-" + token.substring(0, 8);
 		var manifest = new HashMap<String, Object>();
@@ -111,52 +99,26 @@ public class SandboxJob {
 		manifest.put("testImage", image);
 		manifest.put("serverUrl", settings.serverUrl());
 		manifest.put("token", token);
-		if (!run(manifest, trustCertsDir, logger))
+		if (!runJob(manifest, trustCertsDir, logger))
 			throw new ExplicitException("Sandbox executor test failed");
 	}
 
-	private boolean run(Map<String, Object> manifest, File trustCertsDir, TaskLogger logger) {
+	private boolean runJob(Map<String, Object> manifest, File trustCertsDir, TaskLogger logger) {
 		manifest.put("alwaysPullContainerImage", settings.alwaysPullContainerImage());
-		manifest.put("cpuLimit", settings.cpuLimit());
-		manifest.put("memoryLimit", settings.memoryLimit());
 		manifest.put("runOptions", settings.runOptions());
 		manifest.put("networkOptions", settings.networkOptions());
 		manifest.put("registryLogins", settings.registryLogins());
 		boolean attempted = false;
 		Throwable failure = null;
 		try {
-			var archive = new ByteArrayOutputStream();
-			try (var tar = new TarArchiveOutputStream(archive)) {
-				tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
-				addTarEntry(tar, "job.json", new ObjectMapper().writeValueAsBytes(manifest));
-				try (var resource = SandboxJob.class.getResourceAsStream("sandbox_runner.py")) {
-					if (resource == null)
-						throw new ExplicitException("Sandbox runner resource is missing");
-					addTarEntry(tar, "runner.py", resource.readAllBytes());
-				}
-				if (trustCertsDir != null && trustCertsDir.exists()) {
-					for (var file : FileUtils.listFiles(trustCertsDir, null, true)) {
-						var relativePath = trustCertsDir.toPath().relativize(file.toPath()).toString()
-								.replace(File.separatorChar, '/');
-						addTarEntry(tar, "trust-certs/" + relativePath, Files.readAllBytes(file.toPath()));
-					}
-				}
-			}
+			var archive = SandboxUtils.buildRuntimeArchive("job", manifest, trustCertsDir, DEFAULT_FILE_MODE);
 
 			logger.log("Creating sandbox '" + name + "'...");
-			var createCommand = newSbxCommand("create", "--name", name, "--pull", settings.alwaysPullImage() ? "always" : "missing");
-			if (settings.template() != null)
-				createCommand.addArgs("--template", settings.template());
-			if (settings.cpus() != null)
-				createCommand.addArgs("--cpus", settings.cpus().toString());
-			if (settings.memory() != null)
-				createCommand.addArgs("--memory", settings.memory());
-			createCommand.addArgs("shell");
 			attempted = true;
-			createCommand.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+			SandboxUtils.createSandbox(executable, name, settings, List.of(), logger);
 			newSbxExecCommand("-i", name, "sh", "-c", "set -e; mkdir -p \"$1\"; tar -xf - -C \"$1\"", "sh", BUILD_DIR)
 					.processKiller(newSandboxKiller(logger))
-					.execute(newInfoLogger(logger), newWarningLogger(logger), new ByteArrayInputStream(archive.toByteArray()))
+					.execute(newInfoLogger(logger), newWarningLogger(logger), new ByteArrayInputStream(archive))
 					.checkReturnCode();
 			ready = true;
 			return executeRunner(logger);
@@ -172,7 +134,7 @@ public class SandboxJob {
 			try {
 				if (attempted) {
 					try {
-						deleteSandbox(logger);
+						SandboxUtils.deleteSandbox(executable, name, logger);
 					} catch (RuntimeException e) {
 						if (failure != null) {
 							failure.addSuppressed(e);
@@ -186,32 +148,6 @@ public class SandboxJob {
 				if (interrupted)
 					Thread.currentThread().interrupt();
 			}
-		}
-	}
-
-	private static void addTarEntry(TarArchiveOutputStream tar, String name, byte[] content) throws IOException {
-		var entry = new TarArchiveEntry(name);
-		entry.setSize(content.length);
-		tar.putArchiveEntry(entry);
-		tar.write(content);
-		tar.closeArchiveEntry();
-	}
-
-	private void deleteSandbox(TaskLogger logger) {
-		// Creation can fail before or after allocating the sandbox. As with Docker
-		// container cleanup, only delete resources which actually exist.
-		var exists = new AtomicBoolean();
-		newSbxCommand("ls", "--quiet").timeout(120).execute(new LineConsumer() {
-			@Override
-			public void consume(String line) {
-				if (line.equals(name))
-					exists.set(true);
-			}
-		}, newWarningLogger(logger)).checkReturnCode();
-		if (exists.get()) {
-			logger.log("Deleting sandbox '" + name + "'...");
-			newSbxCommand("rm", "--force", name).timeout(120)
-					.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
 	}
 
@@ -234,7 +170,7 @@ public class SandboxJob {
 		};
 		var outcome = JobHelper.StepEventKind.FAILED;
 		try {
-			return newSbxExecCommand(name, "python3", "-u", BUILD_DIR + "/runner.py", BUILD_DIR)
+			return newSbxExecCommand(name, "python3", "-u", BUILD_DIR + "/sandbox-job.py", BUILD_DIR)
 					.processKiller(newSandboxKiller(logger))
 					.execute(output, newWarningLogger(logger)).getReturnCode() == 0;
 		} catch (RuntimeException e) {
@@ -261,7 +197,7 @@ public class SandboxJob {
 		if (!ready)
 			throw new ExplicitException("Sandbox not running");
 		return newSbxExecCommand("-it", "-w", BUILD_DIR + "/work", "-e", "ONEDEV_WORKDIR=" + BUILD_DIR + "/work",
-				name, "python3", BUILD_DIR + "/runner.py", BUILD_DIR, "--shell");
+				name, "python3", BUILD_DIR + "/sandbox-job.py", BUILD_DIR, "--shell");
 	}
 
 	static List<Map<String, Object>> actions(List<Action> actions) {
