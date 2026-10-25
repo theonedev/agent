@@ -43,13 +43,11 @@ public class SandboxUtils {
 			tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
 			addTarEntry(tar, type + ".json", new ObjectMapper().writeValueAsBytes(manifest), fileMode);
 			var runnerName = "sandbox-" + type + ".py";
-			try (var shared = SandboxUtils.class.getResourceAsStream("sandbox.py");
-					var runner = SandboxUtils.class.getResourceAsStream(type + "/" + runnerName)) {
-				if (shared == null || runner == null)
-					throw new ExplicitException("Sandbox " + type + " resource is missing");
-				addTarEntry(tar, "sandbox.py", shared.readAllBytes(), fileMode);
-				addTarEntry(tar, runnerName, runner.readAllBytes(), fileMode);
-			}
+			addRuntimeResource(tar, "sandbox.py", fileMode);
+			addRuntimeResource(tar, "sandbox_files.py", fileMode);
+			if (type.equals("job"))
+				addRuntimeResource(tar, "sandbox_privileges.py", fileMode);
+			addRuntimeResource(tar, type + "/" + runnerName, fileMode);
 			if (trustCertsDir != null && trustCertsDir.exists()) {
 				for (var file : FileUtils.listFiles(trustCertsDir, null, true)) {
 					var relativePath = trustCertsDir.toPath().relativize(file.toPath()).toString()
@@ -59,6 +57,14 @@ public class SandboxUtils {
 			}
 		}
 		return bytes.toByteArray();
+	}
+
+	private static void addRuntimeResource(TarArchiveOutputStream tar, String path, int fileMode) throws IOException {
+		try (var resource = SandboxUtils.class.getResourceAsStream(path)) {
+			if (resource == null)
+				throw new ExplicitException("Sandbox resource is missing: " + path);
+			addTarEntry(tar, path.substring(path.lastIndexOf('/') + 1), resource.readAllBytes(), fileMode);
+		}
 	}
 
 	private static void addTarEntry(TarArchiveOutputStream tar, String name, byte[] content, int fileMode)

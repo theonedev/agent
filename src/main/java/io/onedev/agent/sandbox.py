@@ -3,7 +3,6 @@
 Uses only the sandbox shell image's Python standard library.
 """
 import base64
-import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -13,12 +12,14 @@ import shutil
 import ssl
 import struct
 import subprocess
-import tarfile
 import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+
+from sandbox_files import cache_paths, pack, paths_changed, safe_path, selected_files, unpack
 
 
 PLACEHOLDER = re.compile(r"<&onedev#(.*?)#onedev&>")
@@ -31,129 +32,6 @@ def log(message):
 def log_error(message):
     # Match TaskLogger.error while keeping errors and step events on one stream.
     log("\033[1;31m" + message + "\033[0m")
-
-
-def safe_path(root, relative, allow_leaf_symlink=False):
-    if not isinstance(relative, str) or ".." in relative or Path(relative).is_absolute() or "\\" in relative:
-        raise ValueError("Path must be relative and must not contain '..': " + str(relative))
-    path = root
-    if path.is_symlink():
-        raise ValueError("Symbolic link is not allowed: " + str(path))
-    parts = Path(relative).parts
-    for index, part in enumerate(parts):
-        path = path / part
-        if path.is_symlink() and not (allow_leaf_symlink and index == len(parts) - 1):
-            raise ValueError("Symbolic link is not allowed: " + str(path))
-    return path
-
-
-def matches(path, pattern):
-    """Ant-style path matching: ** spans directories, * and ? do not.
-
-    Accepted difference from Ant: fnmatchcase treats bracket expressions as
-    character classes, so file[1].txt matches file1.txt instead of file[1].txt.
-    Exact Ant compatibility for bracket expressions is intentionally not required.
-    """
-    parts, patterns = path.split("/"), pattern.rstrip("/").split("/")
-    if pattern.endswith("/"):
-        patterns.append("**")
-
-    def match(i, j):
-        if j == len(patterns):
-            return i == len(parts)
-        if patterns[j] == "**":
-            return match(i, j + 1) or (i < len(parts) and match(i + 1, j))
-        return i < len(parts) and fnmatch.fnmatchcase(parts[i], patterns[j]) and match(i + 1, j + 1)
-
-    return match(0, 0)
-
-
-def selected_files(root, includes, excludes, follow_links=False):
-    if root.is_symlink():
-        raise ValueError("Source directory must not be a symbolic link: " + str(root))
-    if not root.exists():
-        return []
-    files = []
-    seen = set()
-    for parent, dirs, names in os.walk(root, followlinks=follow_links):
-        resolved = Path(parent).resolve()
-        if not resolved.is_relative_to(root.resolve()):
-            raise ValueError("Source directory resolves outside work directory: " + str(parent))
-        if resolved in seen:
-            dirs[:] = []
-            continue
-        seen.add(resolved)
-        dirs[:] = sorted(d for d in dirs if follow_links or not (Path(parent) / d).is_symlink())
-        for name in names:
-            path = Path(parent) / name
-            relative = path.relative_to(root).as_posix()
-            if (path.is_file() and (follow_links or not path.is_symlink())
-                    and any(matches(relative, p) for p in includes)
-                    and not any(matches(relative, p) for p in excludes)):
-                if not path.resolve().is_relative_to(root.resolve()):
-                    raise ValueError("Source file resolves outside work directory: " + str(path))
-                files.append(path)
-    return sorted(files)
-
-
-def unpack(stream, target, allow_external_symlinks=False):
-    """Keep extraction writes inside target, optionally preserving VM-local cache links."""
-    target.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=stream, mode="r|*") as archive:
-        for member in archive:
-            name = member.name.removeprefix("./").rstrip("/")
-            if name in ("", "."):
-                continue
-            dest = safe_path(target, name, allow_leaf_symlink=allow_external_symlinks)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if allow_external_symlinks and dest.is_symlink():
-                dest.unlink()
-            if member.isdir():
-                dest.mkdir(exist_ok=True)
-            elif member.isfile():
-                with archive.extractfile(member) as source, dest.open("wb") as output:
-                    shutil.copyfileobj(source, output)
-                dest.chmod(member.mode & 0o777)
-                os.utime(dest, (member.mtime, member.mtime))
-            elif member.issym():
-                if not allow_external_symlinks:
-                    link = (dest.parent / member.linkname).resolve()
-                    if not link.is_relative_to(target.resolve()):
-                        raise ValueError("Archive link escapes target: " + member.name)
-                if dest.exists():
-                    dest.unlink()
-                dest.symlink_to(member.linkname)
-            elif member.islnk():
-                source = safe_path(target, member.linkname)
-                shutil.copyfile(source, dest)
-                dest.chmod(member.mode & 0o777)
-            else:
-                raise ValueError("Unsupported archive entry: " + member.name)
-
-
-def cache_paths(root, excludes):
-    """Include link entries without traversing their targets."""
-    for parent, dirs, names in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not any(
-            matches((Path(parent) / d).relative_to(root).as_posix(), p) for p in excludes))
-        for name in dirs + sorted(names):
-            path = Path(parent) / name
-            if not any(matches(path.relative_to(root).as_posix(), p) for p in excludes):
-                yield path
-
-
-def paths_changed(paths, since):
-    """Check entry timestamps without following symbolic links to their targets."""
-    return any(max(stat.st_mtime, stat.st_ctime) > since for stat in (path.lstat() for path in paths))
-
-
-def pack(stream, root, includes, excludes, cache=False):
-    with tarfile.open(fileobj=stream, mode="w|", dereference=False) as archive:
-        paths = cache_paths(root, excludes) if cache else selected_files(root, includes, excludes)
-        for path in paths:
-            if not cache and path.is_symlink() and not path.resolve().is_relative_to(root.resolve()):
-                raise ValueError("Source link escapes source directory: " + str(path))
-            archive.add(path, arcname=path.relative_to(root).as_posix(), recursive=False)
 
 
 def read_exact(stream, length):
@@ -172,10 +50,39 @@ def read_int(stream):
     return struct.unpack(">i", read_exact(stream, 4))[0]
 
 
+class ServerRequestError(RuntimeError):
+    def __init__(self, endpoint, status):
+        super().__init__("Server request %s failed (HTTP %s)" % (endpoint, status))
+        self.status = status
+
+
+class ProvisionedCache:
+    """Cache configuration and the local state carried between Docker helpers."""
+    def __init__(self, config):
+        self.config = config
+        self.exact = set()
+        self.provisioned = 0
+
+    def has_changes(self, entry, directory):
+        # The root's mtime also detects entries added, removed or renamed directly inside it.
+        return paths_changed(cache_paths(directory, shlex.split(entry.get("excludes") or ""), include_root=True),
+                             self.provisioned)
+
+    def to_state(self):
+        return dict(config=self.config, exact=sorted(self.exact), provisioned=self.provisioned)
+
+    @classmethod
+    def from_state(cls, state):
+        cache = cls(state["config"])
+        cache.exact = set(state["exact"])
+        cache.provisioned = state["provisioned"]
+        return cache
+
+
 class SandboxRuntime:
     """Filesystem, server access, checkout and caches shared by both runners."""
 
-    def __init__(self, root, config, cache_endpoint):
+    def __init__(self, root, config, cache_endpoint, initialize=True):
         self.root, self.config = root, config
         self.cache_endpoint = cache_endpoint
         self.work = safe_path(root, "work")
@@ -192,7 +99,8 @@ class SandboxRuntime:
             # Keep the system roots as well as the installation's additional roots.
             bundle = ssl.get_default_verify_paths().cafile
             self.cert_file = safe_path(root, "trust-certs.pem")
-            self.cert_file.write_text((Path(bundle).read_text() if bundle else "") + "\n".join(certificates))
+            if initialize:
+                self.cert_file.write_text((Path(bundle).read_text() if bundle else "") + "\n".join(certificates))
 
     def request(self, endpoint, params=None, data=None, method=None, access_token=None):
         params = {k: v for k, v in (params or {}).items() if v is not None}
@@ -211,7 +119,7 @@ class SandboxRuntime:
             # Do not print URLs containing the session token.
             code = error.code
             error.close()
-            raise RuntimeError("Server request %s failed (HTTP %s)" % (endpoint, code)) from None
+            raise ServerRequestError(endpoint, code) from None
         except urllib.error.URLError as error:
             raise RuntimeError("Unable to reach OneDev from sandbox: " + str(error.reason)) from None
 
@@ -327,8 +235,7 @@ class SandboxRuntime:
             return safe_path(Path(directory.anchor), path[len(directory.anchor):])
         return safe_path(self.work, path)
 
-    def setup_cache(self, step):
-        config = dict(step, key=self.replace(step["key"]), checksum=None, exact=set())
+    def cache_checksum(self, config):
         if "checksumIncludes" in config:
             patterns = config["checksumIncludes"] + config["checksumExcludes"]
             if any(".." in pattern for pattern in patterns):
@@ -341,51 +248,67 @@ class SandboxRuntime:
                 with path.open("rb") as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(chunk)
-            config["checksum"] = digest.hexdigest()
+            return digest.hexdigest()
+        return None
+
+    def setup_cache(self, step):
+        config = dict(step, key=self.replace(step["key"]), checksum=self.cache_checksum(step))
+        cache = ProvisionedCache(config)
         for entry in config["entries"]:
             path = entry["path"]
-            directory = self.data_path(path)
-            directory.mkdir(parents=True, exist_ok=True)
-            params = {"key": config["key"], "checksum": config["checksum"], "path": path}
-            with self.request(self.cache_endpoint, params) as response:
-                availability = read_exact(response, 1)[0]
-                if availability in (0, 1):
-                    # The server stores the archive as bytes; only this VM restores its links.
-                    unpack(response, directory, allow_external_symlinks=True)
-                    log(("Exact" if availability == 0 else "Partial") + " matched cache (key: %s, path: %s)" % (config["key"], path))
-                elif availability != 2:
-                    raise ValueError("Invalid cache availability")
-                if availability == 0:
-                    config["exact"].add(path)
-        config["provisioned"] = time.time()
-        self.caches.append(config)
+            if self.restore_cache(config, path) == 0:
+                cache.exact.add(path)
+        cache.provisioned = time.time()
+        self.caches.append(cache)
         return True
 
+    def restore_cache(self, config, path):
+        directory = self.data_path(path)
+        directory.mkdir(parents=True, exist_ok=True)
+        params = {"key": config["key"], "checksum": config["checksum"], "path": path}
+        with self.request(self.cache_endpoint, params) as response:
+            availability = read_exact(response, 1)[0]
+            if availability in (0, 1):
+                # The server stores the archive as bytes; only this VM restores its links.
+                unpack(response, directory, allow_external_symlinks=True)
+                log(("Exact" if availability == 0 else "Partial") + " matched cache (key: %s, path: %s)" % (config["key"], path))
+            elif availability != 2:
+                raise ValueError("Invalid cache availability")
+            return availability
+
+    def absolute_cache_paths(self):
+        return list(dict.fromkeys(Path(entry["path"]) for cache in self.caches
+                                  for entry in cache.config["entries"] if Path(entry["path"]).is_absolute()))
+
     def upload_caches(self):
-        for config in self.caches:
-            for entry in config["entries"]:
-                path = entry["path"]
-                directory = self.data_path(path)
-                excludes = shlex.split(entry.get("excludes") or "")
-                if config["strategy"] == "UPLOAD_IF_NOT_EXACT_MATCH":
-                    if path in config["exact"]:
-                        continue
-                elif not paths_changed(cache_paths(directory, excludes), config["provisioned"]):
-                    continue
-                params = {"key": config["key"], "checksum": config["checksum"], "path": path,
-                          "projectPath": config.get("projectPath")}
-                try:
-                    with self.request(self.cache_endpoint, {"projectPath": config.get("projectPath")},
-                                      method="HEAD", access_token=config.get("accessToken")):
-                        pass
-                except RuntimeError as error:
-                    if "(HTTP 401)" in str(error):
-                        log("Not authorized to upload cache: " + config["key"])
-                        continue
-                    raise
-                with tempfile.TemporaryFile() as body:
-                    pack(body, directory, ["**"], excludes, cache=True)
-                    body.seek(0)
-                    with self.request(self.cache_endpoint, params, body, access_token=config.get("accessToken")):
-                        pass
-                log("Uploaded cache (key: %s, path: %s)" % (config["key"], path))
+        for cache in self.caches:
+            for entry in cache.config["entries"]:
+                self.upload_cache(cache, entry)
+
+    def upload_cache(self, cache, entry):
+        config = cache.config
+        path = entry["path"]
+        directory = self.data_path(path)
+        excludes = shlex.split(entry.get("excludes") or "")
+        if config["strategy"] == "UPLOAD_IF_NOT_EXACT_MATCH":
+            if path in cache.exact:
+                return
+        elif not cache.has_changes(entry, directory):
+            return
+        params = {"key": config["key"], "checksum": config["checksum"], "path": path,
+                  "projectPath": config.get("projectPath")}
+        try:
+            with self.request(self.cache_endpoint, {"projectPath": config.get("projectPath")},
+                              method="HEAD", access_token=config.get("accessToken")):
+                pass
+        except ServerRequestError as error:
+            if error.status == 401:
+                log("Not authorized to upload cache: " + config["key"])
+                return
+            raise
+        with tempfile.TemporaryFile() as body:
+            pack(body, directory, ["**"], excludes, cache=True)
+            body.seek(0)
+            with self.request(self.cache_endpoint, params, body, access_token=config.get("accessToken")):
+                pass
+        log("Uploaded cache (key: %s, path: %s)" % (config["key"], path))

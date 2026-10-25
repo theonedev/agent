@@ -58,7 +58,7 @@ public class SandboxJobController {
 	}
 
 	private Commandline newSbxExecCommand(String... args) {
-		return new Commandline(executable).addArgs("exec", "--user", "root").addArgs(args);
+		return new Commandline(executable).addArgs("exec").addArgs(args);
 	}
 
 	private ProcessKiller newSandboxKiller(TaskLogger logger) {
@@ -116,7 +116,10 @@ public class SandboxJobController {
 			logger.log("Creating sandbox '" + name + "'...");
 			attempted = true;
 			SandboxUtils.createSandbox(executable, name, settings, List.of(), logger);
-			newSbxExecCommand("-i", name, "sh", "-c", "set -e; mkdir -p \"$1\"; tar -xf - -C \"$1\"", "sh", BUILD_DIR)
+			newSbxExecCommand("-i", name, "sh", "-c",
+					"set -e; if [ \"$(id -u)\" = 0 ]; then mkdir -p \"$1\"; "
+					+ "else sudo -n -- mkdir -p \"$1\"; sudo -n -- chown -R -h -P \"$(id -u):$(id -g)\" \"$1\"; fi; "
+					+ "tar -xf - -C \"$1\"", "sh", BUILD_DIR)
 					.processKiller(newSandboxKiller(logger))
 					.execute(newInfoLogger(logger), newWarningLogger(logger), new ByteArrayInputStream(archive))
 					.checkReturnCode();
@@ -188,7 +191,9 @@ public class SandboxJobController {
 
 	public void resume(TaskLogger logger) {
 		if (ready) {
-			newSbxExecCommand(name, "touch", BUILD_DIR + "/continue")
+			newSbxExecCommand(name, "sh", "-c",
+					"if [ \"$(id -u)\" = 0 ]; then exec touch \"$1\"; else exec sudo -n -- touch \"$1\"; fi",
+					"sh", BUILD_DIR + "/continue")
 					.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 		}
 	}
@@ -196,8 +201,15 @@ public class SandboxJobController {
 	public Commandline openShell() {
 		if (!ready)
 			throw new ExplicitException("Sandbox not running");
-		return newSbxExecCommand("-it", "-w", BUILD_DIR + "/work", "-e", "ONEDEV_WORKDIR=" + BUILD_DIR + "/work",
-				name, "python3", BUILD_DIR + "/sandbox-job.py", BUILD_DIR, "--shell");
+		// Enter the privileged dispatcher before accessing a build directory currently owned
+		// by a container. It restores this identity when opening a shell outside a container.
+		return newSbxExecCommand("-it", "-e", "ONEDEV_WORKDIR=" + BUILD_DIR + "/work", name, "python3", "-c", """
+				import os, sys
+				args = [sys.executable, *sys.argv[1:], str(os.geteuid()), str(os.getegid()), ','.join(map(str, os.getgroups()))]
+				if os.geteuid() != 0:
+				    args = ['sudo', '-n', '--', 'env', *[k + '=' + v for k, v in os.environ.items()], *args]
+				os.execvp(args[0], args)
+				""", BUILD_DIR + "/sandbox-job.py", BUILD_DIR, "--shell");
 	}
 
 	static List<Map<String, Object>> actions(List<Action> actions) {

@@ -65,8 +65,11 @@ class SandboxJobControllerTest {
 				  printf '%%s\\n' "$3" > sandbox-name
 				  ( %s ) && touch exists ;;
 				exec)
-				  [ "$2" = --user ] && [ "$3" = root ] || exit 97
-				  if [ "$4" = -i ]; then %s; elif [ "$5" = touch ]; then touch resumed; else %s; fi ;;
+				  shift
+				  [ "$1" != --user ] || exit 97
+				  if [ "$1" = -i ]; then %s; else
+				    case "$*" in *'/continue') touch resumed ;; *) %s ;; esac
+				  fi ;;
 				stop) touch stopped ;;
 				ls)
 				  printf '%%s-other\\n' "$(cat sandbox-name)"
@@ -103,9 +106,9 @@ class SandboxJobControllerTest {
 		assertFalse(kit.has("extends"));
 		assertFalse(kit.has("setup"));
 		assertEquals("policy allow network --sandbox build-sandbox-12-34-2 --protocol tcp,udp **", calls.get(1));
-		assertTrue(calls.get(2).startsWith("exec --user root -i build-sandbox-12-34-2 "));
-		assertFalse(calls.get(2).contains("sudo"));
-		assertEquals("exec --user root build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(3));
+		assertTrue(calls.get(2).startsWith("exec -i build-sandbox-12-34-2 "));
+		assertTrue(calls.get(2).contains("sudo -n -- chown"));
+		assertEquals("exec build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(3));
 		assertEquals("ls --quiet", calls.get(4));
 		assertEquals("rm --force build-sandbox-12-34-2", calls.get(5));
 		assertTrue(Files.size(temp.resolve("payload.tar")) > 0);
@@ -234,10 +237,12 @@ class SandboxJobControllerTest {
 			var shell = sandbox.openShell();
 			assertEquals(temp.resolve("sbx").toString(), shell.executable());
 			assertFalse(shell.envs().containsKey("SSH_AUTH_SOCK"));
-			assertEquals(List.of("exec", "--user", "root", "-it", "-w", "/onedev-build/work", "-e", "ONEDEV_WORKDIR=/onedev-build/work"),
-					shell.args().subList(0, 8));
-			assertEquals(List.of("python3", "/onedev-build/sandbox-job.py", "/onedev-build", "--shell"),
-					shell.args().subList(9, 13));
+			assertEquals(List.of("exec", "-it", "-e", "ONEDEV_WORKDIR=/onedev-build/work"),
+					shell.args().subList(0, 4));
+			assertEquals(List.of("python3", "-c"), shell.args().subList(5, 7));
+			assertTrue(shell.args().get(7).contains("'sudo', '-n'"));
+			assertEquals(List.of("/onedev-build/sandbox-job.py", "/onedev-build", "--shell"),
+					shell.args().subList(8, 11));
 			sandbox.resume(logger);
 			assertTrue(Files.exists(temp.resolve("resumed")));
 		} finally {

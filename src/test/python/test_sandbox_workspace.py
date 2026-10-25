@@ -1,11 +1,9 @@
 import base64
-import importlib.util
 import io
 import os
 from pathlib import Path
 import struct
 import subprocess
-import sys
 import tarfile
 import tempfile
 import threading
@@ -13,13 +11,10 @@ import time
 import unittest
 from unittest.mock import patch
 
-AGENT = Path(__file__).resolve().parents[2] / 'main/java/io/onedev/agent'
-sys.path.insert(0, str(AGENT))
+from sandbox_test_support import AGENT, load_runtime
 from sandbox import SandboxRuntime
 
-spec = importlib.util.spec_from_file_location('sandbox_workspace', AGENT / 'workspace/sandbox-workspace.py')
-workspace = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(workspace)
+workspace = load_runtime('sandbox_workspace', AGENT / 'workspace/sandbox-workspace.py')
 WorkspaceRunner = workspace.WorkspaceRunner
 
 

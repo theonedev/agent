@@ -1,119 +1,36 @@
 import base64
 import contextlib
 import csv
-import importlib.util
 import io
 import json
 import os
 from pathlib import Path
-import struct
 import subprocess
-import sys
 import tarfile
 import tempfile
 import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
 
-AGENT = Path(__file__).resolve().parents[2] / 'main/java/io/onedev/agent'
-sys.path.insert(0, str(AGENT))
+from sandbox_test_support import AGENT, JobWorker, archive, command, load_runtime
 import sandbox
+import sandbox_files
+from sandbox_privileges import JobState
 
-spec = importlib.util.spec_from_file_location('sandbox_job', AGENT / 'job/sandbox-job.py')
-runner = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(runner)
-
-
-def command(text, condition='SUCCESSFUL', optional=False, **extra):
-    return dict(type='command', commands=text, condition=condition, optional=optional,
-                executable='sh', options=[], extension='.sh', env={},
-                pauseCommand='sh "$ONEDEV_WORKDIR/../pause.sh"', **extra)
-
-
-def archive(files):
-    output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode='w') as tar:
-        for name, data in files.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return output.getvalue()
-
-
-class Worker(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def record(self):
-        parsed = urlsplit(self.path)
-        params = parse_qs(parsed.query)
-        assert params['token'] == ['job-secret']
-        self.server.requests.append((self.command, parsed.path, params))
-        return parsed.path, params
-
-    def reply(self, data=b''):
-        self.send_response(200)
-        self.send_header('Content-Length', str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        path, params = self.record()
-        if path.endswith('/dependencies'):
-            self.reply(archive({'dependency.txt': b'dependency'}))
-        elif path.endswith('/test'):
-            if getattr(self.server, 'test_failure', False):
-                self.send_error(503)
-            else:
-                self.reply()
-        elif path.endswith('/job-cache'):
-            self.reply(self.server.cache)
-        else:
-            self.send_error(404)
-
-    def do_PUT(self):
-        self.record()
-        self.reply()
-
-    def do_HEAD(self):
-        _, params = self.record()
-        # OneDev rejects query parameters not declared by the endpoint. The
-        # permission check accepts only the token and optional target project.
-        if set(params) - {'token', 'projectPath'}:
-            self.send_error(406)
-            return
-        self.reply()
-
-    def do_POST(self):
-        path, params = self.record()
-        body = io.BytesIO(self.rfile.read(int(self.headers['Content-Length'])))
-        if path.endswith('/run-server-step'):
-            assert params['resultFormat'] == ['json']
-            position = [sandbox.read_int(body) for _ in range(sandbox.read_int(body))]
-            placeholders = {}
-            for _ in range(sandbox.read_int(body)):
-                key = sandbox.read_exact(body, sandbox.read_int(body)).decode()
-                placeholders[key] = sandbox.read_exact(body, sandbox.read_int(body)).decode()
-            with tarfile.open(fileobj=body) as tar:
-                files = {member.name: tar.extractfile(member).read() for member in tar if member.isfile()}
-            self.server.steps.append((position, placeholders, files))
-            result = json.dumps({'successful': True, 'outputFiles': {'build-version': base64.b64encode(b'2.0').decode()}}).encode()
-            message = b'Published artifacts'
-            self.reply(struct.pack('>ii', 1, len(message)) + message + struct.pack('>ii', 2, len(result)) + result)
-        else:
-            with tarfile.open(fileobj=body) as tar:
-                self.server.uploads.append({member.name: member.linkname if member.issym() else
-                                           tar.extractfile(member).read() if member.isfile() else None for member in tar})
-            self.reply()
+runner = load_runtime('sandbox_job', AGENT / 'job/sandbox-job.py')
 
 
 class SandboxJobTest(unittest.TestCase):
     def setUp(self):
+        # Exercise operation bodies here; the Linux permission suite covers sudo dispatch.
+        self.root_user = patch.object(runner.os, 'geteuid', return_value=0)
+        self.root_user.start()
+        self.addCleanup(self.root_user.stop)
+        self.previous_directory = os.getcwd()
         self.temp = tempfile.TemporaryDirectory(prefix='onedev sandbox ')
         self.root = Path(self.temp.name)
-        self.worker = ThreadingHTTPServer(('127.0.0.1', 0), Worker)
+        self.worker = ThreadingHTTPServer(('127.0.0.1', 0), JobWorker)
         self.worker.requests, self.worker.steps, self.worker.uploads = [], [], []
         self.worker.cache = b'\x02'
         self.thread = threading.Thread(target=self.worker.serve_forever, daemon=True)
@@ -123,6 +40,7 @@ class SandboxJobTest(unittest.TestCase):
         self.runner = runner.JobRunner(self.root, self.job)
 
     def tearDown(self):
+        os.chdir(self.previous_directory)
         self.worker.shutdown()
         self.worker.server_close()
         self.thread.join()
@@ -140,12 +58,81 @@ class SandboxJobTest(unittest.TestCase):
                     entries=[{'path': 'cache', 'excludes': 'ignored/**'}], strategy='UPLOAD_IF_NOT_EXACT_MATCH',
                     **extra)
 
+    def test_job_without_containers_needs_no_privileged_helper_or_ownership_passes(self):
+        self.worker.cache = b'\x00' + archive({'file': b'cached'})
+        cache = self.cache()
+        cache['strategy'] = 'UPLOAD_IF_CHANGED'
+        with patch.object(runner.os, 'geteuid', return_value=1000), \
+                patch.object(self.runner.privileges, 'call_as_root', side_effect=AssertionError('unexpected sudo')), \
+                patch.object(self.runner.privileges, 'change_owner', side_effect=AssertionError('unexpected ownership pass')):
+            success, output = self.run_job([
+                cache,
+                command('test "$(cat cache/file)" = cached; cp dependency.txt first; cp first cache/file'),
+                dict(type='server', condition='SUCCESSFUL', optional=False, path=None,
+                     placeholders=[], includes=['first'], excludes=[]),
+                command('test "$(cat "$ONEDEV_WORKDIR/../build-version")" = 2.0; cp first second')])
+        self.assertTrue(success, output)
+        self.assertEqual((self.runner.work / 'second').read_text(), 'dependency')
+        self.assertEqual(self.worker.steps[0][2], {'first': b'dependency'})
+        self.assertEqual(self.worker.uploads, [{'file': b'dependency'}])
+
+    def test_privileged_container_restores_ownership_once_even_after_failure(self):
+        cache = sandbox.ProvisionedCache(dict(entries=[dict(path='cache')]))
+        cache.exact.add('cache')
+        cache.provisioned = 1234.5
+        self.runner.caches = [cache]
+        self.runner.pulled_images = {'alpine'}
+        self.runner.network = 'job-network'
+        for run_as in ('0:0', '1001:1001'):
+            for outcome in (True, False, RuntimeError('Docker failed')):
+                with self.subTest(run_as=run_as, outcome=outcome):
+                    state = dict(JobState.capture(self.runner).to_dict(), owner=[1000, 1000])
+                    payload = dict(config=self.job, state=state, env=dict(os.environ), operation='container',
+                                   args=[dict(image='alpine', runAs=run_as), '0'], kwargs={})
+                    result = self.root / 'result.json'
+                    with patch.object(runner.sys, 'stdin', io.StringIO(json.dumps(payload))), \
+                            patch.object(runner.JobRunner, 'docker', side_effect=lambda *args: outcome) as docker, \
+                            patch.object(runner.JobPrivileges, 'change_owner') as owner:
+                        if isinstance(outcome, Exception):
+                            docker.side_effect = outcome
+                        runner.run_operation(self.root, result, runner.JobRunner)
+                    expected = [] if run_as == '0:0' else [(run_as, [self.root])]
+                    expected.append(('1000:1000', [self.root]))
+                    self.assertEqual([call.args for call in owner.call_args_list], expected)
+                    response = json.loads(result.read_text())
+                    self.assertEqual(response['error'], str(outcome) if isinstance(outcome, Exception) else None)
+                    self.assertEqual(response['state'], state)
+                    self.assertFalse((self.root / 'shell.json').exists())
+
+    def test_ownership_changes_do_not_scan_caches(self):
+        self.worker.cache = b'\x00' + archive({'file': b'cached'})
+        config = self.cache()
+        config.update(strategy='UPLOAD_IF_CHANGED', entries=[dict(path='first'), dict(path='second')])
+        self.runner.setup_cache(config)
+        second = self.runner.work / 'second/file'
+        second.write_text('changed')
+        changed_at = self.runner.caches[0].provisioned + 2
+        os.utime(second, (changed_at, changed_at))
+        with patch.object(sandbox, 'cache_paths', wraps=sandbox_files.cache_paths) as scanned, \
+                patch.object(runner.os, 'chown'):
+            self.runner.privileges.change_owner('1000:1000', [self.runner.work / 'first'])
+        scanned.assert_not_called()
+        self.runner.upload_caches()
+        self.assertEqual(self.worker.uploads, [{'file': b'changed'}])
+
+    def test_denied_cache_upload_is_skipped_without_failing_job(self):
+        self.worker.deny_cache_upload = True
+        success, output = self.run_job([self.cache(), command('echo cached > cache/file')])
+        self.assertTrue(success, output)
+        self.assertIn('Not authorized to upload cache: cache-key', output)
+        self.assertEqual(self.worker.uploads, [])
+
     def test_executor_test_connects_to_server_without_running_job(self):
         self.job['test'] = True
         self.job.update(runOptions='--env TEST=value', alwaysPullContainerImage=False)
         for image, code in ((None, 0), ('', 0), ('alpine', 0), ('alpine', 9)):
             with self.subTest(image=image, code=code), patch.object(runner.subprocess, 'call', return_value=code) as call, \
-                    patch.object(self.runner, 'change_owner'):
+                    patch.object(self.runner.privileges, 'change_owner'):
                 self.job['testImage'] = image
                 self.worker.requests.clear()
                 success, output = self.run_job([])
@@ -228,7 +215,7 @@ class SandboxJobTest(unittest.TestCase):
         for name, target in links.items():
             (source / name).symlink_to(target)
         body = io.BytesIO()
-        sandbox.pack(body, source, ['**'], [], cache=True)
+        sandbox_files.pack(body, source, ['**'], [], cache=True)
         self.worker.cache = b'\x01' + body.getvalue()
 
         # Restoring again must replace existing links without following them.
@@ -253,7 +240,7 @@ class SandboxJobTest(unittest.TestCase):
         self.runner.setup_cache(config)
 
         # Make changes newer than cache setup without depending on filesystem timestamp precision.
-        changed_at = self.runner.caches[0]['provisioned'] + 2
+        changed_at = self.runner.caches[0].provisioned + 2
         outside.write_text('changed target')
         os.utime(outside, (changed_at, changed_at))
         self.runner.upload_caches()
@@ -287,7 +274,7 @@ class SandboxJobTest(unittest.TestCase):
                     tar.addfile(info, io.BytesIO(b'changed'))
                 body.seek(0)
                 with self.assertRaisesRegex(ValueError, 'Symbolic link is not allowed'):
-                    sandbox.unpack(body, target, allow_external_symlinks=True)
+                    sandbox_files.unpack(body, target, allow_external_symlinks=True)
                 self.assertEqual(secret.read_text(), 'keep')
 
     def test_cache_restore_replaces_leaf_symlinks_without_writing_to_targets(self):
@@ -296,7 +283,7 @@ class SandboxJobTest(unittest.TestCase):
         target = self.root / 'restore'
         target.mkdir()
         (target / 'file').symlink_to(outside)
-        sandbox.unpack(io.BytesIO(archive({'file': b'cached'})), target, allow_external_symlinks=True)
+        sandbox_files.unpack(io.BytesIO(archive({'file': b'cached'})), target, allow_external_symlinks=True)
         self.assertFalse((target / 'file').is_symlink())
         self.assertEqual((target / 'file').read_bytes(), b'cached')
         self.assertEqual(outside.read_text(), 'keep')
@@ -316,7 +303,7 @@ class SandboxJobTest(unittest.TestCase):
                     tar.addfile(info)
                 body.seek(0)
                 with self.assertRaises(ValueError):
-                    sandbox.unpack(body, self.root / 'restore', allow_external_symlinks=True)
+                    sandbox_files.unpack(body, self.root / 'restore', allow_external_symlinks=True)
                 self.assertEqual(outside.read_text(), 'keep')
 
     def test_dependency_restore_keeps_external_symlink_restriction(self):
@@ -327,7 +314,7 @@ class SandboxJobTest(unittest.TestCase):
             tar.addfile(info)
         body.seek(0)
         with self.assertRaisesRegex(ValueError, 'Archive link escapes target'):
-            sandbox.unpack(body, self.runner.work)
+            sandbox_files.unpack(body, self.runner.work)
 
     def test_exact_cache_hit_does_not_upload(self):
         self.worker.cache = b'\x00' + archive({'file': b'cached'})
@@ -393,9 +380,9 @@ class SandboxJobTest(unittest.TestCase):
         (self.runner.work / 'link').symlink_to(outside)
         for path in ('../outside', '/tmp/outside', 'link/file'):
             with self.assertRaises(ValueError):
-                sandbox.safe_path(self.runner.work, path)
+                sandbox_files.safe_path(self.runner.work, path)
         with self.assertRaises(ValueError):
-            sandbox.unpack(io.BytesIO(archive({'../escape': b'x'})), self.runner.work)
+            sandbox_files.unpack(io.BytesIO(archive({'../escape': b'x'})), self.runner.work)
 
     def test_pause_resume(self):
         step = command('sh "$ONEDEV_WORKDIR/../pause.sh"; touch resumed')
@@ -449,7 +436,7 @@ class SandboxJobTest(unittest.TestCase):
                 execute.assert_called_once_with('docker', ['docker', 'exec', '-it', 'onedev-step-0', 'bash'])
             return True
 
-        with patch.object(self.runner, 'docker', side_effect=docker), patch.object(self.runner, 'change_owner') as owner:
+        with patch.object(self.runner, 'docker', side_effect=docker), patch.object(self.runner.privileges, 'change_owner') as owner:
             self.assertTrue(self.runner.command(step, '0'))
         owner.assert_any_call('123:456', [self.root])
         self.assertFalse(configs[0].exists())
@@ -470,7 +457,7 @@ class SandboxJobTest(unittest.TestCase):
                 execute.assert_called_once_with('docker', ['docker', 'exec', '-it', 'onedev-step-1-2', 'sh'])
             raise RuntimeError('Docker transport failed')
 
-        with patch.object(self.runner, 'docker', side_effect=docker), patch.object(self.runner, 'change_owner'):
+        with patch.object(self.runner, 'docker', side_effect=docker), patch.object(self.runner.privileges, 'change_owner'):
             with self.assertRaisesRegex(RuntimeError, 'Docker transport failed'):
                 self.runner.container(dict(image='tool'), '1-2')
         self.assertFalse((self.root / 'shell.json').exists())
@@ -526,7 +513,7 @@ class SandboxJobTest(unittest.TestCase):
                     subprocess.CompletedProcess([], 1, 'still starting\n'), self.service_info(),
                     subprocess.CompletedProcess([], 0, 'accepting connections\n')]) as checks, \
                 patch.object(self.runner, 'add_service_host', side_effect=publish) as hosts, \
-                patch.object(self.runner, 'change_owner'), patch.object(runner.time, 'sleep') as sleep, \
+                patch.object(self.runner.privileges, 'change_owner'), patch.object(runner.time, 'sleep') as sleep, \
                 patch.dict(runner.os.environ, NO_PROXY='localhost', no_proxy='localhost'):
             success, output = self.run_job([
                 command('test "$NO_PROXY" = localhost,database && test "$no_proxy" = localhost,database && touch shell-started'),
@@ -597,10 +584,10 @@ class SandboxJobTest(unittest.TestCase):
 
     def test_run_container_accepts_vm_file_options_and_mounts_absolute_caches(self):
         self.job['runOptions'] = '--env-file /tmp/environment --cidfile /tmp/container-id -v /tmp/shared:/shared --privileged'
-        self.runner.caches = [{'entries': [{'path': '/tmp/cache'}, {'path': 'relative-cache'}]}]
+        self.runner.caches = [sandbox.ProvisionedCache(dict(entries=[dict(path='/tmp/cache'), dict(path='relative-cache')]))]
         step = dict(image='tool', runAs='0:0', args='--file "a b"', workingDir='/output',
                     volumeMounts={'dependency.txt': '/input/file'}, env={}, useTTY=False)
-        with patch.object(self.runner, 'docker', return_value=True) as docker, patch.object(self.runner, 'change_owner'):
+        with patch.object(self.runner, 'docker', return_value=True) as docker, patch.object(self.runner.privileges, 'change_owner'):
             self.assertTrue(self.runner.container(step, '1-2'))
         args = docker.call_args.args[0]
         self.assertNotIn('--cpus', args)
@@ -629,10 +616,14 @@ class SandboxJobTest(unittest.TestCase):
             docker.assert_not_called()
 
     def test_build_image_outputs_file_options_and_pruning(self):
+        self.runner.privileges.owner = [1000, 1000]
         step = dict(buildPath='context', dockerfile='Dockerfile.custom', platforms='linux/amd64,linux/arm64',
                     moreOptions='--secret id=key,src=/tmp/key --metadata-file /tmp/metadata --cache-to type=local,dest=/tmp/cache',
                     tags='registry/image:<&onedev#attributes/os#onedev&> registry/image:latest')
-        with patch.object(self.runner, 'docker', return_value=True) as docker:
+        with patch.object(runner.os, 'geteuid', return_value=1000), \
+                patch.object(self.runner.privileges, 'call_as_root', side_effect=AssertionError('unexpected sudo')), \
+                patch.object(self.runner.privileges, 'change_owner', side_effect=AssertionError('unexpected ownership pass')), \
+                patch.object(self.runner, 'docker', return_value=True) as docker:
             self.assertTrue(self.runner.build_image(step))
             docker.assert_called_once()
             build = docker.call_args.args[0]
@@ -665,6 +656,7 @@ class SandboxJobTest(unittest.TestCase):
                     self.assertEqual(docker.call_args.args[1]['BUILDX_CONFIG'], buildx_config)
 
     def test_imagetools_and_prune_resolve_arguments_and_failure_keeps_step_scheduling(self):
+        self.runner.privileges.owner = [1000, 1000]
         steps = (
             (dict(type='imagetools', arguments='create -f /tmp/manifest.json -t image:<&onedev#attributes/os#onedev&>'),
              ['imagetools', 'create', '-f', '/tmp/manifest.json', '-t', 'image:linux']),
@@ -672,7 +664,10 @@ class SandboxJobTest(unittest.TestCase):
              ['prune', '-f', '--filter', 'description=linux']))
         for step, args in steps:
             step.update(condition='SUCCESSFUL', optional=False)
-            with self.subTest(step=step['type']), patch.object(runner.subprocess, 'call', return_value=8) as call:
+            with self.subTest(step=step['type']), patch.object(runner.os, 'geteuid', return_value=1000), \
+                    patch.object(self.runner.privileges, 'call_as_root', side_effect=AssertionError('unexpected sudo')), \
+                    patch.object(self.runner.privileges, 'change_owner', side_effect=AssertionError('unexpected ownership pass')), \
+                    patch.object(runner.subprocess, 'call', return_value=8) as call:
                 success, output = self.run_job([step, command('touch skipped')])
                 self.assertFalse(success)
                 call.assert_called_once()
@@ -684,9 +679,9 @@ class SandboxJobTest(unittest.TestCase):
 
     def test_ant_patterns(self):
         for name in ('report.xml', 'nested/report.xml', 'a/b/report.xml'):
-            self.assertTrue(sandbox.matches(name, '**/*.xml'))
-        self.assertFalse(sandbox.matches('nested/report.xml', '*.xml'))
-        self.assertTrue(sandbox.matches('cache/sub/file', 'cache/'))
+            self.assertTrue(sandbox_files.matches(name, '**/*.xml'))
+        self.assertFalse(sandbox_files.matches('nested/report.xml', '*.xml'))
+        self.assertTrue(sandbox_files.matches('cache/sub/file', 'cache/'))
 
 
 if __name__ == '__main__':

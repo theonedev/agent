@@ -1,7 +1,9 @@
 """OneDev job orchestration inside a sandbox.
 
-The host copies this entry point, sandbox.py, and a JSON manifest into a fresh,
+The host copies this entry point, shared Python modules, and a JSON manifest into a fresh,
 mountless sandbox. Build commands, checkout, caches, and step scheduling run there.
+Filesystem and Buildx operations use the template user; container operations and
+absolute cache operations may elevate and return their outputs to that user.
 """
 import base64
 from contextlib import contextmanager
@@ -17,8 +19,9 @@ import sys
 import tempfile
 import time
 
-from sandbox import (SandboxRuntime, log, log_error,
-                     safe_path, unpack, pack, read_exact, read_int)
+from sandbox import ProvisionedCache, SandboxRuntime, log, log_error, read_exact, read_int
+from sandbox_files import pack, safe_path, unpack
+from sandbox_privileges import JobPrivileges, root_operation, run_operation
 
 
 def docker_options(value, reserved, short_reserved, short_flags):
@@ -37,10 +40,16 @@ def docker_options(value, reserved, short_reserved, short_flags):
     return args
 
 
-def open_shell(root):
+def open_shell(root, identity=None):
     try:
         target = json.loads(safe_path(root, "shell.json").read_text())
     except FileNotFoundError:
+        os.chdir(root / "work")
+        if identity is not None:
+            uid, gid, groups = identity
+            os.setgroups(groups)
+            os.setgid(gid)
+            os.setuid(uid)
         os.execvp("bash", ["bash"])
         return
     state = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", target["container"]],
@@ -57,14 +66,50 @@ def write_string(stream, value):
 
 
 class JobRunner(SandboxRuntime):
-    def __init__(self, root, job):
-        super().__init__(root, job, cache_endpoint="job-cache")
+    def __init__(self, root, job, initialize=True):
+        super().__init__(root, job, cache_endpoint="job-cache", initialize=initialize)
         self.pulled_images = set()
         self.network = None
-        for name, value in job.get("attributes", {}).items():
-            path = safe_path(root, "attributes/" + name)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(value)
+        self.privileges = JobPrivileges(self, Path(__file__).resolve())
+        if initialize:
+            for name, value in job.get("attributes", {}).items():
+                path = safe_path(root, "attributes/" + name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(value)
+
+    def owned_paths(self):
+        return [self.root, *self.absolute_cache_paths()]
+
+    def restore_cache(self, config, path):
+        if self.privileges.requires_root_for_cache(path):
+            return self.restore_cache_as_root(config, path)
+        return super().restore_cache(config, path)
+
+    @root_operation
+    def restore_cache_as_root(self, config, path):
+        directory = self.data_path(path)
+        try:
+            return super().restore_cache(config, path)
+        finally:
+            # Also return partially restored files to the template user on failure.
+            # Parent directories keep their original ownership and permissions.
+            self.privileges.restore_owner([directory])
+
+    def upload_cache(self, cache, entry):
+        path = entry["path"]
+        if self.privileges.requires_root_for_cache(path):
+            self.upload_cache_as_root(cache.to_state(), entry)
+        else:
+            super().upload_cache(cache, entry)
+
+    @root_operation
+    def upload_cache_as_root(self, state, entry):
+        super().upload_cache(ProvisionedCache.from_state(state), entry)
+
+    def prepare_dependencies(self):
+        log("Downloading job dependencies...")
+        with self.request("dependencies") as response:
+            unpack(response, self.work)
 
     def command(self, step, position):
         safe_path(self.root, "pause.sh").write_text(
@@ -127,10 +172,6 @@ class JobRunner(SandboxRuntime):
             log_error("Docker command exited with code " + str(code))
         return code == 0
 
-    def change_owner(self, owner, paths):
-        command = ["chown", "-R", owner, *map(str, paths)]
-        subprocess.run(command, check=True, stderr=subprocess.STDOUT)
-
     def container_options(self, image):
         options = []
         if self.config.get("alwaysPullContainerImage", True) and image not in self.pulled_images:
@@ -156,6 +197,7 @@ class JobRunner(SandboxRuntime):
         subprocess.run(command, input="\n%s\t%s\n" % (address, name), text=True,
                        stdout=subprocess.DEVNULL, check=True)
 
+    @root_operation
     def start_services(self):
         services = self.config.get("services", [])
         if not services:
@@ -180,34 +222,39 @@ class JobRunner(SandboxRuntime):
             with self.docker_env(service) as env:
                 if not self.docker(args, env):
                     raise RuntimeError("Unable to start service '%s'" % name)
-            log("Waiting for service '%s' to be ready..." % name)
-            while True:
-                result = subprocess.run(["docker", "inspect", container], check=True,
-                                        stdout=subprocess.PIPE, text=True)
-                info = json.loads(result.stdout)[0]
-                state = info["State"]
-                if state["Status"] == "running":
-                    result = subprocess.run(["docker", "exec", container, "sh", "-c",
-                                             service["readinessCheckCommand"]],
-                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    for line in result.stdout.splitlines():
-                        log("Service readiness check: " + line)
-                    if result.returncode == 0:
-                        address = info["NetworkSettings"]["Networks"][self.network]["IPAddress"]
-                        if not address:
-                            raise RuntimeError("Service '%s' has no address on the job network" % name)
-                        self.add_service_host(name, address)
-                        log("Service '%s' is ready" % name)
-                        break
-                elif state["Status"] in ("exited", "dead"):
-                    if state.get("OOMKilled"):
-                        log_error("Out of memory")
-                    elif state.get("Error"):
-                        log_error(state["Error"])
-                    self.docker(["logs", container], os.environ)
-                    raise RuntimeError("Service '%s' is stopped unexpectedly" % name)
-                time.sleep(10)
+            self.wait_for_service(service, container)
 
+    def wait_for_service(self, service, container):
+        name = service["name"]
+        log("Waiting for service '%s' to be ready..." % name)
+        while True:
+            result = subprocess.run(["docker", "inspect", container], check=True,
+                                    stdout=subprocess.PIPE, text=True)
+            info = json.loads(result.stdout)[0]
+            state = info["State"]
+            if state["Status"] == "running":
+                result = subprocess.run(["docker", "exec", container, "sh", "-c",
+                                         service["readinessCheckCommand"]],
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                for line in result.stdout.splitlines():
+                    log("Service readiness check: " + line)
+                if result.returncode == 0:
+                    address = info["NetworkSettings"]["Networks"][self.network]["IPAddress"]
+                    if not address:
+                        raise RuntimeError("Service '%s' has no address on the job network" % name)
+                    self.add_service_host(name, address)
+                    log("Service '%s' is ready" % name)
+                    break
+            elif state["Status"] in ("exited", "dead"):
+                if state.get("OOMKilled"):
+                    log_error("Out of memory")
+                elif state.get("Error"):
+                    log_error(state["Error"])
+                self.docker(["logs", container], os.environ)
+                raise RuntimeError("Service '%s' is stopped unexpectedly" % name)
+            time.sleep(10)
+
+    @root_operation
     def container(self, step, position, arguments=None, entrypoint=None):
         if self.network:
             docker_options(self.config.get("runOptions"), {"--network", "--net"}, "", "Pq")
@@ -224,13 +271,9 @@ class JobRunner(SandboxRuntime):
         args.extend([*options, "--user", run_as, "-v", str(self.root) + ":" + str(self.root)])
         for source, target in step.get("volumeMounts", {}).items():
             args.extend(["-v", str(self.work / self.replace(source)) + ":" + self.replace(target)])
-        paths = [self.root]
-        for cache in self.caches:
-            for entry in cache["entries"]:
-                path = Path(entry["path"])
-                if path.is_absolute():
-                    args.extend(["-v", str(path) + ":" + str(path)])
-                    paths.append(path)
+        paths = self.owned_paths()
+        for path in self.absolute_cache_paths():
+            args.extend(["-v", str(path) + ":" + str(path)])
         working_dir = str(self.work) if entrypoint else step.get("workingDir")
         if working_dir:
             args.extend(["-w", self.replace(working_dir)])
@@ -244,11 +287,10 @@ class JobRunner(SandboxRuntime):
             args.extend(["--entrypoint", entrypoint])
         args.extend(["--", image])
         args.extend(arguments if arguments is not None else shlex.split(self.replace(step.get("args") or "")))
-        owner = "%s:%s" % (os.geteuid(), os.getegid())
         shell = safe_path(self.root, "shell.json")
         try:
             if run_as != "0:0":
-                self.change_owner(run_as, paths)
+                self.privileges.change_owner(run_as, paths)
             with self.docker_env(step) as env:
                 # Publish atomically so terminals never read a partially written target.
                 target = safe_path(self.root, "shell.json.tmp")
@@ -256,10 +298,12 @@ class JobRunner(SandboxRuntime):
                 target.replace(shell)
                 return self.docker(args, env)
         finally:
-            shell.unlink(missing_ok=True)
-            # Container-created files must remain usable by later shell and server steps.
-            if owner != "0:0":
-                self.change_owner(owner, paths)
+            # Restore before cleanup; either operation may encounter paths owned by
+            # another UID or made inaccessible by the container.
+            try:
+                self.privileges.restore_owner(paths)
+            finally:
+                shell.unlink(missing_ok=True)
 
     def build_image(self, step):
         options = docker_options(self.replace(step.get("moreOptions") or ""), {
@@ -311,20 +355,23 @@ class JobRunner(SandboxRuntime):
                  [self.replace(p) for p in step["excludes"]])
             body.seek(0)
             with self.request("run-server-step", {"resultFormat": "json"}, body) as response:
-                while True:
-                    kind = read_int(response)
-                    payload = read_exact(response, read_int(response))
-                    if kind == 1:
-                        log(payload.decode())
-                    elif kind == 2:
-                        result = json.loads(payload)
-                        for name, value in result["outputFiles"].items():
-                            path = safe_path(self.root, name)
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_bytes(base64.b64decode(value))
-                        return result["successful"]
-                    else:
-                        raise ValueError("Unexpected server response frame")
+                return self.read_server_result(response)
+
+    def read_server_result(self, response):
+        while True:
+            kind = read_int(response)
+            payload = read_exact(response, read_int(response))
+            if kind == 1:
+                log(payload.decode())
+            elif kind == 2:
+                result = json.loads(payload)
+                for name, value in result["outputFiles"].items():
+                    path = safe_path(self.root, name)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(base64.b64decode(value))
+                return result["successful"]
+            else:
+                raise ValueError("Unexpected server response frame")
 
     def execute(self, actions, prefix=None):
         successful = True
@@ -379,17 +426,16 @@ class JobRunner(SandboxRuntime):
     def run(self):
         if self.config.get("test"):
             return self.test()
-        log("Downloading job dependencies...")
-        with self.request("dependencies") as response:
-            unpack(response, self.work)
+        self.prepare_dependencies()
         with self.request("job-workdir", {"workDir": str(self.work)}, method="PUT"):
             pass
         try:
-            self.start_services()
+            if self.config.get("services"):
+                self.start_services()
             successful = self.execute(self.config["actions"])
         finally:
             log("##onedev-phase:finalization")
-        if successful:
+        if successful and self.caches:
             self.upload_caches()
         return successful
 
@@ -407,15 +453,23 @@ class JobRunner(SandboxRuntime):
         return True
 
 
-if __name__ == "__main__":
-    shell = len(sys.argv) > 2 and sys.argv[2] == "--shell"
+def main(args):
+    mode = args[1] if len(args) > 1 else None
     try:
-        root = Path(sys.argv[1])
-        if shell:
-            open_shell(root)
+        root = Path(args[0])
+        if mode == "--shell":
+            identity = (int(args[2]), int(args[3]), [int(g) for g in args[4].split(",") if g])
+            open_shell(root, identity)
+        elif mode == "--operation":
+            run_operation(root, args[2], JobRunner)
         else:
             job = json.loads((root / "job.json").read_text())
-            sys.exit(0 if JobRunner(root, job).run() else 1)
+            return 0 if JobRunner(root, job).run() else 1
+        return 0
     except Exception as error:
-        log_error(("Unable to open build terminal: " if shell else "Sandbox job failed: ") + str(error))
-        sys.exit(1)
+        log_error(("Unable to open build terminal: " if mode == "--shell" else "Sandbox job failed: ") + str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

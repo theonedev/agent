@@ -16,8 +16,8 @@ import tarfile
 import tempfile
 import time
 
-from sandbox import (SandboxRuntime, cache_paths, log, log_error, pack, paths_changed, read_int,
-                     safe_path, unpack)
+from sandbox import SandboxRuntime, log, log_error, read_int
+from sandbox_files import cache_paths, pack, paths_changed, safe_path, unpack
 
 
 def unpack_user_data(stream, target):
@@ -119,7 +119,7 @@ class WorkspaceRunner(SandboxRuntime):
                 if not path.exists():
                     continue
                 excludes = shlex.split(entry.get("excludes") or "")
-                paths = [path] if path.is_file() else cache_paths(path, excludes)
+                paths = [path] if path.is_file() else cache_paths(path, excludes, include_root=True)
                 if not paths_changed(paths, self.provisioned):
                     continue
                 with tempfile.TemporaryFile() as archive:
@@ -199,16 +199,21 @@ class WorkspaceRunner(SandboxRuntime):
         os.execvpe("tmux", ["tmux", "-L", "onedev-" + shell_id, "new-session", executable], self.env)
 
 
-if __name__ == "__main__":
+def main(args):
     try:
-        root = Path(sys.argv[1])
+        root = Path(args[0])
         workspace = WorkspaceRunner(root, json.loads((root / "workspace.json").read_text()))
-        if len(sys.argv) > 2 and sys.argv[2] == "--shell":
-            workspace.open_shell(sys.argv[3], sys.argv[4])
-        elif len(sys.argv) > 2 and sys.argv[2] == "--test":
+        if len(args) > 1 and args[1] == "--shell":
+            workspace.open_shell(args[2], args[3])
+        elif len(args) > 1 and args[1] == "--test":
             workspace.test()
         else:
             workspace.run()
+        return 0
     except Exception as error:
         log_error("Sandbox workspace failed: " + str(error))
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
