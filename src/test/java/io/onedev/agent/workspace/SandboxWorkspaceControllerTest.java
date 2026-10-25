@@ -6,6 +6,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.Serializable;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -18,9 +19,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.turbo.TurboFilter;
+import ch.qos.logback.core.spi.FilterReply;
 import io.onedev.agent.Agent;
 import io.onedev.agent.AgentSocket;
 import io.onedev.agent.SandboxSettings;
@@ -207,8 +215,7 @@ class SandboxWorkspaceControllerTest {
 			assertEquals("file-result", new String(file.getContent(), UTF_8));
 			controller.stopSandbox();
 			sandboxes.remove("token");
-			assertInstanceOf(ExplicitException.class, service.invoke(socket, SerializationUtils.clone(gitRequest)));
-			assertInstanceOf(ExplicitException.class, service.invoke(socket, SerializationUtils.clone(fileRequest)));
+			assertStoppedWorkspaceRequests(socket, service, gitRequest, fileRequest);
 			assertTrue(Files.exists(temp.resolve("exists")));
 			var deleteRequest = new WorkspaceDeleteRequest(ProvisionMode.SANDBOX, 1L, 2L);
 			assertNull(service.invoke(socket, SerializationUtils.clone(deleteRequest)));
@@ -223,6 +230,35 @@ class SandboxWorkspaceControllerTest {
 				Agent.sbxPath = previousSbxPath;
 				Agent.installDir = previousInstallDir;
 			}
+		}
+	}
+
+	private void assertStoppedWorkspaceRequests(AgentSocket socket, Method service, Serializable... requests) throws Exception {
+		var testThread = Thread.currentThread();
+		var context = (LoggerContext) LoggerFactory.getILoggerFactory();
+		var filter = new TurboFilter() {
+			@Override
+			public FilterReply decide(Marker marker, Logger logger, Level level, String message,
+					Object[] arguments, Throwable throwable) {
+				// These requests deliberately access a stopped workspace. Keep all other errors visible.
+				if (Thread.currentThread() == testThread && logger.getName().equals(AgentSocket.class.getName())
+						&& level == Level.ERROR && "Error handling websocket request".equals(message)
+						&& throwable instanceof ExplicitException
+						&& "Sandbox workspace not running".equals(throwable.getMessage()))
+					return FilterReply.DENY;
+				return FilterReply.NEUTRAL;
+			}
+		};
+		filter.start();
+		context.addTurboFilter(filter);
+		try {
+			for (var request : requests) {
+				var failure = assertInstanceOf(ExplicitException.class, service.invoke(socket, SerializationUtils.clone(request)));
+				assertEquals("Sandbox workspace not running", failure.getMessage());
+			}
+		} finally {
+			context.getTurboFilterList().remove(filter);
+			filter.stop();
 		}
 	}
 
