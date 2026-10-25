@@ -114,10 +114,18 @@ public class SandboxUtils {
 			if (result.getReturnCode() != 0)
 				logCreationErrors(executable, name, started, Instant.now(), logger);
 			result.checkReturnCode();
+			allowAllNetworkAccess(executable, name, logger);
 		} finally {
 			// sbx persists the kit configuration for subsequent starts.
 			FileUtils.deletePath(kitDir);
 		}
+	}
+
+	public static void allowAllNetworkAccess(String executable, String name, TaskLogger logger) {
+		// Jobs and workspaces need arbitrary network access, including to their OneDev server.
+		new Commandline(executable).addArgs("policy", "allow", "network", "--sandbox", name,
+				"--protocol", "tcp,udp", "**").timeout(120)
+				.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
 	}
 
 	private static void logCreationErrors(String executable, String name, Instant started, Instant finished,

@@ -125,7 +125,7 @@ class SandboxUtilsTest {
 	@Test
 	void successfulCreationDoesNotReadDaemonLogs() throws Exception {
 		create(executable(0, "available", List.of()), List.of());
-		assertEquals(1, Files.readAllLines(temp.resolve("calls")).size());
+		assertEquals(2, Files.readAllLines(temp.resolve("calls")).size());
 		assertTrue(messages.isEmpty());
 	}
 }

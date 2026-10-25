@@ -179,6 +179,8 @@ class SandboxWorkspaceControllerTest {
 		}
 		calls = Files.readString(temp.resolve("calls"));
 		assertEquals(1, calls.lines().filter(it -> it.startsWith("env create ")).count());
+		assertEquals(2, calls.lines().filter(it -> it.equals(
+				"policy allow network --sandbox workspace-1-2 --protocol tcp,udp **")).count());
 		assertFalse(calls.contains("--publish"));
 		assertFalse(calls.contains("--unpublish"));
 		SandboxWorkspaceController.deleteSandbox(temp.resolve("sbx").toString(), "workspace-1-2", logger);

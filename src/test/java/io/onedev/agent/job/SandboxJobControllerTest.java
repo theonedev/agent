@@ -90,7 +90,7 @@ class SandboxJobControllerTest {
 				services, new SandboxSettings(null, null, null, true, true, "http://server", null, null, List.of())));
 		assertTrue(sandbox.runJob(remoteData, remoteData.getServices(), null, Map.of(), logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(5, calls.size());
+		assertEquals(6, calls.size());
 		var kitPath = Path.of(Files.readString(temp.resolve("kit-path")).trim());
 		assertEquals("create --name build-sandbox-12-34-2 --pull always --skills off --cpus 2 --memory 2g " + kitPath, calls.get(0));
 		assertFalse(Files.exists(kitPath));
@@ -102,11 +102,12 @@ class SandboxJobControllerTest {
 		assertEquals("-l", kit.path("sandbox").path("command").get(0).asText());
 		assertFalse(kit.has("extends"));
 		assertFalse(kit.has("setup"));
-		assertTrue(calls.get(1).startsWith("exec --user root -i build-sandbox-12-34-2 "));
-		assertFalse(calls.get(1).contains("sudo"));
-		assertEquals("exec --user root build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(2));
-		assertEquals("ls --quiet", calls.get(3));
-		assertEquals("rm --force build-sandbox-12-34-2", calls.get(4));
+		assertEquals("policy allow network --sandbox build-sandbox-12-34-2 --protocol tcp,udp **", calls.get(1));
+		assertTrue(calls.get(2).startsWith("exec --user root -i build-sandbox-12-34-2 "));
+		assertFalse(calls.get(2).contains("sudo"));
+		assertEquals("exec --user root build-sandbox-12-34-2 python3 -u /onedev-build/sandbox-job.py /onedev-build", calls.get(3));
+		assertEquals("ls --quiet", calls.get(4));
+		assertEquals("rm --force build-sandbox-12-34-2", calls.get(5));
 		assertTrue(Files.size(temp.resolve("payload.tar")) > 0);
 		var extracted = Files.createTempDirectory(temp, "manifest");
 		try (var input = new FileInputStream(temp.resolve("payload.tar").toFile())) {
@@ -193,9 +194,9 @@ class SandboxJobControllerTest {
 	void deletesAfterFailedPreparation() throws Exception {
 		assertThrows(RuntimeException.class, () -> sandbox("exit 0", "cat > payload.tar; exit 6", "exit 0").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(4, calls.size());
-		assertEquals("ls --quiet", calls.get(2));
-		assertTrue(calls.get(3).matches("rm --force sandbox-test-[a-f0-9]{8}"));
+		assertEquals(5, calls.size());
+		assertEquals("ls --quiet", calls.get(3));
+		assertTrue(calls.get(4).matches("rm --force sandbox-test-[a-f0-9]{8}"));
 		assertFalse(Files.exists(temp.resolve("exists")));
 	}
 

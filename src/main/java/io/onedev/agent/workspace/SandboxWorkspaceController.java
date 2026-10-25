@@ -111,6 +111,7 @@ public class SandboxWorkspaceController {
 			logger.log("Resuming sandbox '" + data.sandboxName() + "'...");
 			// Stop processes left behind if the previous host/agent died without cleaning up.
 			SandboxUtils.stopSandbox(executable, data.sandboxName(), logger);
+			SandboxUtils.allowAllNetworkAccess(executable, data.sandboxName(), logger);
 		}
 		// Use the image's default user for workspace operations. Only directory initialization
 		// needs root; transfer existing root-owned workspaces when they are first resumed.
