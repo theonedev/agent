@@ -167,9 +167,10 @@ class SandboxJobControllerTest {
 			}
 		}));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(2, calls.size());
+		assertEquals(3, calls.size());
 		assertTrue(calls.get(0).startsWith("create --name sandbox-test-"));
-		assertEquals("ls --quiet", calls.get(1));
+		assertEquals("daemon status --format json", calls.get(1));
+		assertEquals("ls --quiet", calls.get(2));
 		assertTrue(failure.getMessage().contains("exit code: 4"));
 		assertFalse(Files.exists(Path.of(Files.readString(temp.resolve("kit-path")).trim())));
 		assertEquals(0, failure.getSuppressed().length);
@@ -180,9 +181,10 @@ class SandboxJobControllerTest {
 	void deletesSandboxLeftByFailedCreation() throws Exception {
 		var failure = assertThrows(RuntimeException.class, () -> sandbox("touch exists; exit 4", "exit 0").testSandbox(null, null, logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
-		assertEquals(3, calls.size());
-		assertEquals("ls --quiet", calls.get(1));
-		assertTrue(calls.get(2).matches("rm --force sandbox-test-[a-f0-9]{8}"));
+		assertEquals(4, calls.size());
+		assertEquals("daemon status --format json", calls.get(1));
+		assertEquals("ls --quiet", calls.get(2));
+		assertTrue(calls.get(3).matches("rm --force sandbox-test-[a-f0-9]{8}"));
 		assertTrue(failure.getMessage().contains("exit code: 4"));
 		assertFalse(Files.exists(temp.resolve("exists")));
 	}

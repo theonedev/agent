@@ -2,12 +2,18 @@ package io.onedev.agent;
 
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -16,8 +22,10 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.jspecify.annotations.Nullable;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
@@ -101,10 +109,66 @@ public class SandboxUtils {
 				mapper.writeValue(environmentFile, environment);
 				command = new Commandline(executable).addArgs("env", "create", "--force", environmentFile.getAbsolutePath());
 			}
-			command.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+			var started = Instant.now();
+			var result = command.execute(newInfoLogger(logger), newWarningLogger(logger));
+			if (result.getReturnCode() != 0)
+				logCreationErrors(executable, name, started, Instant.now(), logger);
+			result.checkReturnCode();
 		} finally {
 			// sbx persists the kit configuration for subsequent starts.
 			FileUtils.deletePath(kitDir);
+		}
+	}
+
+	private static void logCreationErrors(String executable, String name, Instant started, Instant finished,
+			TaskLogger logger) {
+		try {
+			// sbx can hide the underlying daemon error even with --debug. Ask for the
+			// log location instead of assuming an OS-specific or default state directory.
+			var output = new ByteArrayOutputStream();
+			new Commandline(executable).addArgs("daemon", "status", "--format", "json").timeout(10)
+					.execute(output, null).checkReturnCode();
+			var mapper = new ObjectMapper();
+			var logPath = mapper.readTree(output.toByteArray()).path("logs").asText("");
+			if (logPath.isBlank())
+				return;
+			String tail;
+			try (var channel = Files.newByteChannel(Path.of(logPath))) {
+				// Bound diagnostics even when the daemon has been running for a long time.
+				var size = channel.size();
+				var offset = Math.max(0, size - 1024 * 1024);
+				channel.position(offset);
+				var buffer = ByteBuffer.allocate((int) (size - offset));
+				while (buffer.hasRemaining() && channel.read(buffer) != -1) {
+				}
+				buffer.flip();
+				tail = UTF_8.decode(buffer).toString();
+				if (offset != 0)
+					tail = tail.substring(tail.indexOf('\n') + 1);
+			}
+			var errors = new LinkedHashSet<String>();
+			for (var line : tail.split("\n")) {
+				try {
+					var entry = mapper.readTree(line);
+					if (entry == null || !name.equals(entry.path("runtime").asText()))
+						continue;
+					var time = Instant.parse(entry.path("time").asText());
+					var error = entry.path("error").asText("");
+					if (!time.isBefore(started) && !time.isAfter(finished) && !error.isBlank()
+							&& (entry.path("level").asText().equals("ERROR") || entry.path("level").asText().equals("WARN")))
+						errors.add(entry.path("msg").asText() + ": " + error);
+				} catch (JsonProcessingException | DateTimeParseException ignored) {
+					// Ignore incomplete records and records from other log formats.
+				}
+			}
+			for (var error : errors.stream().skip(Math.max(0, errors.size() - 20)).toList())
+				logger.error("Sandbox daemon: " + error);
+		} catch (IOException | RuntimeException e) {
+			if (ExceptionUtils.find(e, InterruptedException.class) != null)
+				Thread.currentThread().interrupt();
+			// Diagnostics must not replace the original creation failure.
+			logger.warning("Unable to read sandbox daemon errors. Run '" + executable
+					+ " daemon status' on the executor host to locate its logs.");
 		}
 	}
 
