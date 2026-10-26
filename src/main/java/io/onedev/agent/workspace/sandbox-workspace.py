@@ -62,7 +62,7 @@ class WorkspaceRunner(SandboxRuntime):
         else:
             self.env.pop("ONEDEV_TRUST_CERTS_FILE", None)
         self.user_data_ready = False
-        self.provisioned = time.time()
+        self.user_data_provision_dates = {}
 
     def setup_repository(self):
         marker = safe_path(self.root, ".git-clone-successful")
@@ -88,15 +88,21 @@ class WorkspaceRunner(SandboxRuntime):
             target.chmod(0o600)
 
     def download_user_data(self):
+        self.user_data_ready = False
+        self.user_data_provision_dates.clear()
         for data in self.config.get("userDatas", []):
+            download_logged = False
             for entry in data["entries"]:
                 path = self.data_path(entry["path"])
                 key = hashlib.sha256((data["key"] + "\0" + entry["path"]).encode()).hexdigest()
-                marker = safe_path(self.root, ".user-data/" + key)
+                marker = safe_path(self.root, "user-data/" + key + "/state")
                 # Existing template files still need restoring once; later sessions keep local edits.
                 if marker.exists() and path.exists():
+                    self.user_data_provision_dates[(data["key"], entry["path"])] = marker.stat().st_mtime
                     continue
-                log("Downloading user data '%s'..." % data["key"])
+                if not download_logged:
+                    log("Downloading user data '%s'..." % data["key"])
+                    download_logged = True
                 params = {"key": data["key"], "path": entry["path"]}
                 with self.request("workspace-user-data", params) as response:
                     if read_int(response) == 0:
@@ -106,8 +112,8 @@ class WorkspaceRunner(SandboxRuntime):
                         unpack_user_data(response, path)
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.touch()
+                self.user_data_provision_dates[(data["key"], entry["path"])] = marker.stat().st_mtime
         self.user_data_ready = True
-        self.provisioned = time.time()
 
     def upload_user_data(self):
         if not self.user_data_ready:
@@ -120,7 +126,8 @@ class WorkspaceRunner(SandboxRuntime):
                     continue
                 excludes = shlex.split(entry.get("excludes") or "")
                 paths = [path] if path.is_file() else cache_paths(path, excludes, include_root=True)
-                if not paths_changed(paths, self.provisioned):
+                provisioned = self.user_data_provision_dates.get((data["key"], entry["path"]))
+                if provisioned is not None and not paths_changed(paths, provisioned):
                     continue
                 with tempfile.TemporaryFile() as archive:
                     pack_user_data(archive, path, excludes)
@@ -161,19 +168,21 @@ class WorkspaceRunner(SandboxRuntime):
 
     def run(self):
         setup_started = False
+        active = False
         try:
             self.setup_repository()
             self.configure_files()
             for cache in self.config.get("caches", []):
-                self.setup_cache(cache)
+                self.setup_cache(cache, persistent=True)
             self.download_user_data()
             if (self.root / ".shutdown").exists():
                 return
             setup_started = True
             self.run_script("setup", cancellable=True)
             # The template or setup commands must provide tmux for workspace terminals.
-            subprocess.run(["tmux", "-V"], check=True, stderr=subprocess.STDOUT)
+            subprocess.run(["tmux", "-V"], check=True, stdout=subprocess.DEVNULL)
             safe_path(self.root, ".workspace-ready").touch()
+            active = True
             while not (self.root / ".shutdown").exists():
                 time.sleep(0.5)
         finally:
@@ -182,10 +191,11 @@ class WorkspaceRunner(SandboxRuntime):
                 if setup_started:
                     self.run_script("teardown")
             finally:
-                try:
-                    self.upload_user_data()
-                finally:
-                    self.upload_caches()
+                if active and (self.root / ".upload-data").exists():
+                    try:
+                        self.upload_user_data()
+                    finally:
+                        self.upload_caches()
 
     def test(self):
         subprocess.run(["git", "--version"], check=True)

@@ -3,6 +3,7 @@ package io.onedev.agent.workspace;
 import static io.onedev.agent.AgentUtils.newInfoLogger;
 import static io.onedev.agent.AgentUtils.newWarningLogger;
 import static io.onedev.k8shelper.WorkspaceHelper.WORKSPACE_PATH;
+import static io.onedev.k8shelper.WorkspaceHelper.UPLOAD_DATA_FILE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.ByteArrayInputStream;
@@ -16,6 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 
 import org.jspecify.annotations.Nullable;
 
@@ -118,7 +120,7 @@ public class SandboxWorkspaceController {
 		// Only replace session credentials and lifecycle markers.
 		runCommand(buildSbxExecCommand("sh", "-c", "mkdir -p " + WORKSPACE_PATH + "; rm -rf " + WORKSPACE_PATH
 				+ "/trust-certs; rm -f " + WORKSPACE_PATH + "/trust-certs.pem " + WORKSPACE_PATH
-				+ "/.shutdown " + WORKSPACE_PATH + "/.workspace-ready"));
+				+ "/.shutdown " + WORKSPACE_PATH + "/.workspace-ready " + WORKSPACE_PATH + "/" + UPLOAD_DATA_FILE));
 		sendConfiguration(trustCertsDir);
 	}
 
@@ -252,21 +254,34 @@ public class SandboxWorkspaceController {
 	}
 
 	public void awaitRunner() {
+		awaitRunner(() -> false);
+	}
+
+	public void awaitRunner(BooleanSupplier uploadData) {
 		try {
 			runnerTask.get();
 		} catch (InterruptedException | ExecutionException e) {
 			throw new RuntimeException(e);
 		} finally {
-			stopSandbox();
+			stopSandbox(uploadData.getAsBoolean());
 		}
 	}
 
 	public void stopSandbox() {
+		stopSandbox(false);
+	}
+
+	public void stopSandbox(boolean uploadData) {
+		var wasReady = ready;
 		ready = false;
 		boolean interrupted = Thread.interrupted();
 		try {
 			if (runnerTask != null && !runnerTask.isDone()) {
-				runCommand(buildSbxExecCommand("touch", WORKSPACE_PATH + "/.shutdown"));
+				var shutdown = buildSbxExecCommand("touch");
+				if (wasReady && uploadData)
+					shutdown.addArgs(WORKSPACE_PATH + "/" + UPLOAD_DATA_FILE);
+				shutdown.addArgs(WORKSPACE_PATH + "/.shutdown");
+				runCommand(shutdown);
 				try {
 					runnerTask.get(120, TimeUnit.SECONDS);
 				} catch (ExecutionException e) {

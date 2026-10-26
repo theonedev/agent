@@ -157,9 +157,17 @@ public class SandboxJobController {
 		var output = new LineConsumer("UTF-8") {
 			private final String sessionId = UUID.randomUUID().toString();
 
+			private boolean pendingEmptyLine;
+
 			@Override
 			public void consume(String line) {
 				var event = JobHelper.parseStepEventMessage(line);
+				// Hold back one empty line to consume the separator inserted by log_marker.
+				if (pendingEmptyLine && event == null && JobUtils.parsePhaseMessage(line) == null)
+					logger.log("", sessionId);
+				pendingEmptyLine = line.isEmpty();
+				if (pendingEmptyLine)
+					return;
 				if (event != null) {
 					if (event.kind() == JobHelper.StepEventKind.START)
 						runningStep.set(event.step());
@@ -168,12 +176,27 @@ public class SandboxJobController {
 				}
 				logger.log(line, sessionId);
 			}
+
+			@Override
+			public void close() throws IOException {
+				super.close();
+				if (pendingEmptyLine) {
+					pendingEmptyLine = false;
+					logger.log("", sessionId);
+				}
+			}
 		};
 		var outcome = JobHelper.StepEventKind.FAILED;
 		try {
-			return newSbxExecCommand(name, "python3", "-u", BUILD_DIR + "/sandbox-job.py", BUILD_DIR)
+			var exitCode = newSbxExecCommand(name, "python3", "-u", BUILD_DIR + "/sandbox-job.py", BUILD_DIR)
 					.processKiller(newSandboxKiller(logger))
-					.execute(output, newWarningLogger(logger)).getReturnCode() == 0;
+					.execute(output, newWarningLogger(logger)).getReturnCode();
+			if (runningStep.get() != null) {
+				logger.error("Sandbox job runner exited before the current step completed (sandbox: " + name
+						+ ", exit code: " + exitCode + "). The sandbox may have been stopped externally.");
+				return false;
+			}
+			return exitCode == 0;
 		} catch (RuntimeException e) {
 			outcome = JobUtils.getStepOutcome(e);
 			throw e;

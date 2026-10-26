@@ -10,12 +10,23 @@ public class StopWorkspaceRequest implements Serializable {
 
 	private final String token;
 
+	private final boolean uploadData;
+
 	public StopWorkspaceRequest(String token) {
+		this(token, false);
+	}
+
+	public StopWorkspaceRequest(String token, boolean uploadData) {
 		this.token = token;
+		this.uploadData = uploadData;
 	}
 
 	public String getToken() {
 		return token;
+	}
+
+	public boolean isUploadData() {
+		return uploadData;
 	}
 
 }

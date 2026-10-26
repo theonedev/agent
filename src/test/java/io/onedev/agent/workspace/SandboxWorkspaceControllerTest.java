@@ -19,6 +19,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Marker;
 
@@ -85,10 +87,11 @@ class SandboxWorkspaceControllerTest {
 				    *' id -u') echo 1234 ;;
 				    *' id -g') echo 5678 ;;
 				    *' tar -xf '*) cat > configuration.tar ;;
-				    *'mkdir -p '*) rm -f running shutdown ;;
+				    *'mkdir -p '*) rm -f running shutdown upload-requested uploaded ;;
 				    *'test -f '*) [ ! -f running ] || echo ready ;;
+				    *'touch /onedev-workspace/.upload-data /onedev-workspace/.shutdown'*) touch upload-requested shutdown ;;
 				    *'touch /onedev-workspace/.shutdown'*) touch shutdown ;;
-				    *'python3 -u '*) %s; touch running; while [ ! -f shutdown ]; do sleep 0.05; done; touch uploaded ;;
+				    *'python3 -u '*) %s; touch running; while [ ! -f shutdown ]; do sleep 0.05; done; touch teardown-ran; [ ! -f upload-requested ] || touch uploaded ;;
 				    *' git '*) printf 'git-result' ;;
 				    *' cat -- '*) printf 'file-result' ;;
 				  esac ;;
@@ -126,7 +129,8 @@ class SandboxWorkspaceControllerTest {
 		controller.closeShell("shell");
 		assertEquals(calls, Files.readString(temp.resolve("calls")));
 		assertThrows(RuntimeException.class, () -> controller.readFile("README"));
-		assertTrue(Files.exists(temp.resolve("uploaded")));
+		assertTrue(Files.exists(temp.resolve("teardown-ran")));
+		assertFalse(Files.exists(temp.resolve("uploaded")));
 		assertTrue(Files.exists(temp.resolve("stopped")));
 		assertTrue(Files.exists(temp.resolve("exists")));
 		assertFalse(Files.exists(temp.resolve("injected")));
@@ -273,14 +277,15 @@ class SandboxWorkspaceControllerTest {
 		assertFalse(Files.exists(temp.resolve("uploaded")));
 	}
 
-	@Test
-	void cancellingWorkspaceRequestsTeardownBeforeStoppingSandbox() throws Exception {
+	@ParameterizedTest
+	@ValueSource(booleans = {false, true})
+	void cancellingWorkspaceUploadsOnlyWhenDeleting(boolean deleting) throws Exception {
 		var controller = controller("true", List.of());
 		controller.provisionWorkspace(null, "agent-host");
 		var failure = new AtomicReference<Throwable>();
 		var thread = new Thread(() -> {
 			try {
-				controller.awaitRunner();
+				controller.awaitRunner(() -> deleting);
 			} catch (Throwable e) {
 				failure.set(e);
 			}
@@ -297,7 +302,8 @@ class SandboxWorkspaceControllerTest {
 		}
 		assertFalse(thread.isAlive());
 		assertNotNull(failure.get());
-		assertTrue(Files.exists(temp.resolve("uploaded")));
+		assertTrue(Files.exists(temp.resolve("teardown-ran")));
+		assertEquals(deleting, Files.exists(temp.resolve("uploaded")));
 		assertTrue(Files.exists(temp.resolve("stopped")));
 	}
 }

@@ -290,6 +290,65 @@ class SandboxJobControllerTest {
 	}
 
 	@Test
+	void stepCompletionDoesNotAddBlankLogLines() throws Exception {
+		// Preserve the command's intentional blank line, but not protocol separators.
+		assertEquals(List.of(
+				"##onedev-step:START:step-0", "first", "", "##onedev-step:SUCCESSFUL:step-0",
+				"##onedev-step:START:step-1", "second", "##onedev-step:SUCCESSFUL:step-1",
+				"##onedev-phase:finalization"),
+				runSandboxCommands("printf 'first\\n\\n'", "echo second"));
+	}
+
+	@Test
+	void catWithoutTrailingNewlineKeepsStepOutcomeSeparate() throws Exception {
+		assertEquals(List.of(
+				"##onedev-step:START:step-0", "{\"name\":\"test\"}", "##onedev-step:SUCCESSFUL:step-0",
+				"##onedev-phase:finalization"),
+				runSandboxCommands("printf '%s' '{\"name\":\"test\"}' > package.json\ncat package.json"));
+	}
+
+	private List<String> runSandboxCommands(String... commands) throws Exception {
+		var actions = java.util.Arrays.stream(commands).map(command -> new Action("command",
+				new CommandFacade(null, null, List.of(), Map.of(), false, command), ExecuteCondition.SUCCESSFUL, false))
+				.toList();
+		new ObjectMapper().writeValue(temp.resolve("actions.json").toFile(), SandboxJobController.actions(actions));
+		Files.writeString(temp.resolve("run-job.py"), """
+				from contextlib import nullcontext
+				import importlib.util
+				import json
+				from pathlib import Path
+				import sys
+				from unittest.mock import patch
+
+				root = Path('runtime').resolve()
+				sys.path.insert(0, str(root))
+				spec = importlib.util.spec_from_file_location('sandbox_job', root / 'sandbox-job.py')
+				module = importlib.util.module_from_spec(spec)
+				spec.loader.exec_module(module)
+				config = {'actions': json.loads(Path('actions.json').read_text())}
+				runner = module.JobRunner(root, config)
+				# Keep server transport out of this test; execute real commands and emit real markers.
+				with patch.object(runner, 'prepare_dependencies'), \\
+				        patch.object(runner, 'request', return_value=nullcontext()):
+				    sys.exit(0 if runner.run() else 1)
+				""");
+		var python = System.getProperty("onedev.python.executable", "python3");
+		var messages = new java.util.ArrayList<String>();
+		sandbox("exit 0", "mkdir runtime && tar -xf payload.tar -C runtime && '"
+				+ python.replace("'", "'\\''") + "' -I -B run-job.py")
+				.testSandbox(null, null, new TaskLogger() {
+					@Override
+					public void log(String message, String sessionId) {
+						messages.add(message);
+					}
+				});
+		var start = messages.indexOf("##onedev-step:START:step-0");
+		var end = messages.indexOf("##onedev-phase:finalization");
+		assertTrue(start >= 0 && end > start, messages.toString());
+		return messages.subList(start, end + 1);
+	}
+
+	@Test
 	void manifestPreservesCompositeConditionsAndCommandArguments() {
 		var command = new CommandFacade(null, null, List.of(), Map.of("VALUE", "a'b\nnext"), false, "echo $VALUE");
 		var nested = new Action("command", command, ExecuteCondition.ALWAYS, true);

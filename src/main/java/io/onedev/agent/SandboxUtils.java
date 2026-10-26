@@ -150,9 +150,17 @@ public class SandboxUtils {
 
 	public static void allowAllNetworkAccess(String executable, String name, TaskLogger logger) {
 		// Jobs and workspaces need arbitrary network access, including to their OneDev server.
-		new Commandline(executable).addArgs("policy", "allow", "network", "--sandbox", name,
+		var stdout = new ByteArrayOutputStream();
+		var stderr = new ByteArrayOutputStream();
+		var result = new Commandline(executable).addArgs("policy", "allow", "network", "--sandbox", name,
 				"--protocol", "tcp,udp", "**").timeout(120)
-				.execute(newInfoLogger(logger), newWarningLogger(logger)).checkReturnCode();
+				.execute(stdout, stderr);
+		// Successful policy updates include routine coverage confirmations and UDP notices.
+		if (result.getReturnCode() != 0) {
+			stdout.toString(UTF_8).lines().forEach(logger::log);
+			stderr.toString(UTF_8).lines().forEach(logger::warning);
+		}
+		result.checkReturnCode();
 	}
 
 	private static void logCreationErrors(String executable, String name, Instant started, Instant finished,

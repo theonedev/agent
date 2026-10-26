@@ -167,13 +167,14 @@ public class WorkspaceUtils {
 
 	public static void deleteContainerIfExist(Commandline docker, String containerName, TaskLogger logger) {
 		docker.args("rm", "-f", containerName);
-		docker.execute(newInfoLogger(logger), new LineConsumer() {
-			@Override
-			public void consume(String line) {
-				if (!line.equals(containerName) && !line.contains("No such container"))
-					logger.warning(line);
-			}
-		});
+		var stderr = new ByteArrayOutputStream();
+		var result = docker.execute(newInfoLogger(logger), stderr);
+		var error = stderr.toString(UTF_8).trim();
+		if (!error.equals("Error response from daemon: No such container: " + containerName)) {
+			if (!error.isEmpty())
+				logger.warning(error);
+			result.checkReturnCode();
+		}
 	}
 
 	public static Map<Integer, Integer> getPublishedPorts(Commandline docker, String containerName, Collection<Integer> containerPorts) {

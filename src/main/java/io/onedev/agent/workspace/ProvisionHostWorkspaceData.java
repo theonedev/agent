@@ -7,7 +7,7 @@ import java.util.Map;
 import io.onedev.k8shelper.CacheConfigFacade;
 import io.onedev.k8shelper.ScriptConfig;
 
-public class ProvisionShellWorkspaceData implements Serializable {
+public class ProvisionHostWorkspaceData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
@@ -27,10 +27,10 @@ public class ProvisionShellWorkspaceData implements Serializable {
 
 	private final String serverUrl;
 
-	public ProvisionShellWorkspaceData(String workspaceToken, GitSettings gitSettings,
-							  List<CacheConfigFacade> cacheConfigs, Map<String, String> envVars,
-							  ScriptConfig scriptConfig, Long projectId,
-							  Long workspaceNumber, String serverUrl) {
+	public ProvisionHostWorkspaceData(String workspaceToken, GitSettings gitSettings,
+                                      List<CacheConfigFacade> cacheConfigs, Map<String, String> envVars,
+                                      ScriptConfig scriptConfig, Long projectId,
+                                      Long workspaceNumber, String serverUrl) {
 		this.gitSettings = gitSettings;
 		this.cacheConfigs = cacheConfigs;
 		this.envVars = envVars;

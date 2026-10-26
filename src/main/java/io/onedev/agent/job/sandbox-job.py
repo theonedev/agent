@@ -24,6 +24,12 @@ from sandbox_files import pack, safe_path, unpack
 from sandbox_privileges import JobPrivileges, root_operation, run_operation
 
 
+def log_marker(message):
+    # Command output may not end with a newline; protocol markers must start on their own line.
+    # The controller consumes the extra separator when output already ends with a newline.
+    log("\n" + message)
+
+
 def docker_options(value, reserved, short_reserved, short_flags):
     """Reject options owned by step settings, without restricting VM file access."""
     args = shlex.split(value or "")
@@ -393,10 +399,10 @@ class JobRunner(SandboxRuntime):
             for index, child in enumerate(step["actions"]):
                 self.skip_step(child, position + [str(index)])
         else:
-            log("##onedev-step:SKIP:step-" + "-".join(position))
+            log_marker("##onedev-step:SKIP:step-" + "-".join(position))
 
     def execute_leaf(self, step, position):
-        log("##onedev-step:START:step-" + position)
+        log_marker("##onedev-step:START:step-" + position)
         try:
             kind = step["type"]
             if kind == "command":
@@ -420,7 +426,7 @@ class JobRunner(SandboxRuntime):
         except Exception as error:
             log_error("Step failed: " + str(error))
             result = False
-        log("##onedev-step:%s:step-%s" % ("SUCCESSFUL" if result else "FAILED", position))
+        log_marker("##onedev-step:%s:step-%s" % ("SUCCESSFUL" if result else "FAILED", position))
         return result
 
     def run(self):
@@ -434,7 +440,7 @@ class JobRunner(SandboxRuntime):
                 self.start_services()
             successful = self.execute(self.config["actions"])
         finally:
-            log("##onedev-phase:finalization")
+            log_marker("##onedev-phase:finalization")
         if successful and self.caches:
             self.upload_caches()
         return successful

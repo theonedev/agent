@@ -56,11 +56,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 
 import jakarta.ws.rs.client.Client;
@@ -111,14 +111,14 @@ import io.onedev.agent.workspace.FileData;
 import io.onedev.agent.workspace.GitExecutionResult;
 import io.onedev.agent.workspace.ProvisionDockerWorkspaceData;
 import io.onedev.agent.workspace.ProvisionSandboxWorkspaceData;
-import io.onedev.agent.workspace.ProvisionShellWorkspaceData;
+import io.onedev.agent.workspace.ProvisionHostWorkspaceData;
 import io.onedev.agent.workspace.SandboxProvisionedShellOpenData;
 import io.onedev.agent.workspace.SandboxWorkspaceController;
 import io.onedev.agent.workspace.ShellProvisionedShellOpenData;
 import io.onedev.agent.workspace.StopWorkspaceRequest;
 import io.onedev.agent.workspace.TestDockerWorkspaceData;
 import io.onedev.agent.workspace.TestSandboxWorkspaceData;
-import io.onedev.agent.workspace.TestShellWorkspaceData;
+import io.onedev.agent.workspace.TestHostWorkspaceData;
 import io.onedev.agent.workspace.WorkspaceAwaitRequest;
 import io.onedev.agent.workspace.WorkspaceDeleteRequest;
 import io.onedev.agent.workspace.WorkspaceFileDataRequest;
@@ -157,7 +157,8 @@ import io.onedev.k8shelper.UserDataFacade;
 import io.onedev.k8shelper.UserDataProvisioner;
 import io.onedev.k8shelper.WorkspaceHelper;
 
-@WebSocket(autoDemand = true)
+@SuppressWarnings({"BusyWait", "LocalVariableUsedAndDeclaredInDifferentSwitchBranches"})
+@WebSocket
 public class AgentSocket implements Runnable {
 
 	private static final Logger logger = LoggerFactory.getLogger(AgentSocket.class);
@@ -179,6 +180,8 @@ public class AgentSocket implements Runnable {
 	private static final Map<String, AwaitableFutureTask<?>> workspaceProvisionTasks = new ConcurrentHashMap<>();
 
 	private static final Map<String, AwaitableFutureTask<?>> workspaceServeTasks = new ConcurrentHashMap<>();
+
+	private static final Set<String> workspaceUploads = ConcurrentHashMap.newKeySet();
 	
 	private static final Map<String, WorkspaceShellSession> workspaceShellSessions = new ConcurrentHashMap<>();
 			
@@ -189,7 +192,7 @@ public class AgentSocket implements Runnable {
 	private volatile boolean stopped;
 
 	@OnWebSocketOpen
-	public void onConnect(Session session) throws IOException {
+	public void onConnect(Session session) {
 		logger.info("Connected to server");
 		this.session = session;
 		thread = new Thread(this);
@@ -211,68 +214,65 @@ public class AgentSocket implements Runnable {
 					File logbackConfigFile = new File(Agent.installDir, "conf/logback.xml");
 					if (!versionAtServer.equals(Agent.version)) {
 						logger.info("Updating agent to version " + versionAtServer + "...");
-						Client client = buildRestClient(Agent.sslFactory);
-						try {
-							WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
-							Invocation.Builder builder =  target.request();
-							builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
+                        try (var client = buildRestClient(Agent.sslFactory)) {
+                            WebTarget target = client.target(Agent.serverUrl).path("~downloads/agent-lib");
+                            Invocation.Builder builder = target.request();
+                            builder.header(HttpHeaders.AUTHORIZATION, KubernetesHelper.BEARER + " " + Agent.token);
 
-							try (Response response = builder.get()){
-								KubernetesHelper.checkStatus(response);
+                            try (Response response = builder.get()) {
+                                KubernetesHelper.checkStatus(response);
 
-								File newLibDir = new File(Agent.installDir, "lib/" + versionAtServer);
-								FileUtils.cleanDir(newLibDir);
-								try (InputStream is = response.readEntity(InputStream.class)) {
-									TarUtils.untar(is, newLibDir, false);
-								}
+                                File newLibDir = new File(Agent.installDir, "lib/" + versionAtServer);
+                                FileUtils.cleanDir(newLibDir);
+                                try (InputStream is = response.readEntity(InputStream.class)) {
+                                    TarUtils.untar(is, newLibDir, false);
+                                }
 
-								String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
-								wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
-								wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
+                                String wrapperConf = FileUtils.readFileToString(wrapperConfFile, UTF_8);
+                                wrapperConf = wrapperConf.replace("../lib/" + Agent.version + "/", "../lib/" + versionAtServer + "/");
+                                wrapperConf = wrapperConf.replace("-XX:+IgnoreUnrecognizedVMOptions", "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
 
-								if (!wrapperConf.contains("java.base/jdk.internal.ref=ALL-UNNAMED")) {
-									wrapperConf += ""
-											+ "\r\nwrapper.java.additional.30=--add-modules=java.se"
-											+ "\r\nwrapper.java.additional.31=--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED"
-											+ "\r\nwrapper.java.additional.32=--add-opens=java.management/sun.management=ALL-UNNAMED"
-											+ "\r\nwrapper.java.additional.33=--add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED";
-								}
-								if (!wrapperConf.contains("java.base/sun.nio.fs=ALL-UNNAMED")) {
-									wrapperConf += "\r\nwrapper.java.additional.50=--add-opens=java.base/sun.nio.fs=ALL-UNNAMED";
-								}
-								if (!wrapperConf.contains("wrapper.disable_console_input"))
-									wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
+                                if (!wrapperConf.contains("java.base/jdk.internal.ref=ALL-UNNAMED")) {
+                                    wrapperConf += ""
+                                            + "\r\nwrapper.java.additional.30=--add-modules=java.se"
+                                            + "\r\nwrapper.java.additional.31=--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED"
+                                            + "\r\nwrapper.java.additional.32=--add-opens=java.management/sun.management=ALL-UNNAMED"
+                                            + "\r\nwrapper.java.additional.33=--add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED";
+                                }
+                                if (!wrapperConf.contains("java.base/sun.nio.fs=ALL-UNNAMED")) {
+                                    wrapperConf += "\r\nwrapper.java.additional.50=--add-opens=java.base/sun.nio.fs=ALL-UNNAMED";
+                                }
+                                if (!wrapperConf.contains("wrapper.disable_console_input"))
+                                    wrapperConf += "\r\nwrapper.disable_console_input=TRUE";
 
-								wrapperConf = wrapperConf.replaceAll("\r\n(\r\n)+\r\n", "\r\n\r\n");
-								wrapperConf = wrapperConf.replaceAll("\n(\n)+\n", "\n\n");
-								wrapperConf = wrapperConf.replace(
-										"wrapperConfwrapper.java.additional.30=--add-modules=java.se",
-										"wrapper.java.additional.30=--add-modules=java.se");
+                                wrapperConf = wrapperConf.replaceAll("\r\n(\r\n)+\r\n", "\r\n\r\n");
+                                wrapperConf = wrapperConf.replaceAll("\n(\n)+\n", "\n\n");
+                                wrapperConf = wrapperConf.replace(
+                                        "wrapperConfwrapper.java.additional.30=--add-modules=java.se",
+                                        "wrapper.java.additional.30=--add-modules=java.se");
 
-								FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
+                                FileUtils.writeStringToFile(wrapperConfFile, wrapperConf, UTF_8);
 
-								String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
-								if (!logbackConfig.contains("MaskingPatternLayout")) {
-									logbackConfig = Strings.CS.replace(logbackConfig,
-											"ch.qos.logback.classic.encoder.PatternLayoutEncoder",
-											"ch.qos.logback.core.encoder.LayoutWrappingEncoder");
-									logbackConfig = Strings.CS.replace(logbackConfig,
-											"<pattern>",
-											"<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
-									logbackConfig = Strings.CS.replace(logbackConfig,
-											"</pattern>",
-											"</pattern>\n			</layout>");
-								}
-								if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
-									logbackConfig = logbackConfig.replaceFirst(
-											"<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
-											Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
-								}
-								FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
-							}
-						} finally {
-							client.close();
-						}
+                                String logbackConfig = FileUtils.readFileToString(logbackConfigFile, UTF_8);
+                                if (!logbackConfig.contains("MaskingPatternLayout")) {
+                                    logbackConfig = Strings.CS.replace(logbackConfig,
+                                            "ch.qos.logback.classic.encoder.PatternLayoutEncoder",
+                                            "ch.qos.logback.core.encoder.LayoutWrappingEncoder");
+                                    logbackConfig = Strings.CS.replace(logbackConfig,
+                                            "<pattern>",
+                                            "<layout class=\"io.onedev.commons.bootstrap.MaskingPatternLayout\">\n				<pattern>");
+                                    logbackConfig = Strings.CS.replace(logbackConfig,
+                                            "</pattern>",
+                                            "</pattern>\n			</layout>");
+                                }
+                                if (!logbackConfig.contains("<charset>UTF-8</charset>")) {
+                                    logbackConfig = logbackConfig.replaceFirst(
+                                            "<file>\\$\\{logback\\.logFile\\}</file>\\s*<encoder class=\"ch\\.qos\\.logback\\.core\\.encoder\\.LayoutWrappingEncoder\">",
+                                            Matcher.quoteReplacement("<file>${logback.logFile}</file>\n\t\t<encoder class=\"ch.qos.logback.core.encoder.LayoutWrappingEncoder\">\n\t\t\t<charset>UTF-8</charset>"));
+                                }
+                                FileUtils.writeStringToFile(logbackConfigFile, logbackConfig, UTF_8);
+                            }
+                        }
 						Agent.restart();
 					} else {
 						if (!Agent.isSandboxMode()) {
@@ -394,9 +394,8 @@ public class AgentSocket implements Runnable {
 							Commandline docker = newDocker(jobShellOpenData.getDockerSock());
 							docker.addArgs("exec", "-it", containerName);
 							LeafFacade runningStep = runningSteps.get(jobToken);
-							if (runningStep instanceof CommandFacade) {
-								CommandFacade commandStep = (CommandFacade) runningStep;
-								docker.addArgs(commandStep.getExecutable());
+							if (runningStep instanceof CommandFacade commandStep) {
+                                docker.addArgs(commandStep.getExecutable());
 							} else {
 								docker.addArgs("sh");
 							}
@@ -411,9 +410,8 @@ public class AgentSocket implements Runnable {
 						if (buildDir.exists()) {
 							Commandline shell;
 							LeafFacade runningStep = runningSteps.get(jobToken);
-							if (runningStep instanceof CommandFacade) {
-								CommandFacade commandStep = (CommandFacade) runningStep;
-								shell = new Commandline(commandStep.getExecutable());
+							if (runningStep instanceof CommandFacade commandStep) {
+                                shell = new Commandline(commandStep.getExecutable());
 							} else if (SystemUtils.IS_OS_WINDOWS) {
 								shell = new Commandline("cmd");
 							} else {
@@ -468,9 +466,8 @@ public class AgentSocket implements Runnable {
 								WORKSPACE_PATH + "/work", containerName,
 								"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
 						var token = shellOpenData.getToken();
-						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () -> {
-							WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket);
-						}));
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () ->
+								WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket)));
 					} else {
 						var shellProvisionedShellOpenData = (ShellProvisionedShellOpenData) shellOpenData;
 						var tmuxExecutable = shellProvisionedShellOpenData.getTmuxExecutable();
@@ -520,7 +517,7 @@ public class AgentSocket implements Runnable {
 					logger.error("Error processing websocket message", e);
 				try {
 					session.disconnect();
-				} catch (Exception e2) {
+				} catch (Exception ignored) {
 				}
 			}
 			callback.succeed();
@@ -579,10 +576,8 @@ public class AgentSocket implements Runnable {
 			});
 			return;
 		}
-		synchronized (buildDir) {
-			if (buildDir.exists())
-				JobHelper.resumeJob(buildDir);
-		}
+		if (buildDir.exists())
+			JobHelper.resumeJob(buildDir);
 	}
 		
 	@OnWebSocketClose
@@ -602,7 +597,7 @@ public class AgentSocket implements Runnable {
 				break;
 			try {
 				Thread.sleep(1000); 
-			} catch (InterruptedException e) {
+			} catch (InterruptedException ignored) {
 			}
 		}
 	}
@@ -651,7 +646,7 @@ public class AgentSocket implements Runnable {
 			new Message(MessageTypes.REPORT_JOB_WORKDIR, messageData).sendBy(session);
 
 			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
-			var cacheConfigIndex = new AtomicInteger(1);
+
 			initializationCompleted = true;
 			successful = entryFacade.execute(new LeafHandler() {
 
@@ -668,9 +663,8 @@ public class AgentSocket implements Runnable {
 				}
 
 				private boolean doExecute(LeafFacade facade, List<Integer> position) {
-					if (facade instanceof CommandFacade) {
-						CommandFacade commandFacade = (CommandFacade) facade;
-						if (commandFacade.getImage() != null) {
+					if (facade instanceof CommandFacade commandFacade) {
+                        if (commandFacade.getImage() != null) {
 							throw new ExplicitException("This step can only be executed by server docker executor, "
 									+ "remote docker executor, or kubernetes executor");
 						}
@@ -703,9 +697,8 @@ public class AgentSocket implements Runnable {
 							jobLogger.error("Command exited with code " + result.getReturnCode());
 							return false;
 						}
-					} else if (facade instanceof CheckoutFacade) {
-						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
-						jobLogger.log("Checking out code...");
+					} else if (facade instanceof CheckoutFacade checkoutFacade) {
+                        jobLogger.log("Checking out code...");
 
 						Commandline git = new Commandline(Agent.gitPath);
 						checkoutFacade.setupWorkingDir(git, workDir);
@@ -729,19 +722,17 @@ public class AgentSocket implements Runnable {
 								branch, jobData.getCommitHash(), checkoutFacade.isWithLfs(),
 								checkoutFacade.isWithSubmodules(), cloneDepth,
 								AgentUtils.newInfoLogger(jobLogger), AgentUtils.newWarningLogger(jobLogger));
-					} else if (facade instanceof SetupCacheFacade) {
-						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-						for (var path: setupCacheFacade.getCacheConfig().getPaths()) {
+					} else if (facade instanceof SetupCacheFacade setupCacheFacade) {
+                        for (var path: setupCacheFacade.getCacheConfig().getPaths()) {
 							if (FilenameUtils.getPrefixLength(path) > 0)
 								throw new ExplicitException("Host executor does not allow absolute cache path: " + path);
 						}
 						var cacheConfig = setupCacheFacade.getCacheConfig();
-						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig, cacheConfigIndex.getAndIncrement());
+						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig);
 						cacheProvisioner.download(buildDir, jobLogger);
 						cacheProvisioners.add(cacheProvisioner);
-					} else if (facade instanceof ServerSideFacade) {
-						ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
-						return runServerStep(Agent.sslFactory,
+					} else if (facade instanceof ServerSideFacade serverSideFacade) {
+                        return runServerStep(Agent.sslFactory,
 								Agent.serverUrl, jobData.getJobToken(), position,
 								serverSideFacade, buildDir, jobLogger);
 					} else {
@@ -821,8 +812,7 @@ public class AgentSocket implements Runnable {
 			downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
 					hostWorkDir, Agent.sslFactory);
 
-			var containerBuildDirPath = BUILD_PATH;
-			var containerWorkDirPath = BUILD_PATH + "/work";
+            var containerWorkDirPath = BUILD_PATH + "/work";
 			var containerTrustCertsFilePath = BUILD_PATH + "/trust-certs.pem";
 
 			String messageData = jobData.getJobToken() + ":" + containerWorkDirPath;
@@ -830,7 +820,7 @@ public class AgentSocket implements Runnable {
 
 			CompositeFacade entryFacade = new CompositeFacade(jobData.getActions());
 			var osIds = getOsIds(jobLogger);
-			var cacheConfigIndex = new AtomicInteger(1);
+
 			var stepContainerContext = new JobUtils.StepContainerContext(dockerSettings, network, hostBuildDir,
 					cacheProvisioners, new HashSet<>(), path -> getHostPath(path, dockerSock),
 					() -> newDocker(dockerSock), jobLogger);
@@ -882,11 +872,10 @@ public class AgentSocket implements Runnable {
 							changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
 						}
 						try {
-							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
-								return runStepContainer(docker, commandFacade.getImage(), runAs,
-										"sh", entrypointArgs, commandFacade.getEnvMap(),
-										null, new HashMap<>(), position, commandFacade.isUseTTY());
-							});
+							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> runStepContainer(
+									docker, commandFacade.getImage(), runAs, "sh", entrypointArgs,
+									commandFacade.getEnvMap(), null, new HashMap<>(), position,
+									commandFacade.isUseTTY()));
 							if (exitCode != 0) {
 								jobLogger.error("Command exited with code " + exitCode);
 								return false;
@@ -897,27 +886,24 @@ public class AgentSocket implements Runnable {
 								changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
 							}
 						}
-					} else if (facade instanceof BuildImageFacade) {
-						var buildImageFacade = (BuildImageFacade) facade;
-						var registryLogins = merge(buildImageFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
+					} else if (facade instanceof BuildImageFacade buildImageFacade) {
+                        var registryLogins = merge(buildImageFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
 						var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, registryLogins, () -> {
 							buildImage(docker, dockerSettings.getDockerBuilder(), buildImageFacade, hostBuildDir,
 									dockerSettings.isAlwaysPullImage(), dockerSettings.isImageBuildEnabled(), jobData.getExecutorName(), jobLogger);
 							return null;
 						});
-					} else if (facade instanceof RunImagetoolsFacade) {
-						var runImagetoolsFacade = (RunImagetoolsFacade) facade;
-						var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
+					} else if (facade instanceof RunImagetoolsFacade runImagetoolsFacade) {
+                        var registryLogins = merge(runImagetoolsFacade.getRegistryLogins(), dockerSettings.getRegistryLogins());
 						var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, registryLogins, () -> {
 							runImagetools(docker, runImagetoolsFacade, hostBuildDir,
 									dockerSettings.isImagetoolsEnabled(), jobData.getExecutorName(), jobLogger);
 							return null;
 						});
-					} else if (facade instanceof PruneBuilderCacheFacade) {
-						var pruneBuilderCacheFacade = (PruneBuilderCacheFacade) facade;
-						var docker = newDocker(dockerSock);
+					} else if (facade instanceof PruneBuilderCacheFacade pruneBuilderCacheFacade) {
+                        var docker = newDocker(dockerSock);
 						callWithRegistryLogins(docker, new ArrayList<>(), () -> {
 							pruneBuilderCache(docker, dockerSettings.getDockerBuilder(), pruneBuilderCacheFacade,
 									hostBuildDir, dockerSettings.isBuilderCachePruneEnabled(), jobData.getExecutorName(), jobLogger);
@@ -938,11 +924,10 @@ public class AgentSocket implements Runnable {
 							changeOwner(docker, runAs, hostBuildDir, osIds, jobLogger);
 						}
 						try {
-							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> {
-								return runStepContainer(docker, runContainerFacade.getImage(), runAs, null, arguments,
-										runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
-										position, runContainerFacade.isUseTTY());
-							});
+							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> runStepContainer(
+									docker, runContainerFacade.getImage(), runAs, null, arguments,
+                                    runContainerFacade.getEnvMap(), runContainerFacade.getWorkingDir(), runContainerFacade.getVolumeMounts(),
+                                    position, runContainerFacade.isUseTTY()));
 							if (exitCode != 0) {
 								jobLogger.error("Container exited with code " + exitCode);
 								return false;
@@ -953,9 +938,8 @@ public class AgentSocket implements Runnable {
 								changeOwner(newDocker(dockerSock), osIds, hostBuildDir, osIds, jobLogger);
 							}
 						}
-					} else if (facade instanceof CheckoutFacade) {
-						CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
-						jobLogger.log("Checking out code...");
+					} else if (facade instanceof CheckoutFacade checkoutFacade) {
+                        jobLogger.log("Checking out code...");
 
 						Commandline git = new Commandline(Agent.gitPath);
 						checkoutFacade.setupWorkingDir(git, hostWorkDir);
@@ -971,7 +955,7 @@ public class AgentSocket implements Runnable {
 								containerTrustCertsFilePath, infoLogger, warningLogger);
 
 						CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
-						cloneInfo.setupGitAuth(git, hostBuildDir, containerBuildDirPath, infoLogger, warningLogger);
+						cloneInfo.setupGitAuth(git, hostBuildDir, BUILD_PATH, infoLogger, warningLogger);
 
 						int cloneDepth = checkoutFacade.getCloneDepth();
 
@@ -983,15 +967,13 @@ public class AgentSocket implements Runnable {
 						cloneRepository(git, cloneUrl, cloneUrl, branch, commitHash,
 								checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(), cloneDepth,
 								infoLogger, warningLogger);
-					} else if (facade instanceof SetupCacheFacade) {
-						SetupCacheFacade setupCacheFacade = (SetupCacheFacade) facade;
-						var cacheConfig = setupCacheFacade.getCacheConfig();
-						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig, cacheConfigIndex.getAndIncrement());
+					} else if (facade instanceof SetupCacheFacade setupCacheFacade) {
+                        var cacheConfig = setupCacheFacade.getCacheConfig();
+						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig);
 						cacheProvisioner.download(hostBuildDir, jobLogger);
 						cacheProvisioners.add(cacheProvisioner);
-					} else if (facade instanceof ServerSideFacade) {
-						ServerSideFacade serverSideFacade = (ServerSideFacade) facade;
-						return runServerStep(Agent.sslFactory,
+					} else if (facade instanceof ServerSideFacade serverSideFacade) {
+                        return runServerStep(Agent.sslFactory,
 								Agent.serverUrl, jobData.getJobToken(), position,
 								serverSideFacade, hostBuildDir, jobLogger);
 					} else {
@@ -1043,20 +1025,18 @@ public class AgentSocket implements Runnable {
 	}
 
 	private void testHostExecutor(Session session, TestHostJobData jobData) {
-		Client client = buildRestClient(Agent.sslFactory);
-		jobThreads.put(jobData.getToken(), Thread.currentThread());
-		try {
-			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-			testWorkerResource(jobLogger, client, jobData.getToken());
-			testCommands(jobLogger);
-		} finally {
-			jobThreads.remove(jobData.getToken());
-			client.close();
-		}		
+        try (var client = buildRestClient(Agent.sslFactory)) {
+            jobThreads.put(jobData.getToken(), Thread.currentThread());
+            TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
+            testWorkerResource(jobLogger, client, jobData.getToken());
+            testCommands(jobLogger);
+        } finally {
+            jobThreads.remove(jobData.getToken());
+        }
 	}
 
-	private CacheProvisioner newCacheProvisioner(String jobToken, CacheConfigFacade config, int configIndex) {
-		return new CacheProvisioner(config, configIndex) {
+	private CacheProvisioner newCacheProvisioner(String jobToken, CacheConfigFacade config) {
+		return new CacheProvisioner(config) {
 
 			private static final String API_PATH = "~api/worker/job-cache";
 
@@ -1082,16 +1062,14 @@ public class AgentSocket implements Runnable {
 		}
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		Client client = buildRestClient(Agent.sslFactory);
-		jobThreads.put(jobData.getToken(), Thread.currentThread());
-		try {
-			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-			testWorkerResource(jobLogger, client, jobData.getToken());
-			AgentUtils.testDocker(docker, jobData, path -> getHostPath(path, dockerSock), jobLogger);
-		} finally {
-			jobThreads.remove(jobData.getToken());
-			client.close();
-		}
+        try (var client = buildRestClient(Agent.sslFactory)) {
+            jobThreads.put(jobData.getToken(), Thread.currentThread());
+            TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
+            testWorkerResource(jobLogger, client, jobData.getToken());
+            AgentUtils.testDocker(docker, jobData, path -> getHostPath(path, dockerSock), jobLogger);
+        } finally {
+            jobThreads.remove(jobData.getToken());
+        }
 	}
 
 	private void testDockerWorkspace(Session session, TestDockerWorkspaceData workspaceData) {
@@ -1100,30 +1078,24 @@ public class AgentSocket implements Runnable {
 		}
 		var dockerSock = workspaceData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-		Client client = buildRestClient(Agent.sslFactory);
-		try {
-			TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-			testWorkerResource(workspaceLogger, client, workspaceData.getToken());
-			AgentUtils.testDocker(docker, workspaceData, path -> getHostPath(path, dockerSock), workspaceLogger);
-		} finally {
-			client.close();
-		}
+        try (var client = buildRestClient(Agent.sslFactory)) {
+            TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
+            testWorkerResource(workspaceLogger, client, workspaceData.getToken());
+            AgentUtils.testDocker(docker, workspaceData, path -> getHostPath(path, dockerSock), workspaceLogger);
+        }
 	}
 
-	private void testShellWorkspace(Session session, TestShellWorkspaceData workspaceData) {
-		Client client = buildRestClient(Agent.sslFactory);
-		try {
-			TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-			testWorkerResource(workspaceLogger, client, workspaceData.getToken());
-			testCommands(workspaceLogger);
+	private void testHostWorkspace(Session session, TestHostWorkspaceData workspaceData) {
+        try (var client = buildRestClient(Agent.sslFactory)) {
+            TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
+            testWorkerResource(workspaceLogger, client, workspaceData.getToken());
+            testCommands(workspaceLogger);
 
-			var tmuxExecutable = workspaceData.getTmuxExecutable();
-			if (tmuxExecutable == null)
-				tmuxExecutable = "tmux";
-			testTmuxAvailability(new Commandline(tmuxExecutable), workspaceLogger);
-		} finally {
-			client.close();
-		}
+            var tmuxExecutable = workspaceData.getTmuxExecutable();
+            if (tmuxExecutable == null)
+                tmuxExecutable = "tmux";
+            testTmuxAvailability(new Commandline(tmuxExecutable), workspaceLogger);
+        }
 	}
 
 	private String getWorkspaceContainerName(String provisionerName, Long projectId, Long workspaceNumber) {
@@ -1138,7 +1110,7 @@ public class AgentSocket implements Runnable {
 				var provisioned = controller.provisionWorkspace(Agent.getTrustCertsDir(), Agent.ipAddress);
 				sandboxWorkspaces.put(data.token(), controller);
 				ready.complete(provisioned);
-				controller.awaitRunner();
+				controller.awaitRunner(() -> workspaceUploads.contains(data.token()));
 				return null;
 			} catch (Throwable e) {
 				ready.completeExceptionally(e);
@@ -1177,166 +1149,167 @@ public class AgentSocket implements Runnable {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			throw new ExplicitException("Docker workspace is not supported on Windows");
 		}
-		var provisionTask = new AwaitableFutureTask<WorkspaceProvisioned>(() -> {
-			var token = data.getWorkspaceToken();
-			var dockerSettings = data.getDockerSettings();
-	
-			var workspaceLogger = newTaskLogger(session, token);
-			var workspaceDir = getWorkspaceDir(data.getProjectId(), data.getWorkspaceNumber());
-			FileUtils.createDir(workspaceDir);
+		var provisionTask = new AwaitableFutureTask<>(() -> {
+            var token = data.getWorkspaceToken();
+            var dockerSettings = data.getDockerSettings();
 
-			var dockerSock = dockerSettings.getDockerSock();
+            var workspaceLogger = newTaskLogger(session, token);
+            var dockerSock = dockerSettings.getDockerSock();
+            var containerName = getWorkspaceContainerName(data.getProvisionerName(), data.getProjectId(), data.getWorkspaceNumber());
+            var initContainerName = containerName + "-user-data-init";
+            // Stop containers left by a crash before accessing their writable workspace on the host.
+            WorkspaceUtils.deleteContainerIfExist(newDocker(dockerSock), containerName, workspaceLogger);
+            WorkspaceUtils.deleteContainerIfExist(newDocker(dockerSock), initContainerName, workspaceLogger);
 
-			var osIds = getOsIds(workspaceLogger);
+            var workspaceDir = getWorkspaceDir(data.getProjectId(), data.getWorkspaceNumber());
+            FileUtils.createDir(workspaceDir);
 
-			if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
-				workspaceLogger.log("Changing owner of workspace directory to host user...");
-				var docker = newDocker(dockerSock);
-				changeOwner(docker, osIds, workspaceDir, osIds, workspaceLogger);
-			}
+            var osIds = getOsIds(workspaceLogger);
 
-			var allRegistryLogins = merge(new ArrayList<>(), dockerSettings.getRegistryLogins());
+            if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) {
+                workspaceLogger.log("Changing owner of workspace directory to host user...");
+                var docker = newDocker(dockerSock);
+                changeOwner(docker, osIds, workspaceDir, osIds, workspaceLogger);
+            }
 
-			setupRepository(workspaceDir, data.getGitSettings(), WORKSPACE_PATH, workspaceLogger);			
+            var allRegistryLogins = merge(new ArrayList<>(), dockerSettings.getRegistryLogins());
 
-			var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
-			var envVars = buildEnvVars(
-					dockerSettings.getEnvVars(),
-					data.getServerUrl(), 
-					data.getWorkspaceToken(), 
-					trustCertsFile.exists()? WORKSPACE_PATH + "/trust-certs.pem": null,
-					WORKSPACE_PATH + "/work");
+            setupRepository(workspaceDir, data.getGitSettings(), WORKSPACE_PATH, workspaceLogger);
 
-			var cacheProvisioners = new ArrayList<CacheProvisioner>();
-			var cacheConfigIndex = 1;
-			for (var cacheConfig : data.getCacheConfigs()) {
-				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
-						"~api/worker/workspace-cache", data.getWorkspaceToken(),
-						cacheConfig, Agent.getTrustCertsDir(), cacheConfigIndex++);
-				cacheProvisioner.download(workspaceDir, workspaceLogger);
-				cacheProvisioners.add(cacheProvisioner);
-			}
+            var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
+            var envVars = buildEnvVars(
+                    dockerSettings.getEnvVars(),
+                    data.getServerUrl(),
+                    data.getWorkspaceToken(),
+                    trustCertsFile.exists() ? WORKSPACE_PATH + "/trust-certs.pem" : null,
+                    WORKSPACE_PATH + "/work");
 
-			var userDataProvisioner = newUserDataProvisioner(data.getWorkspaceToken(), data.getUserDatas());
-			userDataProvisioner.download(workspaceDir, workspaceLogger);
+            var cacheProvisioners = new ArrayList<CacheProvisioner>();
+            for (var cacheConfig : data.getCacheConfigs()) {
+                var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
+                        "~api/worker/workspace-cache", data.getWorkspaceToken(),
+                        cacheConfig, Agent.getTrustCertsDir());
+                cacheProvisioner.download(workspaceDir, workspaceLogger, true);
+                cacheProvisioners.add(cacheProvisioner);
+            }
 
-			var configFileProvisioner = new ConfigFileProvisioner(data.getConfigFiles());
-			configFileProvisioner.provision(workspaceDir, workspaceLogger);
+            var userDataProvisioner = newUserDataProvisioner(data.getWorkspaceToken(), data.getUserDatas());
+            userDataProvisioner.download(workspaceDir, workspaceLogger);
 
-			var scriptConfig = data.getScriptConfig();
-			var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, true);
-			WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
+            var configFileProvisioner = new ConfigFileProvisioner(data.getConfigFiles());
+            configFileProvisioner.provision(workspaceDir, workspaceLogger);
 
-			var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
-			if (containerReadyFile.exists())
-				FileUtils.deletePath(containerReadyFile);
+            var scriptConfig = data.getScriptConfig();
+            var entrypointArgs = WorkspaceHelper.buildEntrypointArgs(scriptConfig, true);
+            WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
 
-			var runAs = dockerSettings.getRunAs();
-			var docker = newDocker(dockerSock);
-			if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
-				workspaceLogger.log("Changing owner of workspace directory to container user...");
-				changeOwner(docker, runAs, workspaceDir, osIds, workspaceLogger);
-			}
+            var containerReadyFile = new File(workspaceDir, CONTAINER_READY_FILE);
+            if (containerReadyFile.exists())
+                FileUtils.deletePath(containerReadyFile);
 
-			try {
-				var containerName = getWorkspaceContainerName(data.getProvisionerName(), data.getProjectId(), data.getWorkspaceNumber());
+            var runAs = dockerSettings.getRunAs();
+            var docker = newDocker(dockerSock);
+            if (SystemUtils.IS_OS_LINUX && !runAs.equals("0:0")) {
+                workspaceLogger.log("Changing owner of workspace directory to container user...");
+                changeOwner(docker, runAs, workspaceDir, osIds, workspaceLogger);
+            }
 
-				var userDataInitEntrypointArgs = data.getUserDataInitEntrypointArgs();
-				if (userDataInitEntrypointArgs != null) {
-					workspaceLogger.log("Initializing new user data...");
-					callWithRegistryLogins(docker, allRegistryLogins, () -> {
-						var initContainerName = containerName + "-user-data-init";
-						WorkspaceUtils.deleteContainerIfExist(newDocker(dockerSock), initContainerName, workspaceLogger);
+            try {
+                var userDataInitEntrypointArgs = data.getUserDataInitEntrypointArgs();
+                if (userDataInitEntrypointArgs != null) {
+                    workspaceLogger.log("Initializing new user data...");
+                    callWithRegistryLogins(docker, allRegistryLogins, () -> {
+                        WorkspaceUtils.setCommonDockerRunOptions(docker, initContainerName, runAs, dockerSettings.isAlwaysPullImage(),
+                                dockerSettings.getCpuLimit(), dockerSettings.getMemoryLimit());
+                        docker.processKiller(newDockerKiller(newDocker(dockerSock), initContainerName, workspaceLogger));
+                        docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + WORKSPACE_PATH);
+                        docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", userDataInitEntrypointArgs);
+                        docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger)).checkReturnCode();
+                        return null;
+                    });
+                }
 
-						WorkspaceUtils.setCommonDockerRunOptions(docker, initContainerName, runAs, dockerSettings.isAlwaysPullImage(),
-								dockerSettings.getCpuLimit(), dockerSettings.getMemoryLimit());
-						docker.processKiller(newDockerKiller(newDocker(dockerSock), initContainerName, workspaceLogger));
-						docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + WORKSPACE_PATH);
-						docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", userDataInitEntrypointArgs);
-						docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger)).checkReturnCode();
-						return null;
-					});
-				}
+                var serveTask = new AwaitableFutureTask<Void>(() -> {
+                    try {
+                        workspaceLogger.log("Starting docker container...");
+                        callWithRegistryLogins(docker, allRegistryLogins, () -> {
+                            WorkspaceUtils.setCommonDockerRunOptions(docker, containerName, runAs,
+                                    dockerSettings.isAlwaysPullImage() && userDataInitEntrypointArgs == null,
+                                    dockerSettings.getCpuLimit(), dockerSettings.getMemoryLimit());
+                            docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, workspaceLogger));
 
-				var serveTask = new AwaitableFutureTask<Void>(() -> {
-					try {
-						workspaceLogger.log("Starting docker container...");
-						callWithRegistryLogins(docker, allRegistryLogins, () -> {
-							WorkspaceUtils.deleteContainerIfExist(newDocker(dockerSock), containerName, workspaceLogger);
+                            if (!dockerSettings.getContainerPorts().isEmpty()) {
+                                for (var containerPort : dockerSettings.getContainerPorts())
+                                    docker.addArgs("--expose", String.valueOf(containerPort));
+                                docker.addArgs("-P");
+                            }
+                            docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + WORKSPACE_PATH);
 
-							WorkspaceUtils.setCommonDockerRunOptions(docker, containerName, runAs, 
-									dockerSettings.isAlwaysPullImage() && userDataInitEntrypointArgs == null,
-									dockerSettings.getCpuLimit(), dockerSettings.getMemoryLimit());
-							docker.processKiller(newDockerKiller(newDocker(dockerSock), containerName, workspaceLogger));
+                            for (var cacheProvisioner : cacheProvisioners)
+                                cacheProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
 
-							if (!dockerSettings.getContainerPorts().isEmpty()) {
-								for (var containerPort : dockerSettings.getContainerPorts())
-									docker.addArgs("--expose", String.valueOf(containerPort));
-								docker.addArgs("-P");
-							}
-							docker.addArgs("-v", getHostPath(workspaceDir.getAbsolutePath(), dockerSock) + ":" + WORKSPACE_PATH);
+                            userDataProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
 
-							for (var cacheProvisioner : cacheProvisioners)
-								cacheProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
+                            configFileProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
 
-							userDataProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
-							
-							configFileProvisioner.mountVolumes(docker, workspaceDir, path -> getHostPath(path, dockerSock));
+                            if (dockerSettings.isMountDockerSock()) {
+                                if (dockerSock != null)
+                                    docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
+                                else
+                                    docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
+                            }
+                            if (dockerSettings.getRunOptions() != null)
+                                docker.addArgs(StringUtils.parseQuoteTokens(dockerSettings.getRunOptions()));
 
-							if (dockerSettings.isMountDockerSock()) {
-								if (dockerSock != null)
-									docker.addArgs("-v", dockerSock + ":/var/run/docker.sock");
-								else
-									docker.addArgs("-v", "/var/run/docker.sock:/var/run/docker.sock");
-							}
-							if (dockerSettings.getRunOptions() != null)
-								docker.addArgs(StringUtils.parseQuoteTokens(dockerSettings.getRunOptions()));
+                            for (var entry : envVars.entrySet())
+                                docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
 
-							for (var entry : envVars.entrySet())
-								docker.addArgs("-e", entry.getKey() + "=" + entry.getValue());
+                            docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", entrypointArgs);
 
-							docker.addArgs("--entrypoint", "sh", dockerSettings.getImage(), "-c", entrypointArgs);
+                            var result = docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger));
+                            if (result.getReturnCode() != 0) {
+                                throw new ExplicitException(
+                                        "Docker container exited with code " + result.getReturnCode());
+                            }
+                            return null;
+                        });
+                        return null;
+                    } finally {
+                        try {
+                            if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0") && workspaceDir.exists())
+                                changeOwner(newDocker(dockerSock), osIds, workspaceDir, osIds, workspaceLogger);
+                            if (workspaceUploads.contains(token))
+                                upload(workspaceDir, userDataProvisioner, cacheProvisioners, workspaceLogger);
+                        } finally {
+                            workspaceServeTasks.remove(token);
+                        }
+                    }
+                });
+                workspaceServeTasks.put(data.getWorkspaceToken(), serveTask);
+                Bootstrap.executorService.execute(serveTask);
 
-							var result = docker.execute(AgentUtils.newInfoLogger(workspaceLogger), AgentUtils.newWarningLogger(workspaceLogger));
-							if (result.getReturnCode() != 0) {
-								throw new ExplicitException(
-										"Docker container exited with code " + result.getReturnCode());
-							}
-							return null;
-						});
-						return null;
-					} finally {
-						workspaceServeTasks.remove(data.getWorkspaceToken());
-						if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0") && workspaceDir.exists()) 
-							changeOwner(newDocker(dockerSock), osIds, workspaceDir, osIds, workspaceLogger);	
-						upload(workspaceDir, userDataProvisioner, cacheProvisioners, workspaceLogger);
-					}
-				});
-				workspaceServeTasks.put(data.getWorkspaceToken(), serveTask);
-				Bootstrap.executorService.execute(serveTask);
+                try {
+                    awaitContainerReady(serveTask, containerReadyFile);
 
-				try {
-					awaitContainerReady(serveTask, containerReadyFile);
-
-					Map<Integer, Integer> portMappings;
-					if (!dockerSettings.getContainerPorts().isEmpty())
-						portMappings = getPublishedPorts(newDocker(dockerSock), containerName, dockerSettings.getContainerPorts());
-					else
-						portMappings = new HashMap<>();
-					var tailscaleIp = getTailscaleIp(newDocker(dockerSock), containerName,
-							data.getScriptConfig(), dockerSettings.getContainerPorts());
-					return new WorkspaceProvisioned(data.getWorkspaceToken(), Agent.ipAddress,
-							tailscaleIp, portMappings);
-				} catch (Throwable t) {
-					serveTask.cancel(true);
-					throw t;
-				}
-			} catch (Throwable t) {
-				if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0")) 
-					changeOwner(newDocker(dockerSock), osIds, workspaceDir, osIds, workspaceLogger);
-				throw t;
-			}
-		});
+                    Map<Integer, Integer> portMappings;
+                    if (!dockerSettings.getContainerPorts().isEmpty())
+                        portMappings = getPublishedPorts(newDocker(dockerSock), containerName, dockerSettings.getContainerPorts());
+                    else
+                        portMappings = new HashMap<>();
+                    var tailscaleIp = getTailscaleIp(newDocker(dockerSock), containerName,
+                            data.getScriptConfig(), dockerSettings.getContainerPorts());
+                    return new WorkspaceProvisioned(data.getWorkspaceToken(), Agent.ipAddress,
+                            tailscaleIp, portMappings);
+                } catch (Throwable t) {
+                    serveTask.cancel(true);
+                    throw t;
+                }
+            } catch (Throwable t) {
+                if (SystemUtils.IS_OS_LINUX && !osIds.equals("0:0"))
+                    changeOwner(newDocker(dockerSock), osIds, workspaceDir, osIds, workspaceLogger);
+                throw t;
+            }
+        });
 
 		workspaceProvisionTasks.put(data.getWorkspaceToken(), provisionTask);
 		try {
@@ -1354,16 +1327,15 @@ public class AgentSocket implements Runnable {
 			File workspaceDir, Map<String, String> customEnvVars, 
 			String serverUrl, String workspaceToken) {
 		var trustCertsFile = new File(workspaceDir, "trust-certs.pem");
-		var envVars = buildEnvVars(
-				customEnvVars,
-				serverUrl, 
-				workspaceToken, 
-				trustCertsFile.exists()? trustCertsFile.getAbsolutePath(): null,
-				new File(workspaceDir, "work").getAbsolutePath());
-		return envVars;
+        return buildEnvVars(
+                customEnvVars,
+                serverUrl,
+                workspaceToken,
+                trustCertsFile.exists()? trustCertsFile.getAbsolutePath(): null,
+                new File(workspaceDir, "work").getAbsolutePath());
 	}
 
-	private void provisionShellWorkspace(Session session, ProvisionShellWorkspaceData data) {
+	private void provisionHostWorkspace(Session session, ProvisionHostWorkspaceData data) {
 		var token = data.getWorkspaceToken();
 
 		var provisionTask = new AwaitableFutureTask<Void>(() -> {
@@ -1377,7 +1349,6 @@ public class AgentSocket implements Runnable {
 					data.getServerUrl(), data.getWorkspaceToken());
 
 			var cacheProvisioners = new ArrayList<CacheProvisioner>();
-			var cacheConfigIndex = 1;
 			for (var cacheConfig : data.getCacheConfigs()) {
 				for (var path : cacheConfig.getPaths()) {
 					if (FilenameUtils.getPrefixLength(path) > 0)
@@ -1385,8 +1356,8 @@ public class AgentSocket implements Runnable {
 				}	
 				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
 						"~api/worker/workspace-cache", data.getWorkspaceToken(),
-						cacheConfig, Agent.getTrustCertsDir(), cacheConfigIndex++);
-				cacheProvisioner.download(workspaceDir, workspaceLogger);
+						cacheConfig, Agent.getTrustCertsDir());
+				cacheProvisioner.download(workspaceDir, workspaceLogger, true);
 				cacheProvisioners.add(cacheProvisioner);
 			}
 
@@ -1398,10 +1369,15 @@ public class AgentSocket implements Runnable {
 					new CountDownLatch(1).await();
 					return null;
 				} finally {
-					workspaceServeTasks.remove(token);
-					teardownShellProvisioned(scriptConfig, workspaceDir, envVars, workspaceLogger);
-					for (var cacheProvisioner : cacheProvisioners)
-						cacheProvisioner.upload(workspaceDir, workspaceLogger);
+					try {
+						teardownShellProvisioned(scriptConfig, workspaceDir, envVars, workspaceLogger);
+						if (workspaceUploads.contains(token)) {
+							for (var cacheProvisioner : cacheProvisioners)
+								cacheProvisioner.upload(workspaceDir, workspaceLogger);
+						}
+					} finally {
+						workspaceServeTasks.remove(token);
+					}
 				}
 			});
 			workspaceServeTasks.put(token, serveTask);
@@ -1475,11 +1451,7 @@ public class AgentSocket implements Runnable {
 			for (var session : workspaceShellSessions.values()) 
 				activeWorkspaceTokens.add(session.getWorkspaceToken());
 
-			for (var it = activeWorkspaceTokens.iterator(); it.hasNext(); ) {
-				var workspaceToken = it.next();
-				if (!WorkspaceUtils.isWorkspaceActive(Agent.serverUrl, workspaceToken, Agent.sslFactory)) 
-					it.remove();
-			}
+            activeWorkspaceTokens.removeIf(workspaceToken -> !WorkspaceUtils.isWorkspaceActive(Agent.serverUrl, workspaceToken, Agent.sslFactory));
 
 			for (var it = workspaceProvisionTasks.entrySet().iterator(); it.hasNext(); ) {
 				var entry = it.next();
@@ -1508,16 +1480,11 @@ public class AgentSocket implements Runnable {
 				}
 			}
 
-			var runningJobTokens = new HashSet<String>();
-			runningJobTokens.addAll(jobThreads.keySet());
+            var runningJobTokens = new HashSet<>(jobThreads.keySet());
 			for (var session : jobShellSessions.values()) 
 				runningJobTokens.add(session.getJobToken());
 
-			for (var it = runningJobTokens.iterator(); it.hasNext(); ) {
-				var jobToken = it.next();
-				if (!JobUtils.isJobRunning(Agent.serverUrl, jobToken, Agent.sslFactory)) 
-					it.remove();
-			}
+            runningJobTokens.removeIf(jobToken -> !JobUtils.isJobRunning(Agent.serverUrl, jobToken, Agent.sslFactory));
 
 			for (var jobToken: jobThreads.keySet()) {
 				if (!runningJobTokens.contains(jobToken))
@@ -1617,8 +1584,8 @@ public class AgentSocket implements Runnable {
 				} finally {
 					jobThreads.remove(sandboxTest.getToken());
 				}
-			} else if (request instanceof TestShellWorkspaceData testShellWorkspaceData) {
-				testShellWorkspace(session, testShellWorkspaceData);
+			} else if (request instanceof TestHostWorkspaceData testHostWorkspaceData) {
+				testHostWorkspace(session, testHostWorkspaceData);
 				return true;
 			} else if (request instanceof SandboxJobData sandboxJobData) {
 				return executeSandboxJob(sandboxJobData, newTaskLogger(session, sandboxJobData.getJobToken()));
@@ -1641,14 +1608,21 @@ public class AgentSocket implements Runnable {
 				return provisionSandboxWorkspace(session, sandboxData);
 			} else if (request instanceof ProvisionDockerWorkspaceData provisionWorkspaceData) {
 				return provisionDockerWorkspace(session, provisionWorkspaceData);
-			} else if (request instanceof ProvisionShellWorkspaceData provisionWorkspaceData) {
-				provisionShellWorkspace(session, provisionWorkspaceData);
+			} else if (request instanceof ProvisionHostWorkspaceData provisionWorkspaceData) {
+				provisionHostWorkspace(session, provisionWorkspaceData);
 				return null;
 			} else if (request instanceof WorkspaceAwaitRequest awaitRequest) {
 				awaitWorkspace(awaitRequest.getToken());
 				return null;
 			} else if (request instanceof StopWorkspaceRequest stopRequest) {
-				stopWorkspace(stopRequest.getToken());
+				var token = stopRequest.getToken();
+				if (stopRequest.isUploadData())
+					workspaceUploads.add(token);
+				try {
+					stopWorkspace(token);
+				} finally {
+					workspaceUploads.remove(token);
+				}
 				return null;
 			} else if (request instanceof WorkspaceGitCommandRequest gitRequest) {
 				return executeWorkspaceGit(gitRequest);
@@ -1698,7 +1672,7 @@ public class AgentSocket implements Runnable {
 				logger.error("Error pinging server", e);
 				try {
 					session.disconnect();
-				} catch (Throwable e2) {
+				} catch (Throwable ignored) {
 				}
 			}
 		}

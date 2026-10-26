@@ -4,6 +4,7 @@ Uses only the sandbox shell image's Python standard library.
 """
 import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -62,20 +63,24 @@ class ProvisionedCache:
         self.config = config
         self.exact = set()
         self.provisioned = 0
+        self.provisioned_paths = {}
 
     def has_changes(self, entry, directory):
         # The root's mtime also detects entries added, removed or renamed directly inside it.
+        restored_at = self.provisioned_paths.get(entry["path"], self.provisioned)
         return paths_changed(cache_paths(directory, shlex.split(entry.get("excludes") or ""), include_root=True),
-                             self.provisioned)
+                             restored_at)
 
     def to_state(self):
-        return dict(config=self.config, exact=sorted(self.exact), provisioned=self.provisioned)
+        return dict(config=self.config, exact=sorted(self.exact), provisioned=self.provisioned,
+                    provisionedPaths=self.provisioned_paths)
 
     @classmethod
     def from_state(cls, state):
         cache = cls(state["config"])
         cache.exact = set(state["exact"])
         cache.provisioned = state["provisioned"]
+        cache.provisioned_paths = state.get("provisionedPaths", {})
         return cache
 
 
@@ -251,16 +256,47 @@ class SandboxRuntime:
             return digest.hexdigest()
         return None
 
-    def setup_cache(self, step):
+    def setup_cache(self, step, persistent=False):
         config = dict(step, key=self.replace(step["key"]), checksum=self.cache_checksum(step))
         cache = ProvisionedCache(config)
         for entry in config["entries"]:
             path = entry["path"]
-            if self.restore_cache(config, path) == 0:
+            directory = self.data_path(path)
+            state_file = None
+            if persistent:
+                name = hashlib.sha256(path.encode()).hexdigest()
+                state_file = safe_path(self.root, "cache/" + name + "/state")
+                state = json.loads(state_file.read_text()) if state_file.exists() else None
+                if state and directory.is_dir() and state["key"] == config["key"]:
+                    if state["exact"] and state["checksum"] == config["checksum"]:
+                        cache.exact.add(path)
+                    cache.provisioned_paths[path] = state["provisioned"]
+                    continue
+                # Invalidate old metadata before a replacement that might fail partway through.
+                state_file.unlink(missing_ok=True)
+            availability = self.restore_cache(config, path)
+            if availability == 0:
                 cache.exact.add(path)
+            if state_file is not None:
+                restored_at = time.time()
+                state = dict(key=config["key"], checksum=config["checksum"],
+                             exact=availability == 0, provisioned=restored_at)
+                self.write_cache_state(state_file, state)
+                cache.provisioned_paths[path] = restored_at
         cache.provisioned = time.time()
         self.caches.append(cache)
         return True
+
+    def write_cache_state(self, path, state):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".restore-", delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                json.dump(state, stream)
+                stream.close()
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def restore_cache(self, config, path):
         directory = self.data_path(path)
