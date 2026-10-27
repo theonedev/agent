@@ -7,7 +7,8 @@ import static io.onedev.agent.AgentUtils.getHostPath;
 import static io.onedev.agent.AgentUtils.getOsIds;
 import static io.onedev.agent.AgentUtils.newDocker;
 import static io.onedev.agent.AgentUtils.newDockerKiller;
-import static io.onedev.agent.AgentUtils.testCommands;
+import static io.onedev.agent.RuntimeTestUtils.testHost;
+import static io.onedev.agent.RuntimeTestUtils.testServerConnection;
 import static io.onedev.agent.job.JobUtils.buildImage;
 import static io.onedev.agent.job.JobUtils.createNetwork;
 import static io.onedev.agent.job.JobUtils.deleteNetwork;
@@ -23,14 +24,12 @@ import static io.onedev.agent.workspace.WorkspaceUtils.getTailscaleIp;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupRepository;
 import static io.onedev.agent.workspace.WorkspaceUtils.setupShellProvisioned;
 import static io.onedev.agent.workspace.WorkspaceUtils.teardownShellProvisioned;
-import static io.onedev.agent.workspace.WorkspaceUtils.testTmuxAvailability;
 import static io.onedev.agent.workspace.WorkspaceUtils.upload;
 import static io.onedev.k8shelper.JobHelper.BUILD_PATH;
 import static io.onedev.k8shelper.JobHelper.downloadDependencies;
 import static io.onedev.k8shelper.JobHelper.runServerStep;
 import static io.onedev.k8shelper.JobHelper.stringifyStepPosition;
 import static io.onedev.k8shelper.KubernetesHelper.buildRestClient;
-import static io.onedev.k8shelper.KubernetesHelper.checkStatus;
 import static io.onedev.k8shelper.KubernetesHelper.cloneRepository;
 import static io.onedev.k8shelper.KubernetesHelper.initRepository;
 import static io.onedev.k8shelper.KubernetesHelper.replacePlaceholders;
@@ -57,13 +56,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 
-import jakarta.ws.rs.client.Client;
 import jakarta.ws.rs.client.Invocation;
 import jakarta.ws.rs.client.WebTarget;
 import jakarta.ws.rs.core.HttpHeaders;
@@ -104,6 +103,7 @@ import io.onedev.agent.shell.JobShellSession;
 import io.onedev.agent.shell.ShellOutputRequest;
 import io.onedev.agent.shell.ShellSession;
 import io.onedev.agent.shell.WorkspaceShellInputRequest;
+import io.onedev.agent.shell.WorkspaceShellOutputRequest;
 import io.onedev.agent.shell.WorkspaceShellResizeRequest;
 import io.onedev.agent.shell.WorkspaceShellSession;
 import io.onedev.agent.workspace.DockerProvisionedShellOpenData;
@@ -163,7 +163,20 @@ public class AgentSocket implements Runnable {
 
 	private static final Logger logger = LoggerFactory.getLogger(AgentSocket.class);
 	
-	private static final Map<String, Thread> jobThreads = new ConcurrentHashMap<>();
+	record RunningJob(Thread thread, String serverUrl) {
+	}
+
+	static class WorkspaceTask<V> extends AwaitableFutureTask<V> {
+
+		private final String serverUrl;
+
+		WorkspaceTask(String serverUrl, Callable<V> callable) {
+			super(callable);
+			this.serverUrl = serverUrl;
+		}
+	}
+
+	private static final Map<String, RunningJob> jobThreads = new ConcurrentHashMap<>();
 
 	private static final Map<String, SandboxWorkspaceController> sandboxWorkspaces = new ConcurrentHashMap<>();
 
@@ -177,9 +190,9 @@ public class AgentSocket implements Runnable {
 	
 	private static final Map<String, String> jobContainerNames = new ConcurrentHashMap<>();
 	
-	private static final Map<String, AwaitableFutureTask<?>> workspaceProvisionTasks = new ConcurrentHashMap<>();
+	private static final Map<String, WorkspaceTask<?>> workspaceProvisionTasks = new ConcurrentHashMap<>();
 
-	private static final Map<String, AwaitableFutureTask<?>> workspaceServeTasks = new ConcurrentHashMap<>();
+	private static final Map<String, WorkspaceTask<?>> workspaceServeTasks = new ConcurrentHashMap<>();
 
 	private static final Set<String> workspaceUploads = ConcurrentHashMap.newKeySet();
 	
@@ -377,12 +390,17 @@ public class AgentSocket implements Runnable {
 					JobShellOpenData jobShellOpenData = SerializationUtils.deserialize(messageData);
 					String sessionId = jobShellOpenData.getSessionId();
 					jobToken = jobShellOpenData.getJobToken();
+					var runningJob = jobThreads.get(jobToken);
+					if (runningJob == null) {
+						sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
+						break;
+					}
 
 					switch (jobShellOpenData.getMode()) {
 					case SANDBOX -> {
 						var sandbox = sandboxJobs.get(jobToken);
 						if (sandbox != null) {
-							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session,
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, runningJob.serverUrl(), sessionId, session,
 									sandbox.openShell()));
 						} else {
 							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Sandbox not running")));
@@ -399,7 +417,7 @@ public class AgentSocket implements Runnable {
 							} else {
 								docker.addArgs("sh");
 							}
-							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, docker));
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, runningJob.serverUrl(), sessionId, session, docker));
 						} else {
 							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Container not running")));
 						}
@@ -418,7 +436,7 @@ public class AgentSocket implements Runnable {
 								shell = new Commandline("sh");
 							}
 							shell.workingDir(new File(buildDir, "work"));
-							jobShellSessions.put(sessionId, new JobShellSession(jobToken, sessionId, session, shell));
+							jobShellSessions.put(sessionId, new JobShellSession(jobToken, runningJob.serverUrl(), sessionId, session, shell));
 						} else {
 							sendOutput(session, new JobShellOutputRequest(sessionId, encodeBase64Error("Job not running")));
 						}
@@ -446,12 +464,17 @@ public class AgentSocket implements Runnable {
 				case WORKSPACE_SHELL_OPEN:
 					WorkspaceShellOpenData shellOpenData = SerializationUtils.deserialize(messageData);
 					var shellId = shellOpenData.getShellId();
+					var workspaceTask = workspaceServeTasks.get(shellOpenData.getToken());
+					if (workspaceTask == null) {
+						sendOutput(session, new WorkspaceShellOutputRequest(shellId, encodeBase64Error("Workspace not running")));
+						break;
+					}
 					if (shellOpenData instanceof SandboxProvisionedShellOpenData) {
 						var token = shellOpenData.getToken();
 						var sandbox = sandboxWorkspaces.get(token);
 						if (sandbox == null)
 							throw new ExplicitException("Sandbox workspace not running");
-						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session,
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, workspaceTask.serverUrl, shellId, session,
 								sandbox.openShell(shellId, shellOpenData.getShellExecutable()),
 								() -> sandbox.closeShell(shellId)));
 					} else if (shellOpenData instanceof DockerProvisionedShellOpenData dockerProvisionedShellOpenData) {
@@ -466,7 +489,7 @@ public class AgentSocket implements Runnable {
 								WORKSPACE_PATH + "/work", containerName,
 								"tmux", "-L", tmuxSocket, "new-session", shellExecutable);
 						var token = shellOpenData.getToken();
-						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, docker, () ->
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, workspaceTask.serverUrl, shellId, session, docker, () ->
 								WorkspaceUtils.killTmuxServer(docker, containerName, tmuxSocket)));
 					} else {
 						var shellProvisionedShellOpenData = (ShellProvisionedShellOpenData) shellOpenData;
@@ -489,7 +512,7 @@ public class AgentSocket implements Runnable {
 						tmux.addArgs(shellOpenData.getShellExecutable())
 								.workingDir(new File(workspaceDir, "work"));
 						var token = shellOpenData.getToken();
-						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, shellId, session, tmux, null));
+						workspaceShellSessions.put(shellId, new WorkspaceShellSession(token, workspaceTask.serverUrl, shellId, session, tmux, null));
 					}
 					break;
 				case WORKSPACE_SHELL_TERMINATE:
@@ -552,9 +575,9 @@ public class AgentSocket implements Runnable {
 	
 	private static void cancelJob(String jobToken) {
 		// Cancel once: housekeeping or another request must not interrupt final cleanup.
-		Thread thread = jobThreads.remove(jobToken);
-		if (thread != null)
-			thread.interrupt();
+		var job = jobThreads.remove(jobToken);
+		if (job != null)
+			job.thread().interrupt();
 	}
 		
 	private void resumeJob(JobResumeData jobResumeData) {
@@ -605,7 +628,7 @@ public class AgentSocket implements Runnable {
 	private boolean executeSandboxJob(SandboxJobData data, TaskLogger jobLogger) {
 		var controller = new SandboxJobController(Agent.sbxPath, data.getSettings());
 		var buildDir = getBuildDir(Agent.getTempDir(), data.getProjectId(), data.getBuildNumber(), data.getSubmitSequence());
-		jobThreads.put(data.getJobToken(), Thread.currentThread());
+		jobThreads.put(data.getJobToken(), new RunningJob(Thread.currentThread(), data.getServerUrl()));
 		sandboxJobs.put(data.getJobToken(), controller);
 		sandboxBuilds.put(buildDir, controller);
 		try {
@@ -629,7 +652,7 @@ public class AgentSocket implements Runnable {
 			FileUtils.writeFile(new File(attributesDir, entry.getKey()), 
 					entry.getValue(), UTF_8);
 		}
-		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), new RunningJob(Thread.currentThread(), jobData.getServerUrl()));
 		var cacheProvisioners = new ArrayList<CacheProvisioner>();
 		boolean successful = false;
 		boolean initializationCompleted = false;
@@ -639,7 +662,7 @@ public class AgentSocket implements Runnable {
 
 			jobLogger.log("Downloading job dependencies...");
 			
-			JobHelper.downloadDependencies(Agent.serverUrl,  jobData.getJobToken(),
+			JobHelper.downloadDependencies(jobData.getServerUrl(),  jobData.getJobToken(),
 					workDir, Agent.sslFactory);
 						
 			String messageData = jobData.getJobToken() + ":" + workDir.getAbsolutePath();
@@ -728,12 +751,12 @@ public class AgentSocket implements Runnable {
 								throw new ExplicitException("Host executor does not allow absolute cache path: " + path);
 						}
 						var cacheConfig = setupCacheFacade.getCacheConfig();
-						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig);
+						var cacheProvisioner = newCacheProvisioner(jobData.getServerUrl(), jobData.getJobToken(), cacheConfig);
 						cacheProvisioner.download(buildDir, jobLogger);
 						cacheProvisioners.add(cacheProvisioner);
 					} else if (facade instanceof ServerSideFacade serverSideFacade) {
                         return runServerStep(Agent.sslFactory,
-								Agent.serverUrl, jobData.getJobToken(), position,
+								jobData.getServerUrl(), jobData.getJobToken(), position,
 								serverSideFacade, buildDir, jobLogger);
 					} else {
 						throw new ExplicitException("Unexpected step type: " + facade.getClass());
@@ -781,7 +804,7 @@ public class AgentSocket implements Runnable {
 		var dockerSettings = jobData.getSettings();
 		var dockerSock = dockerSettings.getDockerSock();
 
-		jobThreads.put(jobData.getJobToken(), Thread.currentThread());
+		jobThreads.put(jobData.getJobToken(), new RunningJob(Thread.currentThread(), jobData.getServerUrl()));
 		var cacheProvisioners = new ArrayList<CacheProvisioner>();
 		boolean successful = false;
 		boolean initializationCompleted = false;
@@ -809,7 +832,7 @@ public class AgentSocket implements Runnable {
 
 			jobLogger.log("Downloading job dependencies...");
 
-			downloadDependencies(Agent.serverUrl, jobData.getJobToken(),
+			downloadDependencies(jobData.getServerUrl(), jobData.getJobToken(),
 					hostWorkDir, Agent.sslFactory);
 
             var containerWorkDirPath = BUILD_PATH + "/work";
@@ -969,12 +992,12 @@ public class AgentSocket implements Runnable {
 								infoLogger, warningLogger);
 					} else if (facade instanceof SetupCacheFacade setupCacheFacade) {
                         var cacheConfig = setupCacheFacade.getCacheConfig();
-						var cacheProvisioner = newCacheProvisioner(jobData.getJobToken(), cacheConfig);
+						var cacheProvisioner = newCacheProvisioner(jobData.getServerUrl(), jobData.getJobToken(), cacheConfig);
 						cacheProvisioner.download(hostBuildDir, jobLogger);
 						cacheProvisioners.add(cacheProvisioner);
 					} else if (facade instanceof ServerSideFacade serverSideFacade) {
                         return runServerStep(Agent.sslFactory,
-								Agent.serverUrl, jobData.getJobToken(), position,
+								jobData.getServerUrl(), jobData.getJobToken(), position,
 								serverSideFacade, hostBuildDir, jobLogger);
 					} else {
 						throw new ExplicitException("Unexpected step type: " + facade.getClass());
@@ -1013,29 +1036,18 @@ public class AgentSocket implements Runnable {
 		}
 	}
 
-	private void testWorkerResource(TaskLogger logger, Client client, String token) {
-		logger.log(String.format("Connecting to server '%s'...", Agent.serverUrl));
-		WebTarget target = client.target(Agent.serverUrl)
-				.path("~api/worker/test")
-				.queryParam("token", token);
-		Invocation.Builder builder = target.request();
-		try (Response response = builder.get()) {
-			checkStatus(response);
+	private void testHostExecutor(Session session, TestHostJobData jobData) {
+		try {
+			jobThreads.put(jobData.getToken(), new RunningJob(Thread.currentThread(), jobData.getServerUrl()));
+			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
+			testServerConnection(jobData.getServerUrl(), jobData.getToken(), Agent.sslFactory, jobLogger);
+			testHost(null, jobLogger);
+		} finally {
+			jobThreads.remove(jobData.getToken());
 		}
 	}
 
-	private void testHostExecutor(Session session, TestHostJobData jobData) {
-        try (var client = buildRestClient(Agent.sslFactory)) {
-            jobThreads.put(jobData.getToken(), Thread.currentThread());
-            TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-            testWorkerResource(jobLogger, client, jobData.getToken());
-            testCommands(jobLogger);
-        } finally {
-            jobThreads.remove(jobData.getToken());
-        }
-	}
-
-	private CacheProvisioner newCacheProvisioner(String jobToken, CacheConfigFacade config) {
+	private CacheProvisioner newCacheProvisioner(String serverUrl, String jobToken, CacheConfigFacade config) {
 		return new CacheProvisioner(config) {
 
 			private static final String API_PATH = "~api/worker/job-cache";
@@ -1043,13 +1055,13 @@ public class AgentSocket implements Runnable {
 			@Override
 			protected CacheAvailability download(String key, @Nullable String checksum,
 					String path, File pathDir) {
-				return KubernetesHelper.downloadCache(Agent.serverUrl, API_PATH, jobToken,
+				return KubernetesHelper.downloadCache(serverUrl, API_PATH, jobToken,
 						key, checksum, path, pathDir, Agent.sslFactory);
 			}
 
 			@Override
 			protected boolean upload(CacheConfigFacade config, String path, File pathDir, List<String> excludes) {
-				return KubernetesHelper.uploadCache(Agent.serverUrl, API_PATH, jobToken, 
+				return KubernetesHelper.uploadCache(serverUrl, API_PATH, jobToken,
 						config, path, pathDir, excludes, Agent.sslFactory);
 			}
 
@@ -1062,14 +1074,14 @@ public class AgentSocket implements Runnable {
 		}
 		var dockerSock = jobData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-        try (var client = buildRestClient(Agent.sslFactory)) {
-            jobThreads.put(jobData.getToken(), Thread.currentThread());
-            TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
-            testWorkerResource(jobLogger, client, jobData.getToken());
-            AgentUtils.testDocker(docker, jobData, path -> getHostPath(path, dockerSock), jobLogger);
-        } finally {
-            jobThreads.remove(jobData.getToken());
-        }
+		try {
+			jobThreads.put(jobData.getToken(), new RunningJob(Thread.currentThread(), jobData.getServerUrl()));
+			TaskLogger jobLogger = newTaskLogger(session, jobData.getToken());
+			testServerConnection(jobData.getServerUrl(), jobData.getToken(), Agent.sslFactory, jobLogger);
+			RuntimeTestUtils.testDocker(docker, jobData, path -> getHostPath(path, dockerSock), jobLogger);
+		} finally {
+			jobThreads.remove(jobData.getToken());
+		}
 	}
 
 	private void testDockerWorkspace(Session session, TestDockerWorkspaceData workspaceData) {
@@ -1078,24 +1090,21 @@ public class AgentSocket implements Runnable {
 		}
 		var dockerSock = workspaceData.getDockerSock();
 		Commandline docker = newDocker(dockerSock);
-        try (var client = buildRestClient(Agent.sslFactory)) {
-            TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-            testWorkerResource(workspaceLogger, client, workspaceData.getToken());
-            AgentUtils.testDocker(docker, workspaceData, path -> getHostPath(path, dockerSock), workspaceLogger);
-        }
+		TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
+		testServerConnection(workspaceData.getServerUrl(), workspaceData.getToken(), Agent.sslFactory, workspaceLogger);
+		RuntimeTestUtils.testDocker(docker, workspaceData, path -> getHostPath(path, dockerSock), workspaceLogger);
+		RuntimeTestUtils.testDockerServerConnection(docker, workspaceData.getRegistryLogins(),
+				workspaceData.getServerUrl(), workspaceData.getToken(), workspaceData.getDockerOptions(),
+				Agent.sslFactory, workspaceLogger);
 	}
 
 	private void testHostWorkspace(Session session, TestHostWorkspaceData workspaceData) {
-        try (var client = buildRestClient(Agent.sslFactory)) {
-            TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
-            testWorkerResource(workspaceLogger, client, workspaceData.getToken());
-            testCommands(workspaceLogger);
-
-            var tmuxExecutable = workspaceData.getTmuxExecutable();
-            if (tmuxExecutable == null)
-                tmuxExecutable = "tmux";
-            testTmuxAvailability(new Commandline(tmuxExecutable), workspaceLogger);
-        }
+		TaskLogger workspaceLogger = newTaskLogger(session, workspaceData.getToken());
+		testServerConnection(workspaceData.getServerUrl(), workspaceData.getToken(), Agent.sslFactory, workspaceLogger);
+		var tmuxExecutable = workspaceData.getTmuxExecutable();
+		if (tmuxExecutable == null)
+			tmuxExecutable = "tmux";
+		testHost(new Commandline(tmuxExecutable), workspaceLogger);
 	}
 
 	private String getWorkspaceContainerName(String provisionerName, Long projectId, Long workspaceNumber) {
@@ -1104,7 +1113,7 @@ public class AgentSocket implements Runnable {
 	
 	private WorkspaceProvisioned provisionSandboxWorkspace(Session session, ProvisionSandboxWorkspaceData data) {
 		var ready = new java.util.concurrent.CompletableFuture<WorkspaceProvisioned>();
-		var task = new AwaitableFutureTask<Void>(() -> {
+		var task = new WorkspaceTask<Void>(data.settings().serverUrl(), () -> {
 			var controller = new SandboxWorkspaceController(Agent.sbxPath, data, newTaskLogger(session, data.token()));
 			try {
 				var provisioned = controller.provisionWorkspace(Agent.getTrustCertsDir(), Agent.ipAddress);
@@ -1149,7 +1158,7 @@ public class AgentSocket implements Runnable {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			throw new ExplicitException("Docker workspace is not supported on Windows");
 		}
-		var provisionTask = new AwaitableFutureTask<>(() -> {
+		var provisionTask = new WorkspaceTask<>(data.getServerUrl(), () -> {
             var token = data.getWorkspaceToken();
             var dockerSettings = data.getDockerSettings();
 
@@ -1186,14 +1195,14 @@ public class AgentSocket implements Runnable {
 
             var cacheProvisioners = new ArrayList<CacheProvisioner>();
             for (var cacheConfig : data.getCacheConfigs()) {
-                var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
+                var cacheProvisioner = KubernetesHelper.newCacheProvisioner(data.getServerUrl(),
                         "~api/worker/workspace-cache", data.getWorkspaceToken(),
                         cacheConfig, Agent.getTrustCertsDir());
                 cacheProvisioner.download(workspaceDir, workspaceLogger, true);
                 cacheProvisioners.add(cacheProvisioner);
             }
 
-            var userDataProvisioner = newUserDataProvisioner(data.getWorkspaceToken(), data.getUserDatas());
+            var userDataProvisioner = newUserDataProvisioner(data.getServerUrl(), data.getWorkspaceToken(), data.getUserDatas());
             userDataProvisioner.download(workspaceDir, workspaceLogger);
 
             var configFileProvisioner = new ConfigFileProvisioner(data.getConfigFiles());
@@ -1229,7 +1238,7 @@ public class AgentSocket implements Runnable {
                     });
                 }
 
-                var serveTask = new AwaitableFutureTask<Void>(() -> {
+                var serveTask = new WorkspaceTask<Void>(data.getServerUrl(), () -> {
                     try {
                         workspaceLogger.log("Starting docker container...");
                         callWithRegistryLogins(docker, allRegistryLogins, () -> {
@@ -1338,7 +1347,7 @@ public class AgentSocket implements Runnable {
 	private void provisionHostWorkspace(Session session, ProvisionHostWorkspaceData data) {
 		var token = data.getWorkspaceToken();
 
-		var provisionTask = new AwaitableFutureTask<Void>(() -> {
+		var provisionTask = new WorkspaceTask<Void>(data.getServerUrl(), () -> {
 			var workspaceLogger = newTaskLogger(session, token);
 			var workspaceDir = getWorkspaceDir(data.getProjectId(), data.getWorkspaceNumber());
 			FileUtils.createDir(workspaceDir);
@@ -1354,7 +1363,7 @@ public class AgentSocket implements Runnable {
 					if (FilenameUtils.getPrefixLength(path) > 0)
 						throw new ExplicitException("Host provisioner does not allow absolute cache path: " + path);
 				}	
-				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(Agent.serverUrl,
+				var cacheProvisioner = KubernetesHelper.newCacheProvisioner(data.getServerUrl(),
 						"~api/worker/workspace-cache", data.getWorkspaceToken(),
 						cacheConfig, Agent.getTrustCertsDir());
 				cacheProvisioner.download(workspaceDir, workspaceLogger, true);
@@ -1364,7 +1373,7 @@ public class AgentSocket implements Runnable {
 			var scriptConfig = data.getScriptConfig();
 			setupShellProvisioned(scriptConfig, workspaceDir, envVars, workspaceLogger);
 
-			var serveTask = new AwaitableFutureTask<Void>(() -> {
+			var serveTask = new WorkspaceTask<Void>(data.getServerUrl(), () -> {
 				try {
 					new CountDownLatch(1).await();
 					return null;
@@ -1445,18 +1454,19 @@ public class AgentSocket implements Runnable {
 
 	public static void houseKeeper() {
 		try {
-			var activeWorkspaceTokens = new HashSet<String>();
-			activeWorkspaceTokens.addAll(workspaceProvisionTasks.keySet());
-			activeWorkspaceTokens.addAll(workspaceServeTasks.keySet());
+			var activeWorkspaces = new HashMap<String, String>();
+			workspaceProvisionTasks.forEach((token, task) -> activeWorkspaces.put(token, task.serverUrl));
+			workspaceServeTasks.forEach((token, task) -> activeWorkspaces.put(token, task.serverUrl));
 			for (var session : workspaceShellSessions.values()) 
-				activeWorkspaceTokens.add(session.getWorkspaceToken());
+				activeWorkspaces.put(session.getWorkspaceToken(), session.getServerUrl());
 
-            activeWorkspaceTokens.removeIf(workspaceToken -> !WorkspaceUtils.isWorkspaceActive(Agent.serverUrl, workspaceToken, Agent.sslFactory));
+			activeWorkspaces.entrySet().removeIf(entry ->
+					!WorkspaceUtils.isWorkspaceActive(entry.getValue(), entry.getKey(), Agent.sslFactory));
 
 			for (var it = workspaceProvisionTasks.entrySet().iterator(); it.hasNext(); ) {
 				var entry = it.next();
 				var workspaceToken = entry.getKey();
-				if (!activeWorkspaceTokens.contains(workspaceToken)) {
+				if (!activeWorkspaces.containsKey(workspaceToken)) {
 					entry.getValue().cancel(true);
 					it.remove();
 				}
@@ -1465,7 +1475,7 @@ public class AgentSocket implements Runnable {
 			for (var it = workspaceServeTasks.entrySet().iterator(); it.hasNext(); ) {
 				var entry = it.next();
 				var workspaceToken = entry.getKey();
-				if (!activeWorkspaceTokens.contains(workspaceToken)) {
+				if (!activeWorkspaces.containsKey(workspaceToken)) {
 					entry.getValue().cancel(true);
 					it.remove();
 				}
@@ -1474,27 +1484,29 @@ public class AgentSocket implements Runnable {
 			for (var it = workspaceShellSessions.entrySet().iterator(); it.hasNext(); ) {
 				var entry = it.next();
 				var session = entry.getValue();
-				if (!activeWorkspaceTokens.contains(session.getWorkspaceToken())) {
+				if (!activeWorkspaces.containsKey(session.getWorkspaceToken())) {
 					entry.getValue().exit();
 					it.remove();
 				}
 			}
 
-            var runningJobTokens = new HashSet<>(jobThreads.keySet());
+			var runningJobs = new HashMap<String, String>();
+			jobThreads.forEach((token, job) -> runningJobs.put(token, job.serverUrl()));
 			for (var session : jobShellSessions.values()) 
-				runningJobTokens.add(session.getJobToken());
+				runningJobs.put(session.getJobToken(), session.getServerUrl());
 
-            runningJobTokens.removeIf(jobToken -> !JobUtils.isJobRunning(Agent.serverUrl, jobToken, Agent.sslFactory));
+			runningJobs.entrySet().removeIf(entry ->
+					!JobUtils.isJobRunning(entry.getValue(), entry.getKey(), Agent.sslFactory));
 
 			for (var jobToken: jobThreads.keySet()) {
-				if (!runningJobTokens.contains(jobToken))
+				if (!runningJobs.containsKey(jobToken))
 					cancelJob(jobToken);
 			}
 
 			for (var it = jobShellSessions.entrySet().iterator(); it.hasNext(); ) {
 				var entry = it.next();
 				var session = entry.getValue();
-				if (!runningJobTokens.contains(session.getJobToken())) {
+				if (!runningJobs.containsKey(session.getJobToken())) {
 					entry.getValue().exit();
 					it.remove();
 				}
@@ -1540,23 +1552,23 @@ public class AgentSocket implements Runnable {
 				projectId + "/" + workspaceNumber);
 	}
 
-	private UserDataProvisioner newUserDataProvisioner(String workspaceToken,
+	private UserDataProvisioner newUserDataProvisioner(String serverUrl, String workspaceToken,
 			List<UserDataFacade> userDatas) {
 		return new UserDataProvisioner(userDatas) {
 
 			@Override
 			protected void download(String key, String path, File pathFile) {
-				WorkspaceHelper.downloadUserData(Agent.serverUrl, workspaceToken, key, path, pathFile, Agent.sslFactory);
+				WorkspaceHelper.downloadUserData(serverUrl, workspaceToken, key, path, pathFile, Agent.sslFactory);
 			}
 
 			@Override
 			protected void upload(String key, String path, File pathFile, List<String> excludes) {
-				WorkspaceHelper.uploadUserData(Agent.serverUrl, workspaceToken, key, path, pathFile, excludes, Agent.sslFactory);
+				WorkspaceHelper.uploadUserData(serverUrl, workspaceToken, key, path, pathFile, excludes, Agent.sslFactory);
 			}
 
 			@Override
 			protected void notifyUploaded(String key) {
-				WorkspaceHelper.notifyUserDataUploaded(Agent.serverUrl, workspaceToken, key, Agent.sslFactory);
+				WorkspaceHelper.notifyUserDataUploaded(serverUrl, workspaceToken, key, Agent.sslFactory);
 			}
 
 		};
@@ -1576,7 +1588,7 @@ public class AgentSocket implements Runnable {
 				testDockerWorkspace(session, testDockerWorkspaceData);
 				return true;
 			} else if (request instanceof TestSandboxWorkspaceData sandboxTest) {
-				jobThreads.put(sandboxTest.getToken(), Thread.currentThread());
+				jobThreads.put(sandboxTest.getToken(), new RunningJob(Thread.currentThread(), sandboxTest.getServerUrl()));
 				try {
 					SandboxWorkspaceController.testSandbox(Agent.sbxPath, sandboxTest.getSettings(), Agent.getTrustCertsDir(),
 							newTaskLogger(session, sandboxTest.getToken()));
@@ -1590,7 +1602,7 @@ public class AgentSocket implements Runnable {
 			} else if (request instanceof SandboxJobData sandboxJobData) {
 				return executeSandboxJob(sandboxJobData, newTaskLogger(session, sandboxJobData.getJobToken()));
 			} else if (request instanceof TestSandboxJobData testSandboxJobData) {
-				jobThreads.put(testSandboxJobData.getToken(), Thread.currentThread());
+				jobThreads.put(testSandboxJobData.getToken(), new RunningJob(Thread.currentThread(), testSandboxJobData.getServerUrl()));
 				try {
 					new SandboxJobController(Agent.sbxPath, testSandboxJobData.getSettings()).testSandbox(testSandboxJobData.getImage(), Agent.getTrustCertsDir(),
 							newTaskLogger(session, testSandboxJobData.getToken()));

@@ -198,10 +198,7 @@ class WorkspaceRunner(SandboxRuntime):
                         self.upload_caches()
 
     def test(self):
-        subprocess.run(["git", "--version"], check=True)
-        subprocess.run(["sh", "-c", "echo hello from sandbox"], check=True)
-        with self.request("test"):
-            pass
+        self.test_runtime(workspace=True)
         log("Sandbox workspace runtime is ready")
 
     def open_shell(self, shell_id, executable):

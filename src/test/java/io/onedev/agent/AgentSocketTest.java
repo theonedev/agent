@@ -17,7 +17,7 @@ class AgentSocketTest {
 		var field = AgentSocket.class.getDeclaredField("jobThreads");
 		field.setAccessible(true);
 		@SuppressWarnings("unchecked")
-		var jobThreads = (Map<String, Thread>) field.get(null);
+		var jobThreads = (Map<String, AgentSocket.RunningJob>) field.get(null);
 		var cancelJob = AgentSocket.class.getDeclaredMethod("cancelJob", String.class);
 		cancelJob.setAccessible(true);
 		var cleanupStarted = new CountDownLatch(1);
@@ -36,7 +36,7 @@ class AgentSocketTest {
 			}
 		});
 		var token = UUID.randomUUID().toString();
-		jobThreads.put(token, thread);
+		jobThreads.put(token, new AgentSocket.RunningJob(thread, "http://configured-server"));
 		thread.start();
 		try {
 			var socket = new AgentSocket();

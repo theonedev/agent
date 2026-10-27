@@ -9,10 +9,10 @@ public class HostJobData extends JobData {
 
 	private static final long serialVersionUID = 1L;
 
-	public HostJobData(String jobToken, String executorName, String projectPath, Long projectId,
+	public HostJobData(String serverUrl, String jobToken, String executorName, String projectPath, Long projectId,
 			String refName, String commitHash, Long buildNumber, Long submitSequence,
 			List<Action> actions, SecretMasker secretMasker) {
-		super(jobToken, executorName, projectPath, projectId, refName, commitHash,
+		super(serverUrl, jobToken, executorName, projectPath, projectId, refName, commitHash,
 				buildNumber, submitSequence, actions, secretMasker);
 	}
 

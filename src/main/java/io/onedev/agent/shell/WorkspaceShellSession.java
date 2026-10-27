@@ -11,21 +11,28 @@ import io.onedev.commons.utils.command.Commandline;
 public class WorkspaceShellSession extends ShellSession {
 
 	private final String workspaceToken;
+
+	private final String serverUrl;
 	
-	public WorkspaceShellSession(String workspaceToken, String sessionId, Session agentSession, Commandline cmdline) {
-		this(workspaceToken, sessionId, agentSession, cmdline, null);
+	public WorkspaceShellSession(String workspaceToken, String serverUrl, String sessionId, Session agentSession, Commandline cmdline) {
+		this(workspaceToken, serverUrl, sessionId, agentSession, cmdline, null);
 	}
 
-	public WorkspaceShellSession(String workspaceToken, String sessionId, Session agentSession, Commandline cmdline,
+	public WorkspaceShellSession(String workspaceToken, String serverUrl, String sessionId, Session agentSession, Commandline cmdline,
 			@Nullable Runnable onTerminate) {
 		super(sessionId, agentSession, WORKSPACE_SHELL_EXIT, cmdline, onTerminate);
 		this.workspaceToken = workspaceToken;
+		this.serverUrl = serverUrl;
 	}
 	
 	@Override
 	protected void onOutput(String base64Data) {
 		AgentSocket.sendOutput(agentSession, new WorkspaceShellOutputRequest(sessionId, base64Data));
 	}	
+
+	public String getServerUrl() {
+		return serverUrl;
+	}
 
 	public String getWorkspaceToken() {
 		return workspaceToken;

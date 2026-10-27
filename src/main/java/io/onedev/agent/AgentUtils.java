@@ -19,7 +19,6 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 
 import org.apache.commons.lang3.SystemUtils;
 import org.jspecify.annotations.Nullable;
@@ -39,10 +38,7 @@ import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.commons.utils.command.ProcessKiller;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.k8shelper.OsInfo;
-import io.onedev.k8shelper.PosixFacility;
 import io.onedev.k8shelper.RegistryLoginFacade;
-import io.onedev.k8shelper.ShellFacility;
-import io.onedev.k8shelper.WindowsBatchFacility;
 
 public class AgentUtils {
 
@@ -234,45 +230,6 @@ public class AgentUtils {
 		return callWithDockerConfig(docker, configMap, callable);
 	}
 
-	public static void testDocker(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
-								  String dockerImage, @Nullable String cpuLimit,
-								  @Nullable String memoryLimit, @Nullable String dockerOptions,
-								  Function<String, String> hostPathResolver,
-								  TaskLogger taskLogger) {
-		callWithRegistryLogins(docker, registryLogins, () -> {
-			File testDir = FileUtils.createTempDir("docker-test");
-			try {
-				taskLogger.log("Testing specified docker image...");
-				docker.args("run", "--rm");
-				if (cpuLimit != null)
-					docker.addArgs("--cpus", cpuLimit);
-				if (memoryLimit != null)
-					docker.addArgs("--memory", memoryLimit);
-				if (dockerOptions != null)
-					docker.addArgs(StringUtils.parseQuoteTokens(dockerOptions));
-				docker.addArgs("-v", hostPathResolver.apply(testDir.getAbsolutePath()) + ":" + "/onedev-docker-test");
-				docker.addArgs("-w", "/onedev-docker-test");
-				docker.addArgs(dockerImage, "sh", "-c", "echo hello from container");
-				docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
-
-				taskLogger.log("Checking busybox availability...");
-				docker.args("run", "--rm", "busybox", "sh", "-c", "echo hello from busybox");
-				docker.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
-			} finally {
-				FileUtils.deletePath(testDir);
-			}
-			return null;
-		});
-	}
-
-	public static void testDocker(Commandline docker, TestDockerData testData,
-								  Function<String, String> hostPathResolver,
-								  TaskLogger taskLogger) {
-		testDocker(docker, testData.getRegistryLogins(), testData.getDockerImage(), testData.getCpuLimit(),
-				testData.getMemoryLimit(), testData.getDockerOptions(), hostPathResolver,
-				taskLogger);
-	}
-
 	public static void useDockerSock(Commandline docker, @Nullable String dockerSockPath) {
 		if (dockerSockPath != null) 
 			docker.envs().put("DOCKER_HOST", "unix://" + dockerSockPath);
@@ -450,28 +407,5 @@ public class AgentUtils {
 		return docker;
 	}
 
-	public static void testCommands(TaskLogger taskLogger) {
-		var testDir = FileUtils.createTempDir("commands-test");
-		try {
-			taskLogger.log("Running test commands...");
-
-			ShellFacility shellFacility;
-			if (SystemUtils.IS_OS_WINDOWS)
-				shellFacility = new WindowsBatchFacility();
-			else
-				shellFacility = new PosixFacility();
-			var cmdline = new Commandline(shellFacility.getExecutable());
-			cmdline.addArgs(shellFacility.getScriptOptions());
-			
-			var testScriptFile = new File(testDir, "test" + shellFacility.getScriptExtension());
-			FileUtils.writeStringToFile(testScriptFile, "echo 'hello from shell'", UTF_8);
-			cmdline.workingDir(testDir).addArgs(testScriptFile.getAbsolutePath());
-			cmdline.execute(newInfoLogger(taskLogger), newWarningLogger(taskLogger)).checkReturnCode();
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		} finally {
-			FileUtils.deletePath(testDir);
-		}
-	}
 
 }

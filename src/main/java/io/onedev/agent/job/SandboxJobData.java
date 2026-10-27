@@ -18,7 +18,7 @@ public class SandboxJobData extends JobData {
 	public SandboxJobData(String jobToken, String executorName, String projectPath, Long projectId,
 			String refName, String commitHash, Long buildNumber, Long submitSequence,
 			List<Action> actions, SecretMasker secretMasker, List<ServiceFacade> services, SandboxSettings settings) {
-		super(jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, submitSequence,
+		super(settings.serverUrl(), jobToken, executorName, projectPath, projectId, refName, commitHash, buildNumber, submitSequence,
 				actions, secretMasker);
 		this.services = services;
 		this.settings = settings;

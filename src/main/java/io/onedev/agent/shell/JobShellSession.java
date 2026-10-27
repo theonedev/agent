@@ -10,16 +10,23 @@ import io.onedev.commons.utils.command.Commandline;
 public class JobShellSession extends ShellSession {
 
 	private final String jobToken;
+
+	private final String serverUrl;
 	
-	public JobShellSession(String jobToken, String sessionId, Session agentSession, Commandline cmdline) {
+	public JobShellSession(String jobToken, String serverUrl, String sessionId, Session agentSession, Commandline cmdline) {
 		super(sessionId, agentSession, JOB_SHELL_EXIT, cmdline);
 		this.jobToken = jobToken;
+		this.serverUrl = serverUrl;
 	}
 	
 	@Override
 	protected void onOutput(String base64Data) {
 		AgentSocket.sendOutput(agentSession, new JobShellOutputRequest(sessionId, base64Data));
 	}	
+
+	public String getServerUrl() {
+		return serverUrl;
+	}
 
 	public String getJobToken() {
 		return jobToken;

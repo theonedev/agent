@@ -107,6 +107,16 @@ class SandboxRuntime:
             if initialize:
                 self.cert_file.write_text((Path(bundle).read_text() if bundle else "") + "\n".join(certificates))
 
+    def test_runtime(self, workspace=False):
+        subprocess.run(["git", "--version"], check=True)
+        if workspace:
+            subprocess.run(["tmux", "-V"], check=True)
+        log("Sandbox Python runtime is ready")
+        log("Connecting to server '%s' from sandbox..." % self.config["serverUrl"])
+        with self.request("test"):
+            pass
+        subprocess.run(["sh", "-c", "echo hello from shell"], check=True)
+
     def request(self, endpoint, params=None, data=None, method=None, access_token=None):
         params = {k: v for k, v in (params or {}).items() if v is not None}
         params["token"] = self.config["token"]

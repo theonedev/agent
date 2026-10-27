@@ -273,32 +273,6 @@ public class WorkspaceUtils {
 				newInfoLogger(logger), newWarningLogger(logger));
 	}
 
-	public static void testTmuxAvailability(Commandline tmux, TaskLogger logger) {
-		logger.log("Checking if tmux exists...");
-
-		tmux.args("-V");
-
-		var result = tmux.execute(new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-			}
-			
-		}, new LineConsumer() {
-
-			@Override
-			public void consume(String line) {
-				logger.error(line);
-			}
-			
-		});
-		if (result.getReturnCode() == 0) {
-			logger.log("tmux found");
-		} else {
-			throw new ExplicitException("tmux not found");
-		}
-	}
-
 	public static void upload(File workspaceDir, UserDataProvisioner userDataProvisioner, 
 				List<CacheProvisioner> cacheProvisioners, TaskLogger logger) {
 		userDataProvisioner.upload(workspaceDir, logger);		

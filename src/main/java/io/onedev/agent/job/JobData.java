@@ -9,6 +9,8 @@ import io.onedev.k8shelper.Action;
 public abstract class JobData implements Serializable {
 
 	private static final long serialVersionUID = 1L;
+
+	private final String serverUrl;
 	
 	private final String jobToken;
 
@@ -30,9 +32,10 @@ public abstract class JobData implements Serializable {
 
 	private final SecretMasker secretMasker;
 	
-	protected JobData(String jobToken, String executorName, String projectPath, Long projectId,
+	protected JobData(String serverUrl, String jobToken, String executorName, String projectPath, Long projectId,
 						String refName, String commitHash, Long buildNumber, Long submitSequence, 
 						List<Action> actions, SecretMasker secretMasker) {
+		this.serverUrl = serverUrl;
 		this.jobToken = jobToken;
 		this.executorName = executorName;
 		this.projectPath = projectPath;
@@ -43,6 +46,10 @@ public abstract class JobData implements Serializable {
 		this.submitSequence = submitSequence;
 		this.actions = actions;
 		this.secretMasker = secretMasker;
+	}
+
+	public String getServerUrl() {
+		return serverUrl;
 	}
 
 	public String getJobToken() {

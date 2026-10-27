@@ -446,12 +446,7 @@ class JobRunner(SandboxRuntime):
         return successful
 
     def test(self):
-        subprocess.run(["git", "--version"], check=True)
-        log("Sandbox Python runtime is ready")
-        log("Connecting to server '%s' from sandbox..." % self.config["serverUrl"])
-        with self.request("test"):
-            pass
-        subprocess.run(["sh", "-c", "echo hello from shell"], check=True)
+        self.test_runtime()
         image = self.config.get("testImage")
         if image:
             log("Testing command execution in container '%s'..." % image)

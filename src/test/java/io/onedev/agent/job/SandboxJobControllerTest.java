@@ -100,6 +100,7 @@ class SandboxJobControllerTest {
 		var remoteData = org.apache.commons.lang3.SerializationUtils.clone(new SandboxJobData("token", "sandbox",
 				"project", 12L, "refs/heads/main", "commit", 34L, 2L, List.of(), SecretMasker.create(List.of(), "***"),
 				services, new SandboxSettings(null, null, null, true, true, "http://server", null, null, List.of())));
+		assertEquals("http://server", remoteData.getServerUrl());
 		assertTrue(sandbox.runJob(remoteData, remoteData.getServices(), null, Map.of(), logger));
 		var calls = Files.readAllLines(temp.resolve("calls"));
 		assertEquals(9, calls.size());

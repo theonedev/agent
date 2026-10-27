@@ -79,6 +79,17 @@ class SandboxWorkspaceTest(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.02)
 
+    def test_configuration_test_checks_tmux_and_server_without_provisioning(self):
+        runner = WorkspaceRunner(self.root, self.data)
+        with patch.object(runner, 'request') as request:
+            runner.test()
+            request.assert_called_once_with('test')
+            request.reset_mock()
+            (self.base / 'bin/tmux').write_text('#!/bin/sh\nexit 1\n')
+            with self.assertRaises(subprocess.CalledProcessError):
+                runner.test()
+            request.assert_not_called()
+
     def test_direct_setup_teardown_and_restart_preserve_edits(self):
         self.repository()
         self.data['script'].update(setupCommands='printf "%s" "$CUSTOM" > env-value',

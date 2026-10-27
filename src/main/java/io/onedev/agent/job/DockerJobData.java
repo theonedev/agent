@@ -14,11 +14,11 @@ public class DockerJobData extends JobData {
 
 	private final JobDockerSettings settings;
 
-	public DockerJobData(String jobToken, String executorName, String projectPath, Long projectId,
+	public DockerJobData(String serverUrl, String jobToken, String executorName, String projectPath, Long projectId,
 						 String refName, String commitHash, Long buildNumber, Long submitSequence,
 						 List<Action> actions, SecretMasker secretMasker, List<ServiceFacade> services, 
 						 JobDockerSettings settings) {
-		super(jobToken, executorName, projectPath, projectId, refName, commitHash,
+		super(serverUrl, jobToken, executorName, projectPath, projectId, refName, commitHash,
 				buildNumber, submitSequence, actions, secretMasker);
 		this.services = services;
 		this.settings = settings;
