@@ -15,7 +15,7 @@ requirement fails the operation with an error instead of prompting for input.
 Step containers use their configured `runAs`.
 While a step container is running, the build terminal opens inside that container
 using its configured user and the command step's interpreter (`sh` for a Run
-Container step). Otherwise, the terminal opens the sandbox's Bash shell.
+Container step). Otherwise, the terminal opens the sandbox's POSIX-compatible `sh`.
 
 Sandbox jobs support build-spec services when using
 `docker/sandbox-templates:shell-docker` or a custom template based on it.
@@ -37,6 +37,9 @@ configured template, defaulting to
 `apt-get update` explicitly before `apt-get install`. OneDev does not inspect
 package commands or wait for package-manager processes. Existing workspaces keep
 their original kit and skills-sharing mode until recreated.
+The kit starts `sh` without login-shell flags. OneDev only requires a POSIX-compatible
+shell available as `sh`; steps and workspace specs explicitly configured to use
+Bash still require it in their image.
 The OneDev kit does not inherit the built-in shell kit's credential bindings;
 supply credentials through OneDev's job/workspace configuration and user data.
 

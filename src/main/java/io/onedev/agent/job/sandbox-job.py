@@ -56,7 +56,7 @@ def open_shell(root, identity=None):
             os.setgroups(groups)
             os.setgid(gid)
             os.setuid(uid)
-        os.execvp("bash", ["bash"])
+        os.execvp("sh", ["sh"])
         return
     state = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", target["container"]],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

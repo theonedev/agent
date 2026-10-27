@@ -87,7 +87,7 @@ public class SandboxUtils {
 			// Own the kit so package operations only run when requested by the job/workspace.
 			var image = settings.template() != null ? settings.template() : "docker/sandbox-templates:shell-docker";
 			var spec = Map.of("schemaVersion", "2", "kind", "sandbox", "name", "onedev",
-					"sandbox", Map.of("image", image, "entrypoint", List.of("bash"), "command", List.of("-l")));
+					"sandbox", Map.of("image", image, "entrypoint", List.of("sh"), "command", List.of()));
 			// JSON is valid YAML and quotes custom image references without interpolation.
 			var mapper = new ObjectMapper();
 			mapper.writeValue(new File(kitDir, "spec.yaml"), spec);

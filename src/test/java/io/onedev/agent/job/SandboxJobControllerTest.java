@@ -110,8 +110,8 @@ class SandboxJobControllerTest {
 		assertEquals("2", kit.path("schemaVersion").asText());
 		assertEquals("sandbox", kit.path("kind").asText());
 		assertEquals("custom-template", kit.path("sandbox").path("image").asText());
-		assertEquals("bash", kit.path("sandbox").path("entrypoint").get(0).asText());
-		assertEquals("-l", kit.path("sandbox").path("command").get(0).asText());
+		assertEquals("sh", kit.path("sandbox").path("entrypoint").get(0).asText());
+		assertEquals(new ObjectMapper().createArrayNode(), kit.path("sandbox").path("command"));
 		assertFalse(kit.has("extends"));
 		assertFalse(kit.has("setup"));
 		assertEquals("policy allow network --sandbox build-sandbox-12-34-2 --protocol tcp,udp **", calls.get(1));

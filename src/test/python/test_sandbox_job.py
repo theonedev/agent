@@ -469,7 +469,7 @@ class SandboxJobTest(unittest.TestCase):
                     patch.object(runner.os, 'setgid') as setgid, patch.object(runner.os, 'setuid') as setuid, \
                     patch.object(runner.subprocess, 'run') as inspect, patch.object(runner.os, 'execvp') as execute:
                 runner.open_shell(self.root, identity)
-                execute.assert_called_once_with('bash', ['bash'])
+                execute.assert_called_once_with('sh', ['sh'])
                 inspect.assert_not_called()
                 if current_uid == 0:
                     setgroups.assert_called_once_with([1001, 1002])
