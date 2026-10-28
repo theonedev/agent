@@ -203,6 +203,27 @@ class SandboxWorkspaceControllerTest {
 		var previousSbxPath = Agent.sbxPath;
 		var previousInstallDir = Agent.installDir;
 		var controller = controller("true", List.of());
+		var testThread = Thread.currentThread();
+		var context = (LoggerContext) LoggerFactory.getILoggerFactory();
+		var filter = new TurboFilter() {
+			@Override
+			public FilterReply decide(Marker marker, Logger logger, Level level, String message,
+					Object[] arguments, Throwable throwable) {
+				// Suppress only the expected stopped-workspace errors and fake sandbox deletion.
+				if (Thread.currentThread() == testThread && logger.getName().equals(AgentSocket.class.getName())) {
+					if (level == Level.ERROR && "Error handling websocket request".equals(message)
+							&& throwable instanceof ExplicitException
+							&& "Sandbox workspace not running".equals(throwable.getMessage()))
+						return FilterReply.DENY;
+					if (level == Level.INFO && "Deleting sandbox 'workspace-1-2'...".equals(message)
+							&& throwable == null)
+						return FilterReply.DENY;
+				}
+				return FilterReply.NEUTRAL;
+			}
+		};
+		filter.start();
+		context.addTurboFilter(filter);
 		try {
 			Agent.sbxPath = temp.resolve("sbx").toString();
 			Agent.installDir = temp.toFile();
@@ -235,36 +256,16 @@ class SandboxWorkspaceControllerTest {
 			} finally {
 				Agent.sbxPath = previousSbxPath;
 				Agent.installDir = previousInstallDir;
+				context.getTurboFilterList().remove(filter);
+				filter.stop();
 			}
 		}
 	}
 
 	private void assertStoppedWorkspaceRequests(AgentSocket socket, Method service, Serializable... requests) throws Exception {
-		var testThread = Thread.currentThread();
-		var context = (LoggerContext) LoggerFactory.getILoggerFactory();
-		var filter = new TurboFilter() {
-			@Override
-			public FilterReply decide(Marker marker, Logger logger, Level level, String message,
-					Object[] arguments, Throwable throwable) {
-				// These requests deliberately access a stopped workspace. Keep all other errors visible.
-				if (Thread.currentThread() == testThread && logger.getName().equals(AgentSocket.class.getName())
-						&& level == Level.ERROR && "Error handling websocket request".equals(message)
-						&& throwable instanceof ExplicitException
-						&& "Sandbox workspace not running".equals(throwable.getMessage()))
-					return FilterReply.DENY;
-				return FilterReply.NEUTRAL;
-			}
-		};
-		filter.start();
-		context.addTurboFilter(filter);
-		try {
-			for (var request : requests) {
-				var failure = assertInstanceOf(ExplicitException.class, service.invoke(socket, SerializationUtils.clone(request)));
-				assertEquals("Sandbox workspace not running", failure.getMessage());
-			}
-		} finally {
-			context.getTurboFilterList().remove(filter);
-			filter.stop();
+		for (var request : requests) {
+			var failure = assertInstanceOf(ExplicitException.class, service.invoke(socket, SerializationUtils.clone(request)));
+			assertEquals("Sandbox workspace not running", failure.getMessage());
 		}
 	}
 
