@@ -200,8 +200,8 @@ class AgentServerUrlTest {
 				var containerCommand = dockerCalls.get(0);
 				assertTrue(containerCommand.contains("test-image sh -c "));
 				assertEquals(data instanceof TestDockerWorkspaceData, containerCommand.contains("git --version"));
+				assertEquals(data instanceof TestDockerWorkspaceData, containerCommand.contains("git lfs version"));
 				assertEquals(data instanceof TestDockerWorkspaceData, containerCommand.contains("tmux -V"));
-				assertFalse(containerCommand.contains("git lfs"));
 				assertEquals("run --rm busybox sh -c echo hello from busybox", dockerCalls.get(1));
 				if (data instanceof TestDockerWorkspaceData) {
 					var connectionCommand = dockerCalls.get(2);

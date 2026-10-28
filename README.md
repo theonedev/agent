@@ -77,7 +77,7 @@ with `AllowEnhancedClassRedefinition`; other JVMs can reload method-body changes
 
 Run the tests with `mvn test`. On Linux and macOS this also runs the Python sandbox
 job and workspace suites against a local mock OneDev API. They require Python 3.9 or newer,
-Git, and `sh`; no running OneDev server or Docker Sandbox is needed. Python test
+Git, Git LFS, and `sh`; no running OneDev server or Docker Sandbox is needed. Python test
 failures fail the Maven build. To use a different Python executable, pass
 `-Donedev.python.executable=/path/to/python3`.
 

@@ -109,6 +109,7 @@ class SandboxRuntime:
 
     def test_runtime(self, workspace=False):
         subprocess.run(["git", "--version"], check=True)
+        subprocess.run(["git", "lfs", "version"], check=True)
         if workspace:
             subprocess.run(["tmux", "-V"], check=True)
         log("Sandbox Python runtime is ready")

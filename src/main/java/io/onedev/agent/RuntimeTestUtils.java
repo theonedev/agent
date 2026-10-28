@@ -62,7 +62,7 @@ public final class RuntimeTestUtils {
 	/** Shared by Docker and Kubernetes tests of the selected image. */
 	public static String getContainerTestCommands(boolean workspace) {
 		return workspace
-				? "git --version && tmux -V && echo hello from container"
+				? "git --version && git lfs version && tmux -V && echo hello from container"
 				: "echo hello from container";
 	}
 
