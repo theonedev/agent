@@ -155,6 +155,7 @@ import io.onedev.k8shelper.ServerSideFacade;
 import io.onedev.k8shelper.SetupCacheFacade;
 import io.onedev.k8shelper.UserDataFacade;
 import io.onedev.k8shelper.UserDataProvisioner;
+import io.onedev.k8shelper.VolumeMountFacade;
 import io.onedev.k8shelper.WorkspaceHelper;
 
 @SuppressWarnings({"BusyWait", "LocalVariableUsedAndDeclaredInDifferentSwitchBranches"})
@@ -853,7 +854,7 @@ public class AgentSocket implements Runnable {
 				private int runStepContainer(Commandline docker, String image, String runAs,
 												@Nullable String entrypoint, List<String> arguments,
 												Map<String, String> environments, @Nullable String workingDir,
-												Map<String, String> volumeMounts, List<Integer> position,
+												List<VolumeMountFacade> volumeMounts, List<Integer> position,
 												boolean useTTY) {
 					String containerName = network + "-step-" + stringifyStepPosition(position);
 					jobContainerNames.put(jobData.getJobToken(), containerName);
@@ -897,7 +898,7 @@ public class AgentSocket implements Runnable {
 						try {
 							int exitCode = callWithRegistryLogins(docker, registryLogins, () -> runStepContainer(
 									docker, commandFacade.getImage(), runAs, "sh", entrypointArgs,
-									commandFacade.getEnvMap(), null, new HashMap<>(), position,
+									commandFacade.getEnvMap(), null, List.of(), position,
 									commandFacade.isUseTTY()));
 							if (exitCode != 0) {
 								jobLogger.error("Command exited with code " + exitCode);

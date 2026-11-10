@@ -6,6 +6,7 @@ import org.jspecify.annotations.Nullable;
 
 import io.onedev.agent.DockerSettings;
 import io.onedev.k8shelper.RegistryLoginFacade;
+import io.onedev.k8shelper.VolumeMountFacade;
 
 public class JobDockerSettings extends DockerSettings {
 
@@ -26,8 +27,9 @@ public class JobDockerSettings extends DockerSettings {
 			@Nullable String cpuLimit, @Nullable String memoryLimit, @Nullable String runOptions,
 			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage,
 			String dockerBuilder, @Nullable String networkOptions,
-			boolean imageBuildEnabled, boolean builderCachePruneEnabled, boolean imagetoolsEnabled) {
-		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage);
+			boolean imageBuildEnabled, boolean builderCachePruneEnabled, boolean imagetoolsEnabled,
+			List<VolumeMountFacade> volumeMounts) {
+		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage, volumeMounts);
 		this.dockerBuilder = dockerBuilder;
 		this.networkOptions = networkOptions;
 		this.imageBuildEnabled = imageBuildEnabled;

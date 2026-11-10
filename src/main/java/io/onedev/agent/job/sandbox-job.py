@@ -275,8 +275,11 @@ class JobRunner(SandboxRuntime):
         if self.network:
             args.extend(["--network", self.network])
         args.extend([*options, "--user", run_as, "-v", str(self.root) + ":" + str(self.root)])
-        for source, target in step.get("volumeMounts", {}).items():
-            args.extend(["-v", str(self.work / self.replace(source)) + ":" + self.replace(target)])
+        for mount in step.get("volumeMounts", []):
+            volume = str(self.work / self.replace(mount["sourcePath"])) + ":" + self.replace(mount["targetPath"])
+            if mount.get("readOnly", False):
+                volume += ":ro"
+            args.extend(["-v", volume])
         paths = self.owned_paths()
         for path in self.absolute_cache_paths():
             args.extend(["-v", str(path) + ":" + str(path)])

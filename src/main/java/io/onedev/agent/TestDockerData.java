@@ -1,10 +1,12 @@
 package io.onedev.agent;
 
 import java.util.Collection;
+import java.util.List;
 
 import org.jspecify.annotations.Nullable;
 
 import io.onedev.k8shelper.RegistryLoginFacade;
+import io.onedev.k8shelper.VolumeMountFacade;
 
 public abstract class TestDockerData extends TestData {
 
@@ -22,9 +24,11 @@ public abstract class TestDockerData extends TestData {
 
 	private final String memoryLimit;
 
+	private final List<VolumeMountFacade> volumeMounts;
+
 	public TestDockerData(String token, String dockerImage, @Nullable String dockerSock,
 						  Collection<RegistryLoginFacade> registryLogins, String dockerOptions,
-						  @Nullable String cpuLimit, @Nullable String memoryLimit) {
+						  @Nullable String cpuLimit, @Nullable String memoryLimit, List<VolumeMountFacade> volumeMounts) {
 		super(token);
 		this.dockerImage = dockerImage;
 		this.dockerSock = dockerSock;
@@ -32,6 +36,7 @@ public abstract class TestDockerData extends TestData {
 		this.dockerOptions = dockerOptions;
 		this.cpuLimit = cpuLimit;
 		this.memoryLimit = memoryLimit;
+		this.volumeMounts = volumeMounts;
 	}
 
 	public String getDockerImage() {
@@ -59,6 +64,10 @@ public abstract class TestDockerData extends TestData {
 	@Nullable
 	public String getMemoryLimit() {
 		return memoryLimit;
+	}
+
+	public List<VolumeMountFacade> getVolumeMounts() {
+		return volumeMounts;
 	}
 
 }

@@ -34,6 +34,7 @@ import io.onedev.k8shelper.RegistryLoginFacade;
 import io.onedev.k8shelper.RunContainerFacade;
 import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
+import io.onedev.k8shelper.VolumeMountFacade;
 
 @EnabledOnOs({OS.LINUX, OS.MAC})
 class SandboxJobControllerTest {
@@ -368,7 +369,8 @@ class SandboxJobControllerTest {
 		var logins = List.of(new RegistryLoginFacade("registry.example", "user", "password"));
 		var steps = List.of(
 				new CommandFacade("alpine", "123:456", logins, Map.of("ENV", "value"), true, "echo test"),
-				new RunContainerFacade("tool", "0:0", "--arg 'a b'", Map.of(), "/work", Map.of(".", "/input"), logins, false),
+				new RunContainerFacade("tool", "0:0", "--arg 'a b'", Map.of(), "/work",
+						List.of(new VolumeMountFacade(".", "/input", true), new VolumeMountFacade(".", "/output", false)), logins, false),
 				new BuildImageFacade("context", "Dockerfile.other", new BuildImageFacade.RegistryOutput("image:tag"), logins, "linux/arm64", "--secret id=test,src=/tmp/secret"),
 				new BuildImageFacade(null, null, new BuildImageFacade.OCIOutput("image-layout"), List.of(), null, null),
 				new RunImagetoolsFacade("create -f /tmp/manifest.json", logins),
@@ -381,7 +383,13 @@ class SandboxJobControllerTest {
 		assertTrue(manifest.get(0).get("useTTY").asBoolean());
 		assertEquals("password", manifest.get(0).get("registryLogins").get(0).get("password").asText());
 		assertEquals("container", manifest.get(1).get("type").asText());
-		assertEquals("/input", manifest.get(1).get("volumeMounts").get(".").asText());
+		var mounts = manifest.get(1).get("volumeMounts");
+		assertEquals(2, mounts.size());
+		assertEquals(".", mounts.get(0).get("sourcePath").asText());
+		assertEquals("/input", mounts.get(0).get("targetPath").asText());
+		assertTrue(mounts.get(0).get("readOnly").asBoolean());
+		assertEquals("/output", mounts.get(1).get("targetPath").asText());
+		assertFalse(mounts.get(1).get("readOnly").asBoolean());
 		assertEquals("--arg 'a b'", manifest.get(1).get("args").asText());
 		assertEquals("build-image", manifest.get(2).get("type").asText());
 		assertEquals("image:tag", manifest.get(2).get("tags").asText());

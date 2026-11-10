@@ -600,7 +600,8 @@ class SandboxJobTest(unittest.TestCase):
         self.job['runOptions'] = '--env-file /tmp/environment --cidfile /tmp/container-id -v /tmp/shared:/shared --privileged'
         self.runner.caches = [sandbox.ProvisionedCache(dict(entries=[dict(path='/tmp/cache'), dict(path='relative-cache')]))]
         step = dict(image='tool', runAs='0:0', args='--file "a b"', workingDir='/output',
-                    volumeMounts={'dependency.txt': '/input/file'}, env={}, useTTY=False)
+                    volumeMounts=[dict(sourcePath='dependency.txt', targetPath='/input/file', readOnly=True),
+                                  dict(sourcePath='dependency.txt', targetPath='/input/writable')], env={}, useTTY=False)
         with patch.object(self.runner, 'docker', return_value=True) as docker, patch.object(self.runner.privileges, 'change_owner'):
             self.assertTrue(self.runner.container(step, '1-2'))
         args = docker.call_args.args[0]
@@ -610,7 +611,8 @@ class SandboxJobTest(unittest.TestCase):
         self.assertIn('/tmp/shared:/shared', args)
         self.assertIn('/tmp/cache:/tmp/cache', args)
         self.assertIn('/var/run/docker.sock:/var/run/docker.sock', args)
-        self.assertIn(str(self.runner.work / 'dependency.txt') + ':/input/file', args)
+        self.assertIn(str(self.runner.work / 'dependency.txt') + ':/input/file:ro', args)
+        self.assertIn(str(self.runner.work / 'dependency.txt') + ':/input/writable', args)
         self.assertEqual(args[args.index('-w') + 1], '/output')
         self.assertNotIn('--entrypoint', args)
         self.assertEqual(args[-3:], ['tool', '--file', 'a b'])

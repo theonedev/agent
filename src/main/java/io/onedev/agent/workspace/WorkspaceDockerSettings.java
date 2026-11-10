@@ -1,5 +1,6 @@
 package io.onedev.agent.workspace;
 
+import java.io.Serial;
 import java.util.List;
 import java.util.Map;
 
@@ -10,7 +11,8 @@ import io.onedev.k8shelper.RegistryLoginFacade;
 
 public class WorkspaceDockerSettings extends DockerSettings {
 
-	private static final long serialVersionUID = 1L;
+	@Serial
+    private static final long serialVersionUID = 1L;
 
 	private final String image;
 
@@ -24,7 +26,7 @@ public class WorkspaceDockerSettings extends DockerSettings {
 			@Nullable String cpuLimit, @Nullable String memoryLimit, @Nullable String runOptions,
 			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage,
 			String image, String runAs, List<Integer> containerPorts, Map<String, String> envVars) {
-		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage);
+		super(mountDockerSock, dockerSock, cpuLimit, memoryLimit, runOptions, registryLogins, alwaysPullImage, List.of());
 		this.image = image;
 		this.runAs = runAs;
 		this.containerPorts = containerPorts;

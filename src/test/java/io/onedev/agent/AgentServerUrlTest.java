@@ -186,7 +186,7 @@ class AgentServerUrlTest {
 	void hostAndDockerConfigurationTestsUseTheSuppliedUrl() throws Exception {
 		for (TestData data : List.of(new TestHostJobData("host-job"),
 				new TestHostWorkspaceData("host-workspace", executable("tmux")),
-				new TestDockerJobData("docker", "docker-job", "test-image", null, List.of(), null, null, null),
+				new TestDockerJobData("docker", "docker-job", "test-image", null, List.of(), null, null, null, List.of()),
 				new TestDockerWorkspaceData("docker", "docker-workspace", "test-image", null, List.of(), null, null, null))) {
 			for (var command : List.of("git", "docker", "tmux"))
 				Files.deleteIfExists(temp.resolve(command + ".calls"));
@@ -221,7 +221,7 @@ class AgentServerUrlTest {
 		var actions = List.of(new Action("cache", new SetupCacheFacade(cache()), ExecuteCondition.ALWAYS, false),
 				new Action("server step", new ServerSideFacade(null, null, Set.of(), Set.of(), List.of()), ExecuteCondition.ALWAYS, false));
 		var masker = SecretMasker.create(List.of(), "***");
-		var settings = new JobDockerSettings(false, null, null, null, null, List.of(), false, null, null, false, false, false);
+		var settings = new JobDockerSettings(false, null, null, null, null, List.of(), false, null, null, false, false, false, List.of());
 		Serializable data = docker
 				? new DockerJobData(serverUrl, "job", "docker", "project", 1L, "refs/heads/main", "commit", 1L, 1L,
 						actions, masker, List.of(), settings)

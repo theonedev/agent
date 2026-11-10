@@ -1,6 +1,7 @@
 package io.onedev.agent.workspace;
 
 import java.util.Collection;
+import java.util.List;
 
 import org.jspecify.annotations.Nullable;
 
@@ -16,7 +17,7 @@ public class TestDockerWorkspaceData extends TestDockerData {
 	public TestDockerWorkspaceData(String provisionerName, String token, String dockerImage,
 								   @Nullable String dockerSock, Collection<RegistryLoginFacade> registryLogins,
 								   String dockerOptions, @Nullable String cpuLimit, @Nullable String memoryLimit) {
-		super(token, dockerImage, dockerSock, registryLogins, dockerOptions, cpuLimit, memoryLimit);
+		super(token, dockerImage, dockerSock, registryLogins, dockerOptions, cpuLimit, memoryLimit, List.of());
 		this.provisionerName = provisionerName;
 	}
 

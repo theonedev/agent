@@ -6,6 +6,7 @@ import java.util.List;
 import org.jspecify.annotations.Nullable;
 
 import io.onedev.k8shelper.RegistryLoginFacade;
+import io.onedev.k8shelper.VolumeMountFacade;
 
 public class DockerSettings implements Serializable {
 
@@ -29,9 +30,11 @@ public class DockerSettings implements Serializable {
 
 	private final boolean alwaysPullImage;
 
+	private final List<VolumeMountFacade> volumeMounts;
+
 	public DockerSettings(boolean mountDockerSock, @Nullable String dockerSock,
 			@Nullable String cpuLimit, @Nullable String memoryLimit, @Nullable String runOptions,
-			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage) {
+			List<RegistryLoginFacade> registryLogins, boolean alwaysPullImage, List<VolumeMountFacade> volumeMounts) {
 		this.mountDockerSock = mountDockerSock;
 		this.dockerSock = dockerSock;
 		this.cpuLimit = cpuLimit;
@@ -39,6 +42,7 @@ public class DockerSettings implements Serializable {
 		this.runOptions = runOptions;
 		this.registryLogins = registryLogins;
 		this.alwaysPullImage = alwaysPullImage;
+		this.volumeMounts = volumeMounts;
 	}
 
 	public boolean isMountDockerSock() {
@@ -71,6 +75,10 @@ public class DockerSettings implements Serializable {
 
 	public boolean isAlwaysPullImage() {
 		return alwaysPullImage;
+	}
+
+	public List<VolumeMountFacade> getVolumeMounts() {
+		return volumeMounts;
 	}
 
 }

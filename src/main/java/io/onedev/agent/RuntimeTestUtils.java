@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.Function;
 
 import jakarta.ws.rs.core.UriBuilder;
@@ -30,6 +31,7 @@ import io.onedev.k8shelper.PosixFacility;
 import io.onedev.k8shelper.RegistryLoginFacade;
 import io.onedev.k8shelper.ShellFacility;
 import io.onedev.k8shelper.WindowsBatchFacility;
+import io.onedev.k8shelper.VolumeMountFacade;
 import nl.altindag.ssl.SSLFactory;
 import nl.altindag.ssl.util.CertificateUtils;
 
@@ -72,6 +74,14 @@ public final class RuntimeTestUtils {
 								  boolean testWorkspace,
 								  Function<String, String> hostPathResolver,
 								  TaskLogger taskLogger) {
+		testDocker(docker, registryLogins, dockerImage, cpuLimit, memoryLimit, dockerOptions,
+				testWorkspace, hostPathResolver, List.of(), taskLogger);
+	}
+
+	public static void testDocker(Commandline docker, Collection<RegistryLoginFacade> registryLogins,
+			String dockerImage, @Nullable String cpuLimit, @Nullable String memoryLimit,
+			@Nullable String dockerOptions, boolean testWorkspace, Function<String, String> hostPathResolver,
+			List<VolumeMountFacade> hostPathMounts, TaskLogger taskLogger) {
 		callWithRegistryLogins(docker, registryLogins, () -> {
 			File testDir = FileUtils.createTempDir("docker-test");
 			try {
@@ -84,6 +94,7 @@ public final class RuntimeTestUtils {
 				if (dockerOptions != null)
 					docker.addArgs(StringUtils.parseQuoteTokens(dockerOptions));
 				docker.addArgs("-v", hostPathResolver.apply(testDir.getAbsolutePath()) + ":" + "/onedev-docker-test");
+				VolumeMountFacade.mountExecutorVolumes(docker, hostPathMounts, hostPathResolver);
 				docker.addArgs("-w", "/onedev-docker-test");
 				var commands = getContainerTestCommands(testWorkspace);
 				docker.addArgs(dockerImage, "sh", "-c", commands);
@@ -104,7 +115,7 @@ public final class RuntimeTestUtils {
 								  TaskLogger taskLogger) {
 		testDocker(docker, testData.getRegistryLogins(), testData.getDockerImage(), testData.getCpuLimit(),
 				testData.getMemoryLimit(), testData.getDockerOptions(), testData instanceof TestDockerWorkspaceData, hostPathResolver,
-				taskLogger);
+				testData.getVolumeMounts(), taskLogger);
 	}
 
 	public static void testDockerServerConnection(Commandline docker, Collection<RegistryLoginFacade> registryLogins,

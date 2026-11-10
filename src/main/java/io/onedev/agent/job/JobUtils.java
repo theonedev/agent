@@ -54,6 +54,7 @@ import io.onedev.k8shelper.JobHelper.StepEventKind;
 import io.onedev.k8shelper.PruneBuilderCacheFacade;
 import io.onedev.k8shelper.RunImagetoolsFacade;
 import io.onedev.k8shelper.ServiceFacade;
+import io.onedev.k8shelper.VolumeMountFacade;
 import jakarta.ws.rs.client.Client;
 import jakarta.ws.rs.client.Invocation;
 import jakarta.ws.rs.client.WebTarget;
@@ -252,7 +253,7 @@ public class JobUtils {
 	public static int runStepContainer(StepContainerContext context, Commandline docker, String containerName,
 			String image, String runAs, @Nullable String entrypoint, List<String> arguments,
 			Map<String, String> environments, @Nullable String workingDir,
-			Map<String, String> volumeMounts, boolean useTTY) {
+			List<VolumeMountFacade> volumeMounts, boolean useTTY) {
 		var settings = context.settings();
 		var hostBuildDir = context.hostBuildDir();
 		var hostPathResolver = context.hostPathResolver();
@@ -269,13 +270,17 @@ public class JobUtils {
 		if (settings.getMemoryLimit() != null)
 			docker.addArgs("--memory", settings.getMemoryLimit());
 		docker.addArgs(DockerRunOptions.parse(settings.getRunOptions(), hostBuildDir));
+		VolumeMountFacade.mountExecutorVolumes(docker, settings.getVolumeMounts(), hostPathResolver);
 
 		docker.addArgs("-v", hostPathResolver.apply(hostBuildDir.getAbsolutePath()) + ":" + BUILD_PATH);
-		for (var entry : volumeMounts.entrySet()) {
-			if (entry.getKey().contains(".."))
-				throw new ExplicitException("Volume mount source path should not contain '..'");
-			var hostPath = hostPathResolver.apply(resolveBuildPath(hostBuildDir, "work/" + entry.getKey()).getAbsolutePath());
-			docker.addArgs("-v", hostPath + ":" + entry.getValue());
+		for (var mount : volumeMounts) {
+			var sourcePath = mount.getSourcePath();
+			var targetPath = mount.getTargetPath();
+			if (sourcePath.contains(":") || targetPath.contains(":"))
+				throw new ExplicitException("Volume mount paths must not contain ':'");
+			var source = resolveBuildPath(hostBuildDir, "work/" + sourcePath);
+			var hostPath = hostPathResolver.apply(source.getAbsolutePath());
+			docker.addArgs("-v", hostPath + ":" + targetPath + (mount.isReadOnly() ? ":ro" : ""));
 		}
 
 		for (var cacheProvisioner : context.cacheProvisioners())
