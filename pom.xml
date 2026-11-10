@@ -10,7 +10,7 @@
 		<version>1.4.0</version>
 	</parent>
 	<artifactId>agent</artifactId>
-	<version>4.1.6</version>
+	<version>4.1.7</version>
 	<build>
 		<plugins>
 			<plugin>
