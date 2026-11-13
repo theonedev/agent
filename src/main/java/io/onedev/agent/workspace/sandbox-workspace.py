@@ -179,6 +179,13 @@ class WorkspaceRunner(SandboxRuntime):
                 return
             setup_started = True
             self.run_script("setup", cancellable=True)
+            script = self.config["script"]
+            task_commands = script.pop("taskCommands", None)
+            if task_commands is not None:
+                manifest = safe_path(self.root, "workspace.json")
+                manifest.write_text(json.dumps(self.config), encoding="utf-8")
+                task_path = safe_path(self.root, "task" + script["scriptExtension"])
+                task_path.write_text(task_commands, encoding="utf-8")
             # The template or setup commands must provide tmux for workspace terminals.
             subprocess.run(["tmux", "-V"], check=True, stdout=subprocess.DEVNULL)
             safe_path(self.root, ".workspace-ready").touch()

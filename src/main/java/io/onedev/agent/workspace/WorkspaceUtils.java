@@ -27,7 +27,6 @@ import org.slf4j.LoggerFactory;
 import io.onedev.agent.Agent;
 import io.onedev.agent.AgentUtils;
 import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
@@ -216,10 +215,10 @@ public class WorkspaceUtils {
 
 	public static void setupShellProvisioned(ScriptConfig scriptConfig, File workspaceDir, 
 			Map<String, String> envVars, TaskLogger logger) {
-		var commands = scriptConfig.getSetupCommands();
-		if (commands != null) {
+		WorkspaceHelper.writeScripts(workspaceDir, scriptConfig);
+		if (scriptConfig.getSetupCommands() != null) {
 			logger.log("Running setup commands...");
-			runShellProvisioned(scriptConfig, SETUP_SCRIPT_NAME, commands, workspaceDir, envVars, logger)
+			runShellProvisioned(scriptConfig, SETUP_SCRIPT_NAME, workspaceDir, envVars, logger)
 					.checkReturnCode();
 		}
 	}
@@ -231,11 +230,10 @@ public class WorkspaceUtils {
 	 */
 	public static void teardownShellProvisioned(ScriptConfig scriptConfig, File workspaceDir,
 			Map<String, String> envVars, TaskLogger logger) {
-		var commands = scriptConfig.getTeardownCommands();
-		if (commands != null) {
+		if (scriptConfig.getTeardownCommands() != null) {
 			logger.log("Running teardown commands...");
 			try {
-				runShellProvisioned(scriptConfig, TEARDOWN_SCRIPT_NAME, commands, workspaceDir, envVars, logger)
+				runShellProvisioned(scriptConfig, TEARDOWN_SCRIPT_NAME, workspaceDir, envVars, logger)
 						.checkReturnCode();
 			} catch (Throwable t) {
 				logger.error("Error running teardown commands", t);
@@ -244,19 +242,11 @@ public class WorkspaceUtils {
 	}
 
 	private static ExecutionResult runShellProvisioned(ScriptConfig scriptConfig, String scriptName,
-			String commands, File workspaceDir, Map<String, String> envVars, TaskLogger logger) {
-		var commandDir = new File(workspaceDir, "command");
-		FileUtils.createDir(commandDir);
-		var scriptFile = new File(commandDir, scriptName + scriptConfig.getScriptExtension());
-		try {
-			FileUtils.writeStringToFile(scriptFile, commands, UTF_8);
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
+			File workspaceDir, Map<String, String> envVars, TaskLogger logger) {
 		var cmdline = new Commandline(scriptConfig.getScriptExecutable());
 		cmdline.addArgs(scriptConfig.getScriptOptions());
 		cmdline.workingDir(new File(workspaceDir, "work")).envs(envVars);
-		cmdline.addArgs(scriptFile.getAbsolutePath());
+		cmdline.addArgs(WorkspaceHelper.getScriptPath(workspaceDir.getAbsolutePath(), scriptName, scriptConfig));
 		return cmdline.execute(newInfoLogger(logger), newErrorLogger(logger));
 	}
 
