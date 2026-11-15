@@ -15,6 +15,7 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
@@ -329,15 +330,8 @@ public class Agent {
 
 			sslFactory = KubernetesHelper.buildSSLFactory(getTrustCertsDir());
 
-			var sslContextFactory = new SslContextFactory.Client();
-			sslContextFactory.setSslContext(sslFactory.getSslContext());
-			var sslParameters = sslFactory.getSslParameters();
-			sslContextFactory.setIncludeProtocols(sslParameters.getProtocols());
-			sslContextFactory.setIncludeCipherSuites(sslParameters.getCipherSuites());	
-			sslContextFactory.setHostnameVerifier(sslFactory.getHostnameVerifier());
-
 			HttpClient httpClient = new HttpClient();
-			httpClient.setSslContextFactory(sslContextFactory);
+			httpClient.setSslContextFactory(newSslContextFactory(sslFactory));
 			client = new WebSocketClient(httpClient);
 
 			client.setStopAtShutdown(false);
@@ -390,6 +384,20 @@ public class Agent {
 		} finally {
 			stopped = true;
 		}
+	}
+
+	private static SslContextFactory.Client newSslContextFactory(SSLFactory sslFactory) {
+		var sslContextFactory = new SslContextFactory.Client();
+		sslContextFactory.setSNIProvider((engine, serverNames) -> {
+			var serverName = KubernetesHelper.getSingleLabelServerName(engine.getPeerHost());
+			return serverNames.isEmpty() && serverName != null ? List.of(serverName) : serverNames;
+		});
+		sslContextFactory.setSslContext(sslFactory.getSslContext());
+		var sslParameters = sslFactory.getSslParameters();
+		sslContextFactory.setIncludeProtocols(sslParameters.getProtocols());
+		sslContextFactory.setIncludeCipherSuites(sslParameters.getCipherSuites());
+		sslContextFactory.setHostnameVerifier(sslFactory.getHostnameVerifier());
+		return sslContextFactory;
 	}
 
 	public static File getTrustCertsDir() {
