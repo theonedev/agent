@@ -1,9 +1,10 @@
-version: 53
+version: 59
 imports:
 - projectPath: onedev/template
   revision: main
 jobs:
 - name: Release
+  executeInSandbox: false
   steps:
   - type: CheckoutStep
     name: checkout
@@ -50,13 +51,20 @@ jobs:
   jobDependencies:
   - jobName: Scan Vulnerabilities
     requireSuccessful: true
+  projectDependencies:
+  - projectPath: onedev/k8s-helper
+    buildProvider:
+      type: LatestBuild
+      jobName: Release
+    requireSuccessful: true
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
   includeUpstreamWhenRebuild: false
   includeDownstreamWhenRebuild: false
   timeout: 3600
 - name: Scan Vulnerabilities
+  executeInSandbox: false
   steps:
   - type: CheckoutStep
     name: checkout
@@ -79,12 +87,13 @@ jobs:
   - type: ScheduleTrigger
     cronExpression: 0 0 1 * * ?
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
   includeUpstreamWhenRebuild: false
   includeDownstreamWhenRebuild: false
   timeout: 3600
 - name: Sync with GitHub
+  executeInSandbox: false
   steps:
   - type: CheckoutStep
     name: checkout
@@ -114,7 +123,7 @@ jobs:
     userMatch: anyone
     projects: onedev/agent
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
   includeUpstreamWhenRebuild: false
   includeDownstreamWhenRebuild: false
